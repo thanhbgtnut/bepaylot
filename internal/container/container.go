@@ -246,7 +246,7 @@ func (app *App) Run(ctx context.Context) error {
 		go app.housekeeping(ctx)
 	}
 	if app.Hertz != nil {
-		app.Log.Info("bepilot listening", "addr", app.Config.HTTP.Addr, "role", app.Config.Workers.Role)
+		app.Log.Info("bepaylot listening", "addr", app.Config.HTTP.Addr, "role", app.Config.Workers.Role)
 		router.Run(ctx, app.Hertz)
 		return nil
 	}
@@ -332,7 +332,7 @@ func (d describer) DescribeKnowledgeBases(ctx context.Context, owner uuid.UUID, 
 }
 
 func fakeSkillSlug() string {
-	if v := os.Getenv("BEPILOT_FAKE_SKILL_SLUG"); v != "" {
+	if v := os.Getenv("BEPAYLOT_FAKE_SKILL_SLUG"); v != "" {
 		return v
 	}
 	return "pdf-forms"

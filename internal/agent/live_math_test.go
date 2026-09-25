@@ -94,13 +94,13 @@ type liveCheck struct {
 // TestLiveMathAndJSON drives the real system prompt, real tool registry and the
 // real ReAct loop against an actual model. It needs an OpenAI-compatible
 // endpoint whose loaded context window fits roughly 12k tokens, so it only runs
-// when BEPILOT_LIVE_LLM=1:
+// when BEPAYLOT_LIVE_LLM=1:
 //
 //	set -a; source .env; set +a
-//	BEPILOT_LIVE_LLM=1 go test ./internal/agent -run TestLiveMathAndJSON -v -timeout 15m
+//	BEPAYLOT_LIVE_LLM=1 go test ./internal/agent -run TestLiveMathAndJSON -v -timeout 15m
 func TestLiveMathAndJSON(t *testing.T) {
-	if os.Getenv("BEPILOT_LIVE_LLM") != "1" {
-		t.Skip("set BEPILOT_LIVE_LLM=1 to run against a live model")
+	if os.Getenv("BEPAYLOT_LIVE_LLM") != "1" {
+		t.Skip("set BEPAYLOT_LIVE_LLM=1 to run against a live model")
 	}
 	cfg, err := config.Load("../../configs/config.yaml")
 	if err != nil {
@@ -113,7 +113,7 @@ func TestLiveMathAndJSON(t *testing.T) {
 	cm, err := openaimodel.NewChatModel(ctx, &openaimodel.ChatModelConfig{
 		APIKey:    "sk-no-key",
 		BaseURL:   strings.TrimSuffix(os.Getenv("OPENAI_BASE_URL"), "/"),
-		Model:     os.Getenv("BEPILOT_DEFAULT_MODEL"),
+		Model:     os.Getenv("BEPAYLOT_DEFAULT_MODEL"),
 		MaxTokens: &maxTok,
 		Timeout:   10 * time.Minute,
 	})
@@ -131,7 +131,7 @@ func TestLiveMathAndJSON(t *testing.T) {
 	sys := prompt.Build(prompt.TurnContext{
 		Now:           time.Now(),
 		Provider:      "openai",
-		Model:         os.Getenv("BEPILOT_DEFAULT_MODEL"),
+		Model:         os.Getenv("BEPAYLOT_DEFAULT_MODEL"),
 		Identity:      cfg.Agent.Identity,
 		ResponseStyle: cfg.Agent.ResponseStyle,
 		Tools:         sess.VisibleDescriptions(),

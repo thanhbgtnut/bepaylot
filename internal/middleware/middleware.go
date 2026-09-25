@@ -21,7 +21,7 @@ import (
 // devBypassEmail/devBypassName identify the fixed local user that stands in
 // for authentication when Auth's bypass flag is set.
 const (
-	devBypassEmail = "dev-bypass@bepilot.local"
+	devBypassEmail = "dev-bypass@bepaylot.local"
 	devBypassName  = "Dev Bypass User"
 )
 
@@ -111,7 +111,7 @@ func CORS(origins []string) app.HandlerFunc {
 // Auth resolves the x-api-key header (falling back to Authorization: Bearer) to
 // a user and stores it in the request context.
 //
-// When bypass is true (BEPILOT_AUTH_BYPASS=true), the check is skipped
+// When bypass is true (BEPAYLOT_AUTH_BYPASS=true), the check is skipped
 // entirely: every request is treated as a fixed local dev user, created once
 // on first use. This is a local-development convenience only — never enable
 // it in a deployed environment, since it removes all request authentication.

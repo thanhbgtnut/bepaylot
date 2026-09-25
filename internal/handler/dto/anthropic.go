@@ -1,6 +1,6 @@
 // Package dto holds the HTTP request/response types. The message types mirror
 // the Anthropic Messages API so existing Claude clients work with minimal
-// changes; bepilot-specific fields (provider, metadata.session_id) are additive.
+// changes; bepaylot-specific fields (provider, metadata.session_id) are additive.
 package dto
 
 import (
@@ -13,7 +13,7 @@ import (
 // MessagesRequest is the body of POST /v1/messages.
 type MessagesRequest struct {
 	Model       string          `json:"model"`
-	Provider    string          `json:"provider,omitempty"` // bepilot extension
+	Provider    string          `json:"provider,omitempty"` // bepaylot extension
 	Messages    []InputMessage  `json:"messages"`
 	System      json.RawMessage `json:"system,omitempty" swaggertype:"object"` // string, or [{"type":"text","text":"..."}]
 	MaxTokens   int             `json:"max_tokens"`
@@ -21,7 +21,7 @@ type MessagesRequest struct {
 	Stream      bool            `json:"stream,omitempty"`
 	Metadata    *Metadata       `json:"metadata,omitempty"`
 
-	// HistoryTokenBudget (bepilot extension) caps the approximate number of
+	// HistoryTokenBudget (bepaylot extension) caps the approximate number of
 	// tokens of conversation history sent to the model this turn. Oldest
 	// messages are dropped first; the latest user message is always kept, even
 	// if it alone exceeds the budget. 0 or omitted uses the server default
@@ -32,7 +32,7 @@ type MessagesRequest struct {
 // Metadata carries the optional user and session identifiers.
 type Metadata struct {
 	UserID    string `json:"user_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"` // bepilot extension
+	SessionID string `json:"session_id,omitempty"` // bepaylot extension
 	// KBIDs attaches knowledge bases to the session (enables the kb_* tools).
 	KBIDs []string `json:"kb_ids,omitempty"`
 	// KBFilter pins a metadata filter for every knowledge search of the session.
@@ -117,7 +117,7 @@ type MessageResponse struct {
 	StopReason   string        `json:"stop_reason"`
 	StopSequence *string       `json:"stop_sequence"`
 	Usage        Usage         `json:"usage"`
-	Session      *SessionBrief `json:"session,omitempty"` // bepilot extension
+	Session      *SessionBrief `json:"session,omitempty"` // bepaylot extension
 }
 
 // SteeredResponse is returned instead of a message when the session already had

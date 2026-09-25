@@ -29,7 +29,7 @@ func TestAppendStoresHostileText(t *testing.T) {
 	}
 	defer st.Close()
 
-	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepilot.local", uuid.NewString()), "t")
+	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepaylot.local", uuid.NewString()), "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAppendConcurrentWritersGetDistinctSeq(t *testing.T) {
 	}
 	defer st.Close()
 
-	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepilot.local", uuid.NewString()), "t")
+	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepaylot.local", uuid.NewString()), "t")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestAgentRunDetailRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepilot.local", uuid.NewString()), "t")
+	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepaylot.local", uuid.NewString()), "t")
 	if err != nil {
 		t.Fatal(err)
 	}

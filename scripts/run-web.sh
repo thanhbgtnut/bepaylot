@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the bepilot agent (:9090) and the frontend dev server together.
+# Runs the bepaylot agent (:9090) and the frontend dev server together.
 # Ctrl+C stops both.
 set -euo pipefail
 

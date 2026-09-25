@@ -220,7 +220,7 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyEnvOverrides() {
-	if v := os.Getenv("BEPILOT_HTTP_ADDR"); v != "" {
+	if v := os.Getenv("BEPAYLOT_HTTP_ADDR"); v != "" {
 		c.HTTP.Addr = v
 	}
 	if v := os.Getenv("DATABASE_URL"); v != "" {
@@ -248,13 +248,13 @@ func (c *Config) applyEnvOverrides() {
 		}
 		c.LLM.Providers["openai"] = p
 	}
-	if v := os.Getenv("BEPILOT_DEFAULT_PROVIDER"); v != "" {
+	if v := os.Getenv("BEPAYLOT_DEFAULT_PROVIDER"); v != "" {
 		c.LLM.DefaultProvider = v
 	}
 	if v := os.Getenv("REDIS_ADDR"); v != "" {
 		c.Redis.Addr = v
 	}
-	if v := os.Getenv("BEPILOT_ROLE"); v != "" {
+	if v := os.Getenv("BEPAYLOT_ROLE"); v != "" {
 		c.Workers.Role = v
 	}
 }
@@ -351,7 +351,7 @@ func setDuration(p *time.Duration, def time.Duration) {
 	}
 }
 
-const defaultIdentity = `You are bepilot, a helpful, precise AI assistant. You give direct, well-structured answers, use tools when they materially improve the result, and you never fabricate facts or tool output.`
+const defaultIdentity = `You are bepaylot, a helpful, precise AI assistant. You give direct, well-structured answers, use tools when they materially improve the result, and you never fabricate facts or tool output.`
 
 const defaultResponseStyle = `Prefer concise, skimmable answers. Use Markdown. Lead with the answer, then supporting detail. Match the user's language.`
 

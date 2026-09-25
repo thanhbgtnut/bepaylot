@@ -14,7 +14,7 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", "configs/config.yaml", "path to config file")
-	email := flag.String("email", "dev@bepilot.local", "user email")
+	email := flag.String("email", "dev@bepaylot.local", "user email")
 	name := flag.String("name", "Local Dev", "user display name")
 	keyName := flag.String("key-name", "local", "api key label")
 	flag.Parse()
@@ -49,5 +49,5 @@ func main() {
 	fmt.Printf("key_id:   %s\n", key.ID)
 	fmt.Printf("api_key:  %s\n", plaintext)
 	fmt.Println("\nExport it for the curl examples:")
-	fmt.Printf("  export BEPILOT_API_KEY=%s\n", plaintext)
+	fmt.Printf("  export BEPAYLOT_API_KEY=%s\n", plaintext)
 }

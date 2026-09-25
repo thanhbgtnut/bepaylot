@@ -1,17 +1,17 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
-    container_name: bepilot-postgres
+    container_name: bepaylot-postgres
     environment:
-      POSTGRES_USER: bepilot
-      POSTGRES_PASSWORD: bepilot
-      POSTGRES_DB: bepilot
+      POSTGRES_USER: bepaylot
+      POSTGRES_PASSWORD: bepaylot
+      POSTGRES_DB: bepaylot
     ports:
-      - "${BEPILOT_PG_PORT:-5433}:5432"
+      - "${BEPAYLOT_PG_PORT:-5433}:5432"
     volumes:
-      - bepilot_pgdata:/var/lib/postgresql/data
+      - bepaylot_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bepilot -d bepilot"]
+      test: ["CMD-SHELL", "pg_isready -U bepaylot -d bepaylot"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -19,12 +19,12 @@ services:
   # Broker for the asynq task queue (§4).
   redis:
     image: redis:7.4-alpine
-    container_name: bepilot-redis
+    container_name: bepaylot-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${BEPILOT_REDIS_PORT:-6380}:6379"
+      - "${BEPAYLOT_REDIS_PORT:-6380}:6379"
     volumes:
-      - bepilot_redis:/data
+      - bepaylot_redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -34,16 +34,16 @@ services:
   # S3-compatible object storage for files and page images (§9.1).
   minio:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: bepilot-minio
+    container_name: bepaylot-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: bepilot
-      MINIO_ROOT_PASSWORD: bepilot-secret
+      MINIO_ROOT_USER: bepaylot
+      MINIO_ROOT_PASSWORD: bepaylot-secret
     ports:
-      - "${BEPILOT_MINIO_PORT:-9110}:9000"
-      - "${BEPILOT_MINIO_CONSOLE_PORT:-9111}:9001"
+      - "${BEPAYLOT_MINIO_PORT:-9110}:9000"
+      - "${BEPAYLOT_MINIO_CONSOLE_PORT:-9111}:9001"
     volumes:
-      - bepilot_minio:/data
+      - bepaylot_minio:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -51,6 +51,6 @@ services:
       retries: 20
 
 volumes:
-  bepilot_pgdata:
-  bepilot_redis:
-  bepilot_minio:
+  bepaylot_pgdata:
+  bepaylot_redis:
+  bepaylot_minio:

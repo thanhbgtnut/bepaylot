@@ -69,7 +69,7 @@ func New(t *testing.T, tweak ...func(*config.Config)) *Harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	user, err := st.Users.Create(ctx, fmt.Sprintf("kit-%s@bepilot.local", uuid.NewString()), "kit")
+	user, err := st.Users.Create(ctx, fmt.Sprintf("kit-%s@bepaylot.local", uuid.NewString()), "kit")
 	if err != nil {
 		t.Fatal(err)
 	}

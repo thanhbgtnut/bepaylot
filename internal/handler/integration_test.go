@@ -28,7 +28,7 @@ import (
 
 // These tests need a Postgres with pgvector. Set:
 //
-//	TEST_DATABASE_URL=postgres://bepilot:bepilot@localhost:5433/bepilot?sslmode=disable
+//	TEST_DATABASE_URL=postgres://bepaylot:bepaylot@localhost:5433/bepaylot?sslmode=disable
 func testDSN(t *testing.T) string {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -66,7 +66,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	reg, err := llm.NewRegistry(config.LLM{
-		DefaultProvider: "fake", DefaultModel: "bepilot-fake-1", MaxTokens: 1024,
+		DefaultProvider: "fake", DefaultModel: "bepaylot-fake-1", MaxTokens: 1024,
 		Providers: map[string]config.ProviderCfg{"fake": {Kind: "fake"}},
 	})
 	if err != nil {
@@ -83,11 +83,11 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	acfg := config.AgentCfg{
-		Identity: "You are bepilot.", ResponseStyle: "Be concise.",
+		Identity: "You are bepaylot.", ResponseStyle: "Be concise.",
 		MaxSteps: 8, HistoryTokenBudget: 24000, SummarizeEveryN: 0, SkillTopK: 4,
 		PingInterval: time.Second,
 	}
-	lcfg := config.LLM{DefaultProvider: "fake", DefaultModel: "bepilot-fake-1", MaxTokens: 1024}
+	lcfg := config.LLM{DefaultProvider: "fake", DefaultModel: "bepaylot-fake-1", MaxTokens: 1024}
 	ag := agent.New(st, reg, toolReg, skillSvc, acfg, lcfg, log)
 
 	h := &handler.Handlers{Store: st, Agent: ag, Registry: reg, Skills: skillSvc, LLM: lcfg, Agentcfg: acfg, Log: log}
@@ -106,7 +106,7 @@ func setup(t *testing.T) *testEnv {
 	waitReady(t, addr)
 
 	// seed a user + key
-	user, err := st.Users.Create(ctx, "it@bepilot.local", "IT")
+	user, err := st.Users.Create(ctx, "it@bepaylot.local", "IT")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func setup(t *testing.T) *testEnv {
 // messages), so the test is safe to run against a shared database and in
 // parallel with other packages' tests.
 func truncate(t *testing.T, st *postgres.Store) {
-	_, err := st.Pool.Exec(context.Background(), `DELETE FROM users WHERE email = 'it@bepilot.local'`)
+	_, err := st.Pool.Exec(context.Background(), `DELETE FROM users WHERE email = 'it@bepaylot.local'`)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestMessagesBufferedCreatesSessionAndUsesSkill(t *testing.T) {
 	e := setup(t)
 
 	resp := e.do(t, http.MethodPost, "/v1/messages", map[string]any{
-		"model":      "bepilot-fake-1",
+		"model":      "bepaylot-fake-1",
 		"max_tokens": 512,
 		"messages":   []map[string]any{{"role": "user", "content": "help me fill in a pdf form with my address"}},
 	})
@@ -293,7 +293,7 @@ func TestMessagesStreamingEmitsAnthropicEvents(t *testing.T) {
 	e := setup(t)
 
 	b, _ := json.Marshal(map[string]any{
-		"model":      "bepilot-fake-1",
+		"model":      "bepaylot-fake-1",
 		"max_tokens": 512,
 		"stream":     true,
 		"messages":   []map[string]any{{"role": "user", "content": "clean up this messy csv of customers"}},

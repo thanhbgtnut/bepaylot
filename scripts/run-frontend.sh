@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the frontend dev server (Vite's default port, e.g. 5173), pointed at
-# the bepilot agent's AG-UI endpoint.
+# the bepaylot agent's AG-UI endpoint.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

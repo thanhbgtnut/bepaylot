@@ -1,19 +1,19 @@
-# bepilot configuration. Values of the form ${VAR} are expanded from the
+# bepaylot configuration. Values of the form ${VAR} are expanded from the
 # environment at load time. A few well-known env vars also override entries
 # directly: DATABASE_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY,
-# BEPILOT_DEFAULT_PROVIDER, BEPILOT_HTTP_ADDR.
+# BEPAYLOT_DEFAULT_PROVIDER, BEPAYLOT_HTTP_ADDR.
 
-env: ${BEPILOT_ENV}
+env: ${BEPAYLOT_ENV}
 
 http:
-  addr: ${BEPILOT_HTTP_ADDR}
+  addr: ${BEPAYLOT_HTTP_ADDR}
   read_timeout: 65s
   write_timeout: 0s          # keep 0 for SSE
   shutdown_timeout: 20s
   cors_origins: []           # empty = allow any origin
   # DEV ONLY: skips x-api-key verification entirely when true. Never enable
   # this in a deployed environment.
-  auth_bypass: ${BEPILOT_AUTH_BYPASS}   # empty/false = auth required (default)
+  auth_bypass: ${BEPAYLOT_AUTH_BYPASS}   # empty/false = auth required (default)
 
 db:
   dsn: ${DATABASE_URL}
@@ -23,9 +23,9 @@ db:
   auto_migrate: true
 
 llm:
-  default_provider: ${BEPILOT_DEFAULT_PROVIDER}
-  default_model: ${BEPILOT_DEFAULT_MODEL}
-  summary_model: ${BEPILOT_DEFAULT_MODEL}
+  default_provider: ${BEPAYLOT_DEFAULT_PROVIDER}
+  default_model: ${BEPAYLOT_DEFAULT_MODEL}
+  summary_model: ${BEPAYLOT_DEFAULT_MODEL}
   # Per-reply output cap. A reply cut off by it is continued automatically (up to
   # 4 times), but every continuation re-sends the conversation, so a cap that fits
   # typical long answers is cheaper than relying on that.
@@ -55,7 +55,7 @@ llm:
 embedding:
   # 'hash' is deterministic and needs no API key. Switch to 'openai' for real
   # semantic retrieval (keep dim consistent with the migration: 1536).
-  kind: ${BEPILOT_EMBEDDING_KIND}
+  kind: ${BEPAYLOT_EMBEDDING_KIND}
   model: text-embedding-3-small
   api_key: ${OPENAI_API_KEY}
   base_url: ${OPENAI_BASE_URL}
@@ -63,7 +63,7 @@ embedding:
 
 agent:
   identity: >-
-    You are bepilot, a helpful, precise AI assistant. You give direct,
+    You are bepaylot, a helpful, precise AI assistant. You give direct,
     well-structured answers, use tools and skills when they materially improve
     the result, and you never fabricate facts or tool output.
   response_style: >-
@@ -79,7 +79,7 @@ agent:
   ping_interval: 15s
 
 skills:
-  dir: ${BEPILOT_SKILLS_DIR}
+  dir: ${BEPAYLOT_SKILLS_DIR}
   sync_on_startup: true
 
 tools:
@@ -89,7 +89,7 @@ mcp:
   # Model Context Protocol servers. Both sources below are hot-reloadable — a
   # server can be attached or detached while the process runs, and its tools
   # appear on the next message with no restart.
-  enabled: ${BEPILOT_MCP_ENABLED}   # empty/false = MCP off, API returns 503
+  enabled: ${BEPAYLOT_MCP_ENABLED}   # empty/false = MCP off, API returns 503
   # Static server list. Edit this file while running: changes are reconciled
   # within reload_interval. Leave file blank to use the API only.
   file: configs/mcp.yaml
@@ -98,8 +98,8 @@ mcp:
   tool_prefix: "mcp__"             # tools import as <prefix><server>__<tool>
 
 log:
-  level: ${BEPILOT_LOG_LEVEL}
-  format: ${BEPILOT_LOG_FORMAT}
+  level: ${BEPAYLOT_LOG_LEVEL}
+  format: ${BEPAYLOT_LOG_FORMAT}
 
 # ---------------------------------------------------------------------------
 # Document processing (spec/spec.md §4–§11)
@@ -120,7 +120,7 @@ storage:
     endpoint: ${S3_ENDPOINT}
     region: ${S3_REGION}
     bucket: ${S3_BUCKET}
-    prefix: bepilot
+    prefix: bepaylot
     access_key: ${S3_ACCESS_KEY}
     secret_key: ${S3_SECRET_KEY}
     use_path_style: true            # MinIO
@@ -136,7 +136,7 @@ upload:
   allowed_types: [application/pdf, image/jpeg, image/png, image/tiff]
 
 workers:
-  role: ${BEPILOT_ROLE}             # api | worker | all (default all)
+  role: ${BEPAYLOT_ROLE}             # api | worker | all (default all)
   concurrency: { core: 4, ocr: 8, index: 6, enrichment: 8, wiki: 4, maintenance: 2 }   # render = parser.render.workers
   render_inflight_batches: 1        # per document
   render_ahead_pages: 32            # rendered pages waiting for OCR, per document
@@ -147,8 +147,8 @@ parser:
   default_engine: turboocr
   pdf_mode: ocr_all                 # ocr_all | auto
   render:
-    mode: ${BEPILOT_RENDER_MODE}    # multi_threaded (prod, needs libpdfium) | webassembly (default)
-    worker_bin: ${BEPILOT_PDFIUM_WORKER}
+    mode: ${BEPAYLOT_RENDER_MODE}    # multi_threaded (prod, needs libpdfium) | webassembly (default)
+    worker_bin: ${BEPAYLOT_PDFIUM_WORKER}
     workers: 0                      # 0 = min(NumCPU-1, 4)
     dpi: 300
     max_long_side: 4000

@@ -52,8 +52,8 @@ COPY --from=pdfium /out/pdfium-worker /app/pdfium-worker
 COPY --from=pdfium /opt/pdfium/lib/ /usr/lib/
 COPY configs /app/configs
 COPY skills /app/skills
-ENV BEPILOT_RENDER_MODE=multi_threaded \
-    BEPILOT_PDFIUM_WORKER=/app/pdfium-worker \
+ENV BEPAYLOT_RENDER_MODE=multi_threaded \
+    BEPAYLOT_PDFIUM_WORKER=/app/pdfium-worker \
     GOMEMLIMIT=700MiB
 USER nonroot
 ENTRYPOINT ["/app/server"]

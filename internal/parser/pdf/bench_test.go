@@ -11,15 +11,15 @@ import (
 )
 
 // BenchmarkRenderA4 measures render + JPEG encode + text extraction of one
-// A4-sized page at 300 DPI (N7a). Mode follows BEPILOT_RENDER_MODE
+// A4-sized page at 300 DPI (N7a). Mode follows BEPAYLOT_RENDER_MODE
 // (webassembly by default; multi_threaded needs the pdfium-worker binary in
-// BEPILOT_PDFIUM_WORKER).
+// BEPAYLOT_PDFIUM_WORKER).
 func BenchmarkRenderA4(b *testing.B) {
-	mode := os.Getenv("BEPILOT_RENDER_MODE")
+	mode := os.Getenv("BEPAYLOT_RENDER_MODE")
 	if mode == "" {
 		mode = "webassembly"
 	}
-	r, err := New(Config{Mode: mode, WorkerBin: os.Getenv("BEPILOT_PDFIUM_WORKER"), Workers: 1, PageTimeout: time.Minute})
+	r, err := New(Config{Mode: mode, WorkerBin: os.Getenv("BEPAYLOT_PDFIUM_WORKER"), Workers: 1, PageTimeout: time.Minute})
 	if err != nil {
 		b.Fatal(err)
 	}

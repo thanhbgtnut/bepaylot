@@ -88,7 +88,7 @@ func newHTTPFetchTool(allowlist []string) (tool.InvokableTool, error) {
 			if isPrivateHost(host) {
 				return nil, fmt.Errorf("refusing to fetch private/loopback host %q", host)
 			}
-			req.Header.Set("User-Agent", "bepilot/1.0 (+http_fetch)")
+			req.Header.Set("User-Agent", "bepaylot/1.0 (+http_fetch)")
 
 			resp, err := client.Do(req)
 			if err != nil {

@@ -12,7 +12,7 @@ import (
 
 // ClientTool is one AG-UI-supplied tool definition (the protocol's `tools`
 // array): a tool implemented and executed by the calling frontend, not by
-// bepilot. The agent may call it like any other tool; bepilot only forwards
+// bepaylot. The agent may call it like any other tool; bepaylot only forwards
 // the call as AG-UI TOOL_CALL_* frames and ends the turn immediately after,
 // since it has no way to execute the tool itself. The client is expected to
 // run it and send the result back as a `tool` message on the next run.
@@ -38,7 +38,7 @@ func (t *clientTool) InvokableRun(context.Context, string, ...einotool.Option) (
 
 // buildClientTools converts AG-UI tool definitions into bound eino tools plus
 // the set of names that must return-directly (end the turn on call, since
-// bepilot cannot execute them). Unnamed or duplicate-named definitions are
+// bepaylot cannot execute them). Unnamed or duplicate-named definitions are
 // skipped rather than failing the whole turn.
 func buildClientTools(defs []ClientTool) ([]einotool.BaseTool, map[string]struct{}, error) {
 	if len(defs) == 0 {

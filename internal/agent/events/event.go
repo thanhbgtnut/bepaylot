@@ -18,8 +18,8 @@ const (
 	KindThinkingDelta     Kind = "thinking_delta"
 	KindInputJSONDelta    Kind = "input_json_delta"
 	KindContentBlockStop  Kind = "content_block_stop"
-	KindToolExecStart     Kind = "tool_execution_start" // bepilot extension
-	KindToolExecStop      Kind = "tool_execution_stop"  // bepilot extension
+	KindToolExecStart     Kind = "tool_execution_start" // bepaylot extension
+	KindToolExecStop      Kind = "tool_execution_stop"  // bepaylot extension
 	KindMessageDelta      Kind = "message_delta"
 	KindMessageStop       Kind = "message_stop"
 	KindError             Kind = "error"
@@ -32,7 +32,7 @@ type Event struct {
 	// MessageStart
 	MessageID string
 	Model     string
-	SessionID string // bepilot extension: lets a streaming client learn/confirm the session a turn landed in
+	SessionID string // bepaylot extension: lets a streaming client learn/confirm the session a turn landed in
 
 	// Content block framing
 	Index     int

@@ -1,5 +1,5 @@
-// Command server runs bepilot: the HTTP API, the task workers, or both
-// (-role / workers.role / BEPILOT_ROLE = api | worker | all).
+// Command server runs bepaylot: the HTTP API, the task workers, or both
+// (-role / workers.role / BEPAYLOT_ROLE = api | worker | all).
 package main
 
 import (
@@ -17,7 +17,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/logging"
 )
 
-// @title                       bepilot API
+// @title                       bepaylot API
 // @version                     1.0.0
 // @description                 A streaming AI agent backend with document processing. `/v1/messages` mirrors the Anthropic Messages API (with additive `provider` and `metadata.session_id` / `metadata.kb_ids` fields); `/v1/sessions` manages conversations; `/v1/kbs`, `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer) and search them without embeddings; `/v1/graph` and `/v1/kbs/{id}/wiki` expose the extracted knowledge graph.
 // @BasePath                    /

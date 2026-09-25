@@ -12,7 +12,7 @@ import (
 //
 // Standard Anthropic event types are emitted verbatim (message_start,
 // content_block_start, content_block_delta, content_block_stop, message_delta,
-// message_stop, error). Tool execution progress is emitted as the bepilot
+// message_stop, error). Tool execution progress is emitted as the bepaylot
 // extension events tool_execution_start / tool_execution_stop, which standard
 // Anthropic clients ignore.
 type AnthropicMapper struct {
@@ -37,7 +37,7 @@ func (m *AnthropicMapper) Map(ev Event) []*sse.Event {
 			"type": "message_start",
 			"message": map[string]any{
 				"id": ev.MessageID,
-				// session_id is a bepilot extension (standard Anthropic clients
+				// session_id is a bepaylot extension (standard Anthropic clients
 				// ignore unknown fields): the only place a streaming /v1/messages
 				// call surfaces which session a new turn landed in, since — unlike
 				// the buffered response's `session` field — nothing else in this

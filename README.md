@@ -1,4 +1,4 @@
-# BePilot
+# BePaylot
 
 Nền tảng xử lý tài liệu và agent AI viết bằng Go. File tải lên (PDF, ảnh scan) được
 OCR thành nội dung có cấu trúc đến từng dòng và vị trí trên trang, tìm kiếm được
@@ -60,13 +60,13 @@ make run                 # API + worker trên :8080
 
 `make dev` gộp `up`, `migrate` và `run`. Swagger UI ở `http://localhost:8080/docs`.
 
-> Nếu cổng 5433 đã bị dùng (ví dụ bởi WeKnora), đặt `BEPILOT_PG_PORT=5434` khi `make up`
+> Nếu cổng 5433 đã bị dùng (ví dụ bởi WeKnora), đặt `BEPAYLOT_PG_PORT=5434` khi `make up`
 > và sửa cổng trong `DATABASE_URL` tương ứng.
 
 ### Thử với tài liệu
 
 ```bash
-KEY=sk-bepilot-...      # từ make seed
+KEY=sk-bepaylot-...      # từ make seed
 H=(-H "x-api-key: $KEY")
 
 # 1. Tạo knowledge base có metadata schema
@@ -105,13 +105,13 @@ Trong `.env`:
 
 ```bash
 # Claude
-BEPILOT_DEFAULT_PROVIDER=claude
-BEPILOT_DEFAULT_MODEL=claude-sonnet-5
+BEPAYLOT_DEFAULT_PROVIDER=claude
+BEPAYLOT_DEFAULT_MODEL=claude-sonnet-5
 ANTHROPIC_API_KEY=sk-ant-...
 
 # hoặc server tương thích OpenAI (LM Studio, vLLM, Ollama, llama.cpp), không cần key
-BEPILOT_DEFAULT_PROVIDER=openai
-BEPILOT_DEFAULT_MODEL=<model id>
+BEPAYLOT_DEFAULT_PROVIDER=openai
+BEPAYLOT_DEFAULT_MODEL=<model id>
 OPENAI_BASE_URL=http://127.0.0.1:1234/v1
 ```
 
@@ -237,7 +237,7 @@ session, xử lý trên lane ưu tiên, và KB được gắn vào session ngay.
 
 ### MCP servers
 
-Tắt mặc định (`BEPILOT_MCP_ENABLED=true` để bật). Có hai nguồn cấu hình, cả hai đều gắn/gỡ **không cần restart**:
+Tắt mặc định (`BEPAYLOT_MCP_ENABLED=true` để bật). Có hai nguồn cấu hình, cả hai đều gắn/gỡ **không cần restart**:
 
 - **File `configs/mcp.yaml`:** đọc lại mỗi `mcp.reload_interval`. Hỗ trợ transport `stdio`, `sse`, `streamable_http`, cùng `tool_allowlist` và `disabled`.
 - **API `/v1/mcp/servers`:** cấu hình lưu trong Postgres và tự gắn lại khi khởi động. Mã lỗi: `502` khi không kết nối được server, `409` khi tên đã được file cấu hình giữ.
@@ -298,17 +298,17 @@ Cấu hình nằm trong `configs/config.yaml`; mọi giá trị `${VAR}` đượ
 | Biến | Ý nghĩa | Mặc định / ghi chú |
 |---|---|---|
 | `DATABASE_URL` | Postgres | bắt buộc |
-| `BEPILOT_HTTP_ADDR` | địa chỉ API | `:8080` |
-| `BEPILOT_ROLE` | `api` \| `worker` \| `all` | `all` |
+| `BEPAYLOT_HTTP_ADDR` | địa chỉ API | `:8080` |
+| `BEPAYLOT_ROLE` | `api` \| `worker` \| `all` | `all` |
 | `REDIS_ADDR` | Redis cho asynq | rỗng = chạy task trong process (chỉ dev, 1 instance) |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` | S3 / MinIO | bucket rỗng = lưu trong RAM (chỉ `development`) |
 | `TURBOOCR_URL` | engine OCR mặc định (`POST /ocr/raw`) | |
-| `BEPILOT_RENDER_MODE` | `multi_threaded` (production, cần `pdfium-worker`) \| `webassembly` | `webassembly` |
-| `BEPILOT_PDFIUM_WORKER` | đường dẫn binary `pdfium-worker` | |
-| `BEPILOT_DEFAULT_PROVIDER`, `BEPILOT_DEFAULT_MODEL` | LLM mặc định | `fake` |
+| `BEPAYLOT_RENDER_MODE` | `multi_threaded` (production, cần `pdfium-worker`) \| `webassembly` | `webassembly` |
+| `BEPAYLOT_PDFIUM_WORKER` | đường dẫn binary `pdfium-worker` | |
+| `BEPAYLOT_DEFAULT_PROVIDER`, `BEPAYLOT_DEFAULT_MODEL` | LLM mặc định | `fake` |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | khoá / endpoint LLM | |
-| `BEPILOT_MCP_ENABLED` | bật MCP | `false` |
-| `BEPILOT_AUTH_BYPASS` | bỏ qua xác thực (**chỉ dev**) | `false` |
+| `BEPAYLOT_MCP_ENABLED` | bật MCP | `false` |
+| `BEPAYLOT_AUTH_BYPASS` | bỏ qua xác thực (**chỉ dev**) | `false` |
 
 Các nhóm tinh chỉnh chính trong `config.yaml` (giải thích chi tiết ở spec §11):
 
@@ -333,11 +333,11 @@ Chạy API và worker thành hai deployment riêng, dùng chung Postgres, Redis 
 Docker (`deploy/Dockerfile`):
 
 ```bash
-docker build -f deploy/Dockerfile --target api    -t bepilot-api .
-docker build -f deploy/Dockerfile --target worker -t bepilot-worker .   # kèm libpdfium + pdfium-worker
+docker build -f deploy/Dockerfile --target api    -t bepaylot-api .
+docker build -f deploy/Dockerfile --target worker -t bepaylot-worker .   # kèm libpdfium + pdfium-worker
 ```
 
-Image `worker` bật `BEPILOT_RENDER_MODE=multi_threaded`: mỗi trang được render trong process
+Image `worker` bật `BEPAYLOT_RENDER_MODE=multi_threaded`: mỗi trang được render trong process
 PDFium riêng. Nên đặt `resources.limits` cho container; image đã có `GOMEMLIMIT`.
 
 Build `pdfium-worker` ngoài Docker cần libpdfium và `pkg-config pdfium`:
@@ -352,8 +352,8 @@ make pdfium-worker        # CGO_ENABLED=1 go build -tags pdfium_cgo ./cmd/pdfium
 
 ```bash
 make test          # unit test, không cần mạng hay DB
-make test-db       # thêm test tích hợp, chạy trên DB riêng bepilot_test
-make bench-render  # đo tốc độ render trang (BEPILOT_RENDER_MODE=multi_threaded để đo PDFium native)
+make test-db       # thêm test tích hợp, chạy trên DB riêng bepaylot_test
+make bench-render  # đo tốc độ render trang (BEPAYLOT_RENDER_MODE=multi_threaded để đo PDFium native)
 make swag          # sinh lại OpenAPI sau khi thêm/sửa endpoint
 make vet
 ```

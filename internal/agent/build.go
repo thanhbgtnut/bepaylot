@@ -19,7 +19,7 @@ import (
 // buildReactAgent constructs a ReAct agent that injects systemPrompt ahead of
 // the conversation on every model call. returnDirectly names tools whose call
 // ends the turn immediately instead of feeding a result back to the model —
-// used for AG-UI client-executed tools, which bepilot cannot run itself.
+// used for AG-UI client-executed tools, which bepaylot cannot run itself.
 //
 // maxModelCalls is the most times the turn may call the model (agent.max_steps
 // in the config). On the last one the model has no tools and must answer, so a

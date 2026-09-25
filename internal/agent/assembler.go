@@ -213,7 +213,7 @@ func (a *assembler) fail(errType, msg string) {
 // same blocks finish()/fail() just closed) BEFORE calling this. An AG-UI
 // client legitimately treats RUN_FINISHED/RUN_ERROR as "the turn is done,
 // safe to read back" and may immediately re-fetch the session over REST to
-// restore or verify its view (bepilot's own frontend does exactly this).
+// restore or verify its view (bepaylot's own frontend does exactly this).
 // Emitting the terminal event before the message.Append transaction commits
 // lets that re-fetch land in the gap and see the turn as if it never
 // happened. This is not hypothetical: it was reproduced live — a turn with

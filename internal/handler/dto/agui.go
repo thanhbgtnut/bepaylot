@@ -7,15 +7,15 @@ import (
 
 // AGUIRunAgentInput is the body of POST /v1/ag-ui/run. It follows the AG-UI
 // protocol's RunAgentInput shape (https://docs.ag-ui.com/sdk/js/core/types) so
-// an AG-UI client can talk to bepilot without a bridge.
+// an AG-UI client can talk to bepaylot without a bridge.
 //
 // `state` is folded into the system prompt as read-only client state, and
 // `context` items are folded in as situational notes. `tools` are bound to
-// the turn as client-executed tools: the agent may call them, but bepilot
+// the turn as client-executed tools: the agent may call them, but bepaylot
 // only forwards the call as AG-UI `TOOL_CALL_*` frames and ends the run
 // immediately after — the client must execute the tool itself and send the
 // result back as a `tool` message on the next run. `forwardedProps` has no
-// defined bepilot semantics and remains accepted-but-ignored.
+// defined bepaylot semantics and remains accepted-but-ignored.
 type AGUIRunAgentInput struct {
 	ThreadID       string               `json:"threadId"`
 	RunID          string               `json:"runId,omitempty"`

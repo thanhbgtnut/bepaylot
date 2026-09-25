@@ -23,7 +23,7 @@ type APIKeysRepo struct{ pool *pgxpool.Pool }
 
 // keyPlaintextPrefix is prepended to every generated key so it is recognisable
 // in logs and config, mirroring Anthropic's "sk-ant-" convention.
-const keyPlaintextPrefix = "sk-bepilot-"
+const keyPlaintextPrefix = "sk-bepaylot-"
 
 // Issue generates a new plaintext key, stores its hash, and returns the
 // plaintext exactly once.

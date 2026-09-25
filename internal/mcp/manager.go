@@ -190,7 +190,7 @@ func (m *Manager) addLocked(ctx context.Context, spec config.MCPServerSpec, sour
 
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initReq.Params.ClientInfo = mcp.Implementation{Name: "bepilot", Version: "1.0.0"}
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "bepaylot", Version: "1.0.0"}
 	if _, err := cli.Initialize(initCtx, initReq); err != nil {
 		_ = cli.Close()
 		return fmt.Errorf("initialize mcp server %q: %w", spec.Name, err)

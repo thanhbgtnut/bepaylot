@@ -165,7 +165,7 @@ type Search struct {
 
 func (c *Config) applyPipelineDefaults() {
 	setString(&c.Storage.S3.Region, "us-east-1")
-	setString(&c.Storage.S3.Prefix, "bepilot")
+	setString(&c.Storage.S3.Prefix, "bepaylot")
 	if c.Storage.S3.PartSizeMB == 0 {
 		c.Storage.S3.PartSizeMB = 16
 	}

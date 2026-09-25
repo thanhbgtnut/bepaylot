@@ -8,7 +8,7 @@ import (
 
 type runSessionIDKey struct{}
 
-// WithRunSessionID attaches the bepilot session id driving the current turn
+// WithRunSessionID attaches the bepaylot session id driving the current turn
 // to ctx. Built-in tools that persist per-session data (e.g. save_task_result)
 // read it back with RunSessionIDFrom instead of trusting the model to copy a
 // UUID into its arguments correctly.

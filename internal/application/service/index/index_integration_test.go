@@ -119,7 +119,7 @@ func TestIndexAndReasoningSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	user, _ := st.Users.Create(ctx, fmt.Sprintf("idx-test-%s@bepilot.local", uuid.NewString()), "t")
+	user, _ := st.Users.Create(ctx, fmt.Sprintf("idx-test-%s@bepaylot.local", uuid.NewString()), "t")
 	defer st.Pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1`, user.ID)
 
 	cfg := config.Defaults()

@@ -1,4 +1,4 @@
-# BePilot — Đặc tả kỹ thuật (Spec)
+# BePaylot — Đặc tả kỹ thuật (Spec)
 
 > Phiên bản: 0.4 · Ngày: 2026-09-25 · Trạng thái: đã triển khai P0–P3 (bản đầu), xem §15
 >
@@ -203,7 +203,7 @@ Mỗi pool là một `asynq.Server` riêng, nên concurrency được cô lập 
 | `maintenance` | `low`(1) | `document:delete`, `kb:delete`, `document:reparse`, `housekeeping:sweep` | 2 | việc dài, chạy nền |
 
 - Queue `*_interactive` dành cho file đính kèm trong chat (người dùng đang chờ). Queue này có weight cao hơn để không bị kẹt sau import hàng loạt, giống `QueueChatAttachment` của WeKnora.
-- Concurrency cấu hình qua `config.yaml` hoặc env `BEPILOT_ASYNQ_<POOL>_CONCURRENCY`.
+- Concurrency cấu hình qua `config.yaml` hoặc env `BEPAYLOT_ASYNQ_<POOL>_CONCURRENCY`.
 - Mọi handler được bọc middleware: `backgroundCtx` → `tracing` → `deadLetter` → `cancelGuard` (bỏ qua nếu document đã `cancelled`/`deleting`).
 
 ### 4.2 Pipeline xử lý một tài liệu
@@ -1330,7 +1330,7 @@ storage:                          # S3 (bắt buộc; dev dùng MinIO)
     endpoint: ${S3_ENDPOINT}
     region: ${S3_REGION}
     bucket: ${S3_BUCKET}
-    prefix: bepilot
+    prefix: bepaylot
     access_key: ${S3_ACCESS_KEY}
     secret_key: ${S3_SECRET_KEY}
     use_path_style: true            # MinIO
@@ -1347,7 +1347,7 @@ upload:
   allowed_types: [application/pdf, image/jpeg, image/png, image/tiff]
 
 workers:
-  role: ${BEPILOT_ROLE}             # api | worker | all
+  role: ${BEPAYLOT_ROLE}             # api | worker | all
   concurrency: { core: 4, ocr: 8, index: 6, enrichment: 8, wiki: 4, maintenance: 2 }   # render = render.workers
   render_inflight_batches: 1        # mỗi document
   render_ahead_pages: 32            # trang đã render chờ OCR tối đa, mỗi document
@@ -1369,7 +1369,7 @@ parser:
     page_timeout: 30s
     recycle_after_pages: 500
     max_worker_rss_mb: 1024
-    cache_dir: /var/cache/bepilot/pdf
+    cache_dir: /var/cache/bepaylot/pdf
     cache_max_bytes: 21474836480    # 20 GB
   text_layer:
     enabled: all                    # all | pdfa_only | off
@@ -1514,7 +1514,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 
 ### 15.4 Môi trường dev và test
 
-- `make up` chạy Postgres, Redis, MinIO (`deploy/docker-compose.yml`). Cổng mặc định: Postgres 5433 (đổi bằng `BEPILOT_PG_PORT`), Redis 6380, MinIO 9110/9111.
-- Test tích hợp **chỉ** chạy trên database riêng `bepilot_test` (`make test-db`), không bao giờ trỏ `TEST_DATABASE_URL` vào DB dev.
+- `make up` chạy Postgres, Redis, MinIO (`deploy/docker-compose.yml`). Cổng mặc định: Postgres 5433 (đổi bằng `BEPAYLOT_PG_PORT`), Redis 6380, MinIO 9110/9111.
+- Test tích hợp **chỉ** chạy trên database riêng `bepaylot_test` (`make test-db`), không bao giờ trỏ `TEST_DATABASE_URL` vào DB dev.
 - Mẫu biến môi trường: `.env.example`.
 

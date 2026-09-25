@@ -71,7 +71,7 @@ func setup(t *testing.T) (*Service, *queue.Inline, *postgres.Store, uuid.UUID, *
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	user, err := st.Users.Create(ctx, fmt.Sprintf("doc-test-%s@bepilot.local", uuid.NewString()), "t")
+	user, err := st.Users.Create(ctx, fmt.Sprintf("doc-test-%s@bepaylot.local", uuid.NewString()), "t")
 	if err != nil {
 		t.Fatal(err)
 	}

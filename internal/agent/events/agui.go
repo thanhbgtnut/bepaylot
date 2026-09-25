@@ -8,7 +8,7 @@ import (
 )
 
 // AGUIMapper converts the internal agent event stream into AG-UI protocol SSE
-// frames, so an AG-UI client (e.g. CopilotKit's HttpAgent) can drive a bepilot
+// frames, so an AG-UI client (e.g. CopilotKit's HttpAgent) can drive a bepaylot
 // turn directly. It is the sibling of AnthropicMapper: one internal stream,
 // two wire formats.
 //
@@ -39,7 +39,7 @@ type AGUIMapper struct {
 }
 
 // NewAGUIMapper creates a mapper bound to one AG-UI run. threadID is the
-// bepilot session id; runID identifies this turn.
+// bepaylot session id; runID identifies this turn.
 func NewAGUIMapper(threadID, runID string) *AGUIMapper {
 	return &AGUIMapper{
 		threadID:  threadID,

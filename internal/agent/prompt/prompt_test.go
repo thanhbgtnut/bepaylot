@@ -13,7 +13,7 @@ func baseCtx() TurnContext {
 		Provider:      "claude",
 		Model:         "claude-sonnet-5",
 		SessionID:     "sess-1",
-		Identity:      "You are bepilot.",
+		Identity:      "You are bepaylot.",
 		ResponseStyle: "Be concise.",
 		Tools:         map[string]string{"load_skill": "load a skill", "current_time": "now"},
 	}
@@ -21,7 +21,7 @@ func baseCtx() TurnContext {
 
 func TestBuildIncludesEnvironmentAndStyle(t *testing.T) {
 	out := Build(baseCtx())
-	for _, want := range []string{"You are bepilot.", "<environment>", "Thursday, 10 September 2026", "claude-sonnet-5", "Tools available:", "<response_style>", "Be concise."} {
+	for _, want := range []string{"You are bepaylot.", "<environment>", "Thursday, 10 September 2026", "claude-sonnet-5", "Tools available:", "<response_style>", "Be concise."} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, out)
 		}

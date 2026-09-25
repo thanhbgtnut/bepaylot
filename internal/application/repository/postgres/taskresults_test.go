@@ -28,7 +28,7 @@ func TestTaskResultsUpsertReplacesByTaskKey(t *testing.T) {
 	}
 	defer st.Close()
 
-	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepilot.local", uuid.NewString()), "t")
+	user, err := st.Users.Create(ctx, fmt.Sprintf("store-test-%s@bepaylot.local", uuid.NewString()), "t")
 	if err != nil {
 		t.Fatal(err)
 	}
