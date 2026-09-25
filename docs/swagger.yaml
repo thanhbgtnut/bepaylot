@@ -1,0 +1,3566 @@
+basePath: /
+definitions:
+  document.Accepted:
+    properties:
+      document_id:
+        type: string
+      duplicate:
+        type: boolean
+      file_name:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      status:
+        type: string
+    type: object
+  document.DocumentDetail:
+    properties:
+      batch_id:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      doc_type:
+        type: string
+      engine:
+        type: string
+      error:
+        type: string
+      failed_pages:
+        items:
+          $ref: '#/definitions/document.FailedPage'
+        type: array
+      file_name:
+        type: string
+      gen:
+        type: integer
+      graph_status:
+        type: string
+      id:
+        type: string
+      index_status:
+        type: string
+      kb_id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      mime_type:
+        type: string
+      page_count:
+        type: integer
+      pages_done:
+        type: integer
+      pages_failed:
+        type: integer
+      pages_text_layer:
+        type: integer
+      parse_status:
+        type: string
+      pdf_info:
+        additionalProperties: {}
+        type: object
+      pdfa_conformance:
+        type: string
+      pdfa_part:
+        type: integer
+      progress:
+        type: number
+      size_bytes:
+        type: integer
+      spans:
+        items:
+          $ref: '#/definitions/postgres.Span'
+        type: array
+      status:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  document.FailedPage:
+    properties:
+      error:
+        type: string
+      page_no:
+        type: integer
+    type: object
+  document.LocateRequest:
+    properties:
+      fuzzy:
+        type: boolean
+      line:
+        type: integer
+      md_end:
+        type: integer
+      md_start:
+        type: integer
+      page:
+        type: integer
+      text:
+        type: string
+    type: object
+  document.Location:
+    properties:
+      bbox:
+        $ref: '#/definitions/types.BBox'
+      bbox_pt:
+        allOf:
+        - $ref: '#/definitions/types.BBox'
+        description: BBoxPt is the box in PDF points (origin top-left of the page).
+      block_no:
+        type: integer
+      line_no:
+        type: integer
+      page_no:
+        type: integer
+      quad:
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
+      score:
+        type: number
+      text:
+        type: string
+    type: object
+  document.PageView:
+    properties:
+      attempts:
+        type: integer
+      blocks:
+        items:
+          $ref: '#/definitions/postgres.PageBlock'
+        type: array
+      doc_md_offset:
+        type: integer
+      document_id:
+        type: string
+      dpi:
+        type: number
+      engine:
+        type: string
+      error:
+        type: string
+      finished_at:
+        type: string
+      gen:
+        type: integer
+      height:
+        type: integer
+      height_pt:
+        type: number
+      is_blank:
+        type: boolean
+      lines:
+        items:
+          $ref: '#/definitions/postgres.PageLine'
+        type: array
+      markdown:
+        type: string
+      ocr_ms:
+        type: integer
+      page_no:
+        type: integer
+      render_ms:
+        type: integer
+      rotation:
+        type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      text_plain:
+        type: string
+      text_quality:
+        type: number
+      text_source:
+        type: string
+      width:
+        type: integer
+      width_pt:
+        type: number
+    type: object
+  document.Rejected:
+    properties:
+      errors:
+        items:
+          type: string
+        type: array
+      file_name:
+        type: string
+      index:
+        type: integer
+    type: object
+  document.ReparseRequest:
+    properties:
+      engine:
+        type: string
+      pages:
+        items:
+          type: integer
+        type: array
+    type: object
+  document.UploadResult:
+    properties:
+      batch_id:
+        type: string
+      documents:
+        items:
+          $ref: '#/definitions/document.Accepted'
+        type: array
+      rejected:
+        items:
+          $ref: '#/definitions/document.Rejected'
+        type: array
+    type: object
+  dto.AGUIContextItem:
+    properties:
+      description:
+        type: string
+      value:
+        type: string
+    type: object
+  dto.AGUIMessage:
+    properties:
+      content:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      role:
+        description: user | assistant | tool | system | developer
+        type: string
+      toolCallId:
+        type: string
+    type: object
+  dto.AGUIRunAgentInput:
+    properties:
+      context:
+        items:
+          $ref: '#/definitions/dto.AGUIContextItem'
+        type: array
+      forwardedProps:
+        type: object
+      messages:
+        items:
+          $ref: '#/definitions/dto.AGUIMessage'
+        type: array
+      runId:
+        type: string
+      state:
+        type: object
+      threadId:
+        type: string
+      tools:
+        items:
+          $ref: '#/definitions/dto.AGUIToolDefinition'
+        type: array
+    type: object
+  dto.AGUIToolDefinition:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      parameters:
+        type: object
+    type: object
+  dto.BulkMetadataRequest:
+    properties:
+      filter:
+        properties:
+          batch_id:
+            type: string
+          document_ids:
+            items:
+              type: string
+            type: array
+          metadata:
+            $ref: '#/definitions/types.MetadataFilter'
+        type: object
+      set:
+        additionalProperties: {}
+        type: object
+      unset:
+        items:
+          type: string
+        type: array
+    type: object
+  dto.BulkMetadataResponse:
+    properties:
+      updated:
+        type: integer
+    type: object
+  dto.CreateKBRequest:
+    properties:
+      config:
+        $ref: '#/definitions/types.KBConfig'
+      description:
+        type: string
+      metadata_schema:
+        $ref: '#/definitions/types.MetadataSchema'
+      name:
+        type: string
+    type: object
+  dto.CreateSessionRequest:
+    properties:
+      metadata:
+        additionalProperties: {}
+        type: object
+      model:
+        type: string
+      provider:
+        type: string
+      system:
+        type: string
+      title:
+        type: string
+    type: object
+  dto.DeadLetter:
+    properties:
+      fail_count:
+        type: integer
+      failed_at:
+        type: string
+      id:
+        type: integer
+      last_error:
+        type: string
+      payload:
+        type: object
+      queue:
+        type: string
+      scope:
+        type: string
+      scope_id:
+        type: string
+      task_type:
+        type: string
+    type: object
+  dto.DeadLetterList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.DeadLetter'
+        type: array
+    type: object
+  dto.DeleteResponse:
+    properties:
+      deleted:
+        type: boolean
+      id:
+        type: string
+    type: object
+  dto.DocumentList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.Document'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  dto.DocumentSearchRequest:
+    properties:
+      mode:
+        description: keyword (default) | reasoning
+        type: string
+      query:
+        type: string
+    type: object
+  dto.DocumentSearchResponse:
+    properties:
+      pages:
+        items:
+          $ref: '#/definitions/types.PageSearchHit'
+        type: array
+    type: object
+  dto.EngineInfo:
+    properties:
+      available:
+        type: boolean
+      default:
+        type: boolean
+      error:
+        type: string
+      name:
+        type: string
+    type: object
+  dto.EngineList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.EngineInfo'
+        type: array
+    type: object
+  dto.EntityList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.Entity'
+        type: array
+    type: object
+  dto.ErrorResponse:
+    properties:
+      error:
+        properties:
+          message:
+            type: string
+          type:
+            type: string
+        type: object
+      type:
+        description: '"error"'
+        type: string
+    type: object
+  dto.HealthResponse:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+  dto.InputMessage:
+    properties:
+      content:
+        description: string, or an array of content blocks
+        type: object
+      role:
+        type: string
+    type: object
+  dto.KBList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.KnowledgeBase'
+        type: array
+    type: object
+  dto.LocationsResponse:
+    properties:
+      hits:
+        items:
+          $ref: '#/definitions/types.SearchHit'
+        type: array
+    type: object
+  dto.MCPServerListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.MCPServerView'
+        type: array
+    type: object
+  dto.MCPServerRequest:
+    properties:
+      args:
+        items:
+          type: string
+        type: array
+      command:
+        description: stdio
+        type: string
+      env:
+        additionalProperties:
+          type: string
+        type: object
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      tool_allowlist:
+        items:
+          type: string
+        type: array
+      transport:
+        description: stdio | sse | streamable_http
+        type: string
+      url:
+        description: sse | streamable_http
+        type: string
+    type: object
+  dto.MCPServerView:
+    properties:
+      connected_at:
+        type: string
+      name:
+        type: string
+      source:
+        description: file | api
+        type: string
+      tools:
+        items:
+          type: string
+        type: array
+      transport:
+        type: string
+    type: object
+  dto.MarkdownResponse:
+    properties:
+      markdown:
+        type: string
+    type: object
+  dto.MessageListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.TranscriptMessage'
+        type: array
+    type: object
+  dto.MessageResponse:
+    properties:
+      content:
+        items:
+          $ref: '#/definitions/dto.OutputBlock'
+        type: array
+      id:
+        type: string
+      model:
+        type: string
+      role:
+        description: '"assistant"'
+        type: string
+      session:
+        allOf:
+        - $ref: '#/definitions/dto.SessionBrief'
+        description: bepilot extension
+      stop_reason:
+        type: string
+      stop_sequence:
+        type: string
+      type:
+        description: '"message"'
+        type: string
+      usage:
+        $ref: '#/definitions/dto.Usage'
+    type: object
+  dto.MessagesRequest:
+    properties:
+      history_token_budget:
+        description: |-
+          HistoryTokenBudget (bepilot extension) caps the approximate number of
+          tokens of conversation history sent to the model this turn. Oldest
+          messages are dropped first; the latest user message is always kept, even
+          if it alone exceeds the budget. 0 or omitted uses the server default
+          (agent.history_token_budget); a negative value is rejected.
+        example: 24000
+        type: integer
+      max_tokens:
+        type: integer
+      messages:
+        items:
+          $ref: '#/definitions/dto.InputMessage'
+        type: array
+      metadata:
+        $ref: '#/definitions/dto.Metadata'
+      model:
+        type: string
+      provider:
+        description: bepilot extension
+        type: string
+      stream:
+        type: boolean
+      system:
+        description: string, or [{"type":"text","text":"..."}]
+        type: object
+      temperature:
+        type: number
+    type: object
+  dto.Metadata:
+    properties:
+      kb_filter:
+        additionalProperties: {}
+        description: KBFilter pins a metadata filter for every knowledge search of
+          the session.
+        type: object
+      kb_ids:
+        description: KBIDs attaches knowledge bases to the session (enables the kb_*
+          tools).
+        items:
+          type: string
+        type: array
+      session_id:
+        description: bepilot extension
+        type: string
+      user_id:
+        type: string
+    type: object
+  dto.MetadataSchemaBody:
+    properties:
+      schema:
+        $ref: '#/definitions/types.MetadataSchema'
+    type: object
+  dto.MetadataUpdateRequest:
+    properties:
+      metadata:
+        additionalProperties: {}
+        type: object
+      mode:
+        description: Mode is merge (default; null values delete keys) or replace.
+        type: string
+    type: object
+  dto.MetadataValue:
+    properties:
+      count:
+        type: integer
+      value:
+        type: string
+    type: object
+  dto.MetadataValuesResponse:
+    properties:
+      key:
+        type: string
+      values:
+        items:
+          $ref: '#/definitions/dto.MetadataValue'
+        type: array
+    type: object
+  dto.OK:
+    properties:
+      ok:
+        type: boolean
+    type: object
+  dto.OutputBlock:
+    properties:
+      content: {}
+      id:
+        type: string
+      input:
+        additionalProperties: {}
+        type: object
+      is_error:
+        type: boolean
+      name:
+        type: string
+      text:
+        type: string
+      thinking:
+        type: string
+      tool_use_id:
+        type: string
+      type:
+        description: text | tool_use | tool_result | thinking
+        type: string
+    type: object
+  dto.PagesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.DocumentPage'
+        type: array
+    type: object
+  dto.QueueStat:
+    properties:
+      active:
+        type: integer
+      archived:
+        type: integer
+      error:
+        type: string
+      name:
+        type: string
+      pending:
+        type: integer
+      pool:
+        type: string
+      retry:
+        type: integer
+      scheduled:
+        type: integer
+      size:
+        type: integer
+      weight:
+        type: integer
+    type: object
+  dto.QueueStats:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.QueueStat'
+        type: array
+    type: object
+  dto.ReadyResponse:
+    properties:
+      default_model:
+        type: string
+      default_provider:
+        type: string
+      error:
+        type: string
+      providers:
+        items:
+          type: string
+        type: array
+      status:
+        example: ready
+        type: string
+    type: object
+  dto.RebuildResponse:
+    properties:
+      queued:
+        type: integer
+    type: object
+  dto.SchemaList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.GraphSchema'
+        type: array
+    type: object
+  dto.SchemaTestRequest:
+    properties:
+      text:
+        type: string
+    type: object
+  dto.SessionBrief:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      model:
+        type: string
+      provider:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.SessionDetail:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      messages:
+        items:
+          $ref: '#/definitions/dto.TranscriptMessage'
+        type: array
+      metadata:
+        additionalProperties: {}
+        type: object
+      model:
+        type: string
+      provider:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.SessionList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.SessionBrief'
+        type: array
+      has_more:
+        type: boolean
+      next_cursor:
+        type: string
+    type: object
+  dto.SessionReport:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      model:
+        type: string
+      provider:
+        type: string
+      summary:
+        type: string
+      tasks:
+        items:
+          $ref: '#/definitions/dto.TaskResultDTO'
+        type: array
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.SkillListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.SkillView'
+        type: array
+    type: object
+  dto.SkillSyncResult:
+    properties:
+      deleted:
+        type: integer
+      discovered:
+        type: integer
+      embedded:
+        type: integer
+      slugs:
+        items:
+          type: string
+        type: array
+    type: object
+  dto.SkillView:
+    properties:
+      allowed_tools:
+        items:
+          type: string
+        type: array
+      description:
+        type: string
+      enabled:
+        type: boolean
+      has_embedding:
+        type: boolean
+      name:
+        type: string
+      slug:
+        type: string
+    type: object
+  dto.SteeredResponse:
+    properties:
+      message_id:
+        description: the stored user message
+        type: string
+      session:
+        $ref: '#/definitions/dto.SessionBrief'
+      type:
+        description: '"steered"'
+        type: string
+    type: object
+  dto.TaskResultDTO:
+    properties:
+      result:
+        additionalProperties: {}
+        type: object
+      task_key:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.TranscriptMessage:
+    properties:
+      content:
+        items:
+          $ref: '#/definitions/dto.OutputBlock'
+        type: array
+      created_at:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+      seq:
+        type: integer
+      stop_reason:
+        type: string
+      usage:
+        $ref: '#/definitions/dto.Usage'
+    type: object
+  dto.TreeResponse:
+    properties:
+      nodes:
+        items:
+          $ref: '#/definitions/types.TreeNode'
+        type: array
+    type: object
+  dto.UpdateKBRequest:
+    properties:
+      config:
+        $ref: '#/definitions/types.KBConfig'
+      description:
+        type: string
+      name:
+        type: string
+    type: object
+  dto.UpdateSessionRequest:
+    properties:
+      metadata:
+        additionalProperties: {}
+        type: object
+      title:
+        type: string
+    type: object
+  dto.Usage:
+    properties:
+      input_tokens:
+        type: integer
+      output_tokens:
+        type: integer
+    type: object
+  dto.WikiEditRequest:
+    properties:
+      content:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+    type: object
+  dto.WikiPageList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.WikiPage'
+        type: array
+    type: object
+  graph.EntityDetail:
+    properties:
+      aliases:
+        items:
+          type: string
+        type: array
+      attributes:
+        additionalProperties: {}
+        type: object
+      conflict:
+        type: boolean
+      id:
+        type: string
+      kb_id:
+        type: string
+      mentions:
+        items:
+          $ref: '#/definitions/types.Mention'
+        type: array
+      name:
+        type: string
+      relations:
+        items:
+          $ref: '#/definitions/graph.RelationView'
+        type: array
+      summary:
+        type: string
+      type:
+        type: string
+      wiki_slug:
+        type: string
+    type: object
+  graph.EntityRef:
+    properties:
+      name:
+        type: string
+      type:
+        type: string
+    type: object
+  graph.ExtractedEntity:
+    properties:
+      attributes:
+        additionalProperties: {}
+        type: object
+      evidence:
+        type: string
+      name:
+        type: string
+      type:
+        type: string
+      unit:
+        type: string
+    type: object
+  graph.ExtractedRelation:
+    properties:
+      attributes:
+        additionalProperties: {}
+        type: object
+      evidence:
+        type: string
+      source:
+        $ref: '#/definitions/graph.EntityRef'
+      target:
+        $ref: '#/definitions/graph.EntityRef'
+      type:
+        type: string
+      unit:
+        type: string
+    type: object
+  graph.Extraction:
+    properties:
+      entities:
+        items:
+          $ref: '#/definitions/graph.ExtractedEntity'
+        type: array
+      relations:
+        items:
+          $ref: '#/definitions/graph.ExtractedRelation'
+        type: array
+    type: object
+  graph.RelationView:
+    properties:
+      attributes:
+        additionalProperties: {}
+        type: object
+      direction:
+        description: out | in
+        type: string
+      id:
+        type: string
+      other_name:
+        type: string
+      other_type:
+        type: string
+      source_id:
+        type: string
+      target_id:
+        type: string
+      type:
+        type: string
+    type: object
+  graph.TestResult:
+    properties:
+      extraction:
+        $ref: '#/definitions/graph.Extraction'
+      warnings:
+        items:
+          $ref: '#/definitions/graph.Warning'
+        type: array
+    type: object
+  graph.Warning:
+    properties:
+      item:
+        type: string
+      kind:
+        type: string
+      reason:
+        type: string
+    type: object
+  postgres.PageBlock:
+    properties:
+      asset_key:
+        type: string
+      bbox:
+        $ref: '#/definitions/types.BBox'
+      block_no:
+        type: integer
+      confidence:
+        type: number
+      html:
+        type: string
+      is_furniture:
+        type: boolean
+      latex:
+        type: string
+      md_end:
+        type: integer
+      md_start:
+        type: integer
+      page_no:
+        type: integer
+      raw_class:
+        type: string
+      source_id:
+        type: integer
+      text:
+        type: string
+      type:
+        $ref: '#/definitions/types.BlockType'
+    type: object
+  postgres.PageLine:
+    properties:
+      bbox:
+        $ref: '#/definitions/types.BBox'
+      block_no:
+        type: integer
+      confidence:
+        type: number
+      in_figure:
+        type: boolean
+      line_no:
+        type: integer
+      low_confidence:
+        type: boolean
+      md_end:
+        type: integer
+      md_start:
+        type: integer
+      page_no:
+        type: integer
+      quad:
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
+      source_id:
+        type: integer
+      text:
+        type: string
+      text_layer:
+        type: string
+      text_ocr:
+        type: string
+      text_source:
+        type: string
+    type: object
+  postgres.Span:
+    properties:
+      document_id:
+        type: string
+      error:
+        type: string
+      finished_at:
+        type: string
+      gen:
+        type: integer
+      id:
+        type: integer
+      ref:
+        type: string
+      stage:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+    type: object
+  postgres.WikiRevision:
+    properties:
+      content:
+        type: string
+      edit_source:
+        type: string
+      edited_at:
+        type: string
+      editor_id:
+        type: string
+      summary:
+        type: string
+      version:
+        type: integer
+    type: object
+  types.AttributeDef:
+    properties:
+      name:
+        type: string
+      pattern:
+        type: string
+      required:
+        type: boolean
+      type:
+        description: string | number | money | date | bool
+        type: string
+    type: object
+  types.BBox:
+    properties:
+      x0:
+        type: number
+      x1:
+        type: number
+      y0:
+        type: number
+      y1:
+        type: number
+    type: object
+  types.BlockType:
+    enum:
+    - title
+    - heading
+    - paragraph
+    - table
+    - formula
+    - figure
+    - caption
+    - header
+    - footer
+    - page_number
+    - footnote
+    - unknown
+    type: string
+    x-enum-varnames:
+    - BlockTitle
+    - BlockHeading
+    - BlockParagraph
+    - BlockTable
+    - BlockFormula
+    - BlockFigure
+    - BlockCaption
+    - BlockHeader
+    - BlockFooter
+    - BlockPageNumber
+    - BlockFootnote
+    - BlockUnknown
+  types.Document:
+    properties:
+      batch_id:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      doc_type:
+        type: string
+      engine:
+        type: string
+      error:
+        type: string
+      file_name:
+        type: string
+      gen:
+        type: integer
+      graph_status:
+        type: string
+      id:
+        type: string
+      index_status:
+        type: string
+      kb_id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      mime_type:
+        type: string
+      page_count:
+        type: integer
+      pages_done:
+        type: integer
+      pages_failed:
+        type: integer
+      pages_text_layer:
+        type: integer
+      parse_status:
+        type: string
+      pdf_info:
+        additionalProperties: {}
+        type: object
+      pdfa_conformance:
+        type: string
+      pdfa_part:
+        type: integer
+      size_bytes:
+        type: integer
+      status:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.DocumentBrief:
+    properties:
+      doc_type:
+        type: string
+      file_name:
+        type: string
+      id:
+        type: string
+      kb_id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      page_count:
+        type: integer
+      status:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+    type: object
+  types.DocumentPage:
+    properties:
+      attempts:
+        type: integer
+      doc_md_offset:
+        type: integer
+      document_id:
+        type: string
+      dpi:
+        type: number
+      engine:
+        type: string
+      error:
+        type: string
+      finished_at:
+        type: string
+      gen:
+        type: integer
+      height:
+        type: integer
+      height_pt:
+        type: number
+      is_blank:
+        type: boolean
+      markdown:
+        type: string
+      ocr_ms:
+        type: integer
+      page_no:
+        type: integer
+      render_ms:
+        type: integer
+      rotation:
+        type: integer
+      started_at:
+        type: string
+      status:
+        type: string
+      text_plain:
+        type: string
+      text_quality:
+        type: number
+      text_source:
+        type: string
+      width:
+        type: integer
+      width_pt:
+        type: number
+    type: object
+  types.Entity:
+    properties:
+      aliases:
+        items:
+          type: string
+        type: array
+      attributes:
+        additionalProperties: {}
+        type: object
+      conflict:
+        type: boolean
+      id:
+        type: string
+      kb_id:
+        type: string
+      mentions:
+        type: integer
+      name:
+        type: string
+      summary:
+        type: string
+      type:
+        type: string
+      wiki_slug:
+        type: string
+    type: object
+  types.EntityTypeDef:
+    properties:
+      attributes:
+        items:
+          $ref: '#/definitions/types.AttributeDef'
+        type: array
+      description:
+        type: string
+      identity:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      resolve_scope:
+        description: |-
+          ResolveScope lists document metadata keys that must match for two
+          mentions to merge (e.g. ma_ho_so).
+        items:
+          type: string
+        type: array
+    type: object
+  types.ExtractionSettings:
+    properties:
+      examples:
+        items: {}
+        type: array
+      instructions:
+        type: string
+      unit:
+        description: section | page
+        type: string
+    type: object
+  types.GraphSchema:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      entity_types:
+        items:
+          $ref: '#/definitions/types.EntityTypeDef'
+        type: array
+      extraction:
+        $ref: '#/definitions/types.ExtractionSettings'
+      id:
+        type: string
+      model:
+        type: string
+      name:
+        type: string
+      relation_types:
+        items:
+          $ref: '#/definitions/types.RelationTypeDef'
+        type: array
+      version:
+        type: integer
+    type: object
+  types.KBConfig:
+    properties:
+      graph_enabled:
+        type: boolean
+      graph_schema:
+        type: string
+      parser_engine:
+        type: string
+    type: object
+  types.KnowledgeBase:
+    properties:
+      config:
+        $ref: '#/definitions/types.KBConfig'
+      created_at:
+        type: string
+      description:
+        type: string
+      graph_schema_id:
+        type: string
+      id:
+        type: string
+      is_temporary:
+        type: boolean
+      metadata_schema:
+        $ref: '#/definitions/types.MetadataSchema'
+      name:
+        type: string
+      owner_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.LineMatch:
+    properties:
+      bbox:
+        $ref: '#/definitions/types.BBox'
+      line_no:
+        type: integer
+      score:
+        type: number
+      snippet:
+        type: string
+    type: object
+  types.Mention:
+    properties:
+      document_id:
+        type: string
+      entity_id:
+        type: string
+      evidence:
+        type: string
+      file_name:
+        type: string
+      id:
+        type: integer
+      relation_id:
+        type: string
+      section_id:
+        type: string
+      source_spans:
+        items:
+          $ref: '#/definitions/types.SourceSpan'
+        type: array
+    type: object
+  types.MetadataField:
+    properties:
+      description:
+        type: string
+      indexed:
+        type: boolean
+      key:
+        type: string
+      normalize:
+        description: upper_trim | lower_trim | none
+        type: string
+      required:
+        type: boolean
+      type:
+        description: string | number | bool | date | enum
+        type: string
+      values:
+        description: enum
+        items:
+          type: string
+        type: array
+    type: object
+  types.MetadataFilter:
+    additionalProperties: {}
+    type: object
+  types.MetadataSchema:
+    properties:
+      fields:
+        items:
+          $ref: '#/definitions/types.MetadataField'
+        type: array
+      strict:
+        description: Strict rejects keys that are not declared.
+        type: boolean
+    type: object
+  types.PageSearchHit:
+    properties:
+      hits:
+        items:
+          $ref: '#/definitions/types.LineMatch'
+        type: array
+      page_no:
+        type: integer
+      score:
+        type: number
+    type: object
+  types.Relation:
+    properties:
+      attributes:
+        additionalProperties: {}
+        type: object
+      id:
+        type: string
+      source_id:
+        type: string
+      target_id:
+        type: string
+      type:
+        type: string
+    type: object
+  types.RelationTypeDef:
+    properties:
+      attributes:
+        items:
+          $ref: '#/definitions/types.AttributeDef'
+        type: array
+      description:
+        type: string
+      name:
+        type: string
+      source:
+        type: string
+      target:
+        type: string
+    type: object
+  types.SearchHit:
+    properties:
+      bboxes:
+        items:
+          $ref: '#/definitions/types.BBox'
+        type: array
+      citation_id:
+        type: string
+      document_id:
+        type: string
+      file_name:
+        type: string
+      lines:
+        items:
+          type: integer
+        type: array
+      metadata:
+        additionalProperties: {}
+        type: object
+      node_id:
+        type: string
+      node_path:
+        items:
+          type: string
+        type: array
+      page_no:
+        type: integer
+      quote:
+        type: string
+      reason:
+        type: string
+      relevance:
+        type: number
+      snippet:
+        type: string
+    type: object
+  types.SearchRequest:
+    properties:
+      document_ids:
+        items:
+          type: string
+        type: array
+      kb_ids:
+        items:
+          type: string
+        type: array
+      metadata:
+        $ref: '#/definitions/types.MetadataFilter'
+      mode:
+        type: string
+      page_from:
+        type: integer
+      page_to:
+        type: integer
+      query:
+        type: string
+      top_k:
+        type: integer
+    type: object
+  types.SearchResponse:
+    properties:
+      documents:
+        items:
+          $ref: '#/definitions/types.DocumentBrief'
+        type: array
+      hits:
+        items:
+          $ref: '#/definitions/types.SearchHit'
+        type: array
+      trace:
+        $ref: '#/definitions/types.SearchTrace'
+    type: object
+  types.SearchTrace:
+    properties:
+      cached:
+        type: boolean
+      candidate_docs:
+        type: integer
+      dropped_hits:
+        type: integer
+      elapsed_ms:
+        type: integer
+      fallback:
+        type: string
+      llm_calls:
+        type: integer
+      mode:
+        type: string
+      selected_docs:
+        items:
+          type: string
+        type: array
+      selected_nodes:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+      truncated:
+        type: boolean
+    type: object
+  types.SourceSpan:
+    properties:
+      bbox:
+        $ref: '#/definitions/types.BBox'
+      block_nos:
+        items:
+          type: integer
+        type: array
+      line_from:
+        type: integer
+      line_to:
+        type: integer
+      page:
+        type: integer
+    type: object
+  types.Subgraph:
+    properties:
+      entities:
+        items:
+          $ref: '#/definitions/types.Entity'
+        type: array
+      relations:
+        items:
+          $ref: '#/definitions/types.Relation'
+        type: array
+    type: object
+  types.TreeNode:
+    properties:
+      document_id:
+        type: string
+      gen:
+        type: integer
+      id:
+        type: string
+      level:
+        type: integer
+      ord:
+        type: integer
+      origin:
+        description: root | bookmark | heading | llm | page
+        type: string
+      page_end:
+        type: integer
+      page_start:
+        type: integer
+      parent_id:
+        type: string
+      section_ids:
+        items:
+          type: string
+        type: array
+      short_id:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      token_count:
+        type: integer
+    type: object
+  types.WikiPage:
+    properties:
+      aliases:
+        items:
+          type: string
+        type: array
+      content:
+        type: string
+      entity_id:
+        type: string
+      id:
+        type: string
+      in_links:
+        items:
+          type: string
+        type: array
+      kb_id:
+        type: string
+      last_edit_source:
+        type: string
+      out_links:
+        items:
+          type: string
+        type: array
+      page_type:
+        type: string
+      slug:
+        type: string
+      source_refs:
+        items:
+          type: string
+        type: array
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: A streaming AI agent backend with document processing. `/v1/messages`
+    mirrors the Anthropic Messages API (with additive `provider` and `metadata.session_id`
+    / `metadata.kb_ids` fields); `/v1/sessions` manages conversations; `/v1/kbs`,
+    `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer) and search
+    them without embeddings; `/v1/graph` and `/v1/kbs/{id}/wiki` expose the extracted
+    knowledge graph.
+  title: bepilot API
+  version: 1.0.0
+paths:
+  /healthz:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.HealthResponse'
+      summary: Liveness probe
+      tags:
+      - Health
+  /readyz:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ReadyResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.ReadyResponse'
+      summary: Readiness probe (checks the database)
+      tags:
+      - Health
+  /v1/admin/dead-letters:
+    get:
+      parameters:
+      - description: Filter by task type
+        in: query
+        name: task_type
+        type: string
+      - description: Filter by scope id (document/KB id)
+        in: query
+        name: scope_id
+        type: string
+      - default: 100
+        description: Max rows
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.DeadLetterList'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Tasks that exhausted their retries
+      tags:
+      - Admin
+  /v1/admin/dead-letters/{id}/retry:
+    post:
+      parameters:
+      - description: Dead letter id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Re-enqueue a dead-lettered task
+      tags:
+      - Admin
+  /v1/admin/queues:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.QueueStats'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Queue depths per worker pool
+      tags:
+      - Admin
+  /v1/ag-ui/run:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Accepts an AG-UI `RunAgentInput` and streams the turn back as AG-UI protocol Server-Sent Events: `RUN_STARTED`, `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END`, `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` / `TOOL_CALL_RESULT`, then `RUN_FINISHED` (or `RUN_ERROR`). Each frame is a `data:` line whose JSON carries a `type` field.
+        `threadId` maps to a bepilot session: pass an existing session id to continue a conversation, or leave it empty to start a new one (the new id is returned in `RUN_STARTED.threadId` — persist it for the next turn). Only the last user message drives the turn; history is loaded server-side. `state` and `context` are folded into the system prompt for this turn. `tools` are bound as client-executed tools: the agent may call one, but bepilot only emits the `TOOL_CALL_*` frames and ends the run — the client must execute the tool and send the result back as a `tool` message on the next run. `forwardedProps` is accepted but has no defined effect. A request whose `messages` carries no user turn is treated as a history replay for an existing `threadId` (CopilotKit issues this when a thread becomes the active one in the UI): the response is `RUN_STARTED` + `MESSAGES_SNAPSHOT` (the session's persisted messages) + `RUN_FINISHED`, with no new turn run or saved. Such a request naming an empty or unknown `threadId` is a 400, since there is nothing to replay.
+        A thread runs one turn at a time, but a message never has to wait for it. If a run is already in progress on the thread, the new message is handed to it — the model reads it before its next step — and this request answers immediately with an empty `RUN_STARTED` + `RUN_FINISHED`; the reply appears on the stream of the run that is in progress. A short stop message ("stop", "dừng", "hủy") interrupts the run in progress instead: it keeps what it produced and ends with a normal `RUN_FINISHED`, and the message then runs as a normal turn.
+      parameters:
+      - description: AG-UI RunAgentInput
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AGUIRunAgentInput'
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: AG-UI protocol SSE event stream
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Run an agent turn (AG-UI protocol)
+      tags:
+      - AG-UI
+  /v1/citations:
+    get:
+      parameters:
+      - description: Citation id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LocationsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Resolve a citation id (doc:<id>:p<page>:l<a>-<b>) to text and boxes
+      tags:
+      - Search
+  /v1/documents/{id}:
+    delete:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a document (async purge of rows and objects)
+      tags:
+      - Documents
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Include processing spans
+        in: query
+        name: spans
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/document.DocumentDetail'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get a document with progress, failed pages and (optionally) spans
+      tags:
+      - Documents
+  /v1/documents/{id}/cancel:
+    post:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Cancel processing (finished pages are kept)
+      tags:
+      - Documents
+  /v1/documents/{id}/events:
+    get:
+      description: Emits a "status" event whenever status, stage or page counters
+        change, and ends when the document reaches a terminal state.
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: event stream
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Stream processing progress (Server-Sent Events)
+      tags:
+      - Documents
+  /v1/documents/{id}/file:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Download the original file
+      tags:
+      - Documents
+  /v1/documents/{id}/locate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: line+page | md_start+md_end | text
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/document.LocateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/document.Location'
+            type: array
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Resolve a line, a markdown range or a text to page positions
+      tags:
+      - Pages
+  /v1/documents/{id}/markdown:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page range, e.g. 1-5
+        in: query
+        name: pages
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MarkdownResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Markdown of the document (optionally a page range)
+      tags:
+      - Documents
+  /v1/documents/{id}/metadata:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Metadata
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MetadataUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Document'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Merge or replace a document's metadata
+      tags:
+      - Metadata
+  /v1/documents/{id}/pages:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: First page
+        in: query
+        name: from
+        type: integer
+      - description: Last page
+        in: query
+        name: to
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PagesResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List page rows (status, size, text source)
+      tags:
+      - Pages
+  /v1/documents/{id}/pages/{n}:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page number (1-based)
+        in: path
+        name: "n"
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/document.PageView'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: One page with markdown, blocks and lines (with boxes)
+      tags:
+      - Pages
+  /v1/documents/{id}/pages/{n}/image:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page number (1-based)
+        in: path
+        name: "n"
+        required: true
+        type: integer
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "302":
+          description: Redirect to the presigned S3 URL
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: The rendered page image (redirect to a presigned URL, or streamed)
+      tags:
+      - Pages
+  /v1/documents/{id}/reparse:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: pages and/or engine
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/document.ReparseRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/types.Document'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Reparse the whole document (new generation) or selected pages
+      tags:
+      - Documents
+  /v1/documents/{id}/search:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Query
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.DocumentSearchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.DocumentSearchResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Find a term in one document, grouped by page
+      tags:
+      - Search
+  /v1/documents/{id}/tree:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TreeResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: The document's table of contents (vectorless tree) with summaries
+      tags:
+      - Search
+  /v1/graph/entities/{id}:
+    get:
+      parameters:
+      - description: Entity id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/graph.EntityDetail'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: An entity with relations and evidence (with page positions)
+      tags:
+      - Graph
+  /v1/graph/entities/{id}/neighbors:
+    get:
+      parameters:
+      - description: Entity id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 1
+        description: Hops (1-3)
+        in: query
+        name: depth
+        type: integer
+      - description: Comma-separated relation types
+        in: query
+        name: relation_types
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Subgraph'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Entities within N hops (≤3)
+      tags:
+      - Graph
+  /v1/graph/schemas:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SchemaList'
+      security:
+      - ApiKeyAuth: []
+      summary: List graph schemas (latest version of each)
+      tags:
+      - Graph schemas
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Schema (version 0 = next version)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.GraphSchema'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.GraphSchema'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a graph schema version (validated)
+      tags:
+      - Graph schemas
+  /v1/graph/schemas/{name}:
+    get:
+      parameters:
+      - description: Schema name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SchemaList'
+      security:
+      - ApiKeyAuth: []
+      summary: Every version of a graph schema
+      tags:
+      - Graph schemas
+  /v1/graph/schemas/{name}/test:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Schema name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Text
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SchemaTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/graph.TestResult'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Dry-run extraction of a text with a schema (nothing stored)
+      tags:
+      - Graph schemas
+  /v1/kbs:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.KBList'
+      security:
+      - ApiKeyAuth: []
+      summary: List knowledge bases
+      tags:
+      - Knowledge bases
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Knowledge base
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateKBRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.KnowledgeBase'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a knowledge base
+      tags:
+      - Knowledge bases
+  /v1/kbs/{id}:
+    delete:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a knowledge base and its documents
+      tags:
+      - Knowledge bases
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.KnowledgeBase'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get a knowledge base
+      tags:
+      - Knowledge bases
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateKBRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.KnowledgeBase'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Update a knowledge base
+      tags:
+      - Knowledge bases
+  /v1/kbs/{id}/documents:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Comma-separated statuses
+        in: query
+        name: status
+        type: string
+      - description: Upload batch id
+        in: query
+        name: batch_id
+        type: string
+      - description: JSON metadata filter, e.g. {\
+        in: query
+        name: metadata
+        type: string
+      - description: Full-text over file name, card and metadata values
+        in: query
+        name: q
+        type: string
+      - default: 100
+        description: Page size (max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: 'Cursor: created_at of the last item (RFC3339)'
+        in: query
+        name: before
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.DocumentList'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List documents, filtered by status, batch, metadata or text
+      tags:
+      - Documents
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: File (repeat for several files)
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: JSON metadata for every file, e.g. {\
+        in: formData
+        name: metadata
+        type: string
+      - description: JSON per-file metadata keyed by file name or index
+        in: formData
+        name: files_metadata
+        type: string
+      - description: Use the high-priority lanes (chat attachments)
+        in: query
+        name: interactive
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/document.UploadResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Upload one or more files (streamed) with optional metadata
+      tags:
+      - Documents
+  /v1/kbs/{id}/documents/metadata/bulk-update:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Filter and changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.BulkMetadataRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.BulkMetadataResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Set or remove metadata keys on every matching document
+      tags:
+      - Metadata
+  /v1/kbs/{id}/graph/entities:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Search text
+        in: query
+        name: q
+        type: string
+      - description: Entity type
+        in: query
+        name: type
+        type: string
+      - default: 20
+        description: Max results
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EntityList'
+      security:
+      - ApiKeyAuth: []
+      summary: Find graph entities by name/alias/attribute (accent-insensitive)
+      tags:
+      - Graph
+  /v1/kbs/{id}/graph/path:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Entity id
+        format: uuid
+        in: query
+        name: from
+        required: true
+        type: string
+      - description: Entity id
+        format: uuid
+        in: query
+        name: to
+        required: true
+        type: string
+      - default: 4
+        description: Max hops
+        in: query
+        name: max_depth
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Subgraph'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Shortest relation path between two entities (≤4 hops)
+      tags:
+      - Graph
+  /v1/kbs/{id}/graph/rebuild:
+    post:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/dto.RebuildResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Re-extract the graph of every document (after a schema change)
+      tags:
+      - Graph
+  /v1/kbs/{id}/metadata-schema:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MetadataSchemaBody'
+      security:
+      - ApiKeyAuth: []
+      summary: Get a knowledge base's metadata schema
+      tags:
+      - Metadata
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Schema (null clears it)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MetadataSchemaBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.KnowledgeBase'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Replace a knowledge base's metadata schema
+      tags:
+      - Metadata
+  /v1/kbs/{id}/metadata/values:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Metadata key, e.g. ma_ho_so
+        in: query
+        name: key
+        required: true
+        type: string
+      - description: Only values starting with this (accent-insensitive)
+        in: query
+        name: prefix
+        type: string
+      - default: 100
+        description: Max values
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MetadataValuesResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Distinct values of a metadata key (e.g. every case code)
+      tags:
+      - Metadata
+  /v1/kbs/{id}/wiki/pages:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WikiPageList'
+      security:
+      - ApiKeyAuth: []
+      summary: List wiki pages
+      tags:
+      - Wiki
+  /v1/kbs/{id}/wiki/pages/{slug}:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.WikiPage'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Read a wiki page
+      tags:
+      - Wiki
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: New content
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.WikiEditRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.WikiPage'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Edit a wiki page by hand (later generations will not overwrite it)
+      tags:
+      - Wiki
+  /v1/kbs/{id}/wiki/pages/{slug}/revisions:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/postgres.WikiRevision'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: A wiki page's revision history
+      tags:
+      - Wiki
+  /v1/mcp/servers:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MCPServerListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List attached MCP servers
+      tags:
+      - MCP
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: MCP server connection
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MCPServerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MCPServerView'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Attach or update an MCP server
+      tags:
+      - MCP
+  /v1/mcp/servers/{name}:
+    delete:
+      parameters:
+      - description: Server name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.DeleteResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Detach an API-registered MCP server
+      tags:
+      - MCP
+  /v1/messages:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Runs one agent turn. With `stream: true` (or `Accept: text/event-stream`) the response is Server-Sent Events using Anthropic frame types (`message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`, `ping`, `error`) plus the extension events `tool_execution_start` / `tool_execution_stop`. `message_start.message.session_id` is a bepilot extension carrying the session the turn was persisted under — capture it (when `metadata.session_id` was omitted, a new session is created) and pass it back as `metadata.session_id` on the next call to continue the conversation. Otherwise a single JSON message is returned, whose `session` field carries the same information.
+        A session runs one turn at a time, but a message never has to wait for it. If a turn is already running on the session, the new message is handed to that turn, which reads it before its next step: the response is `202` with `{"type":"steered"}` (or, when streaming, a single `steered` event) and the reply arrives on the stream of the turn that is running. A short stop message ("stop", "dừng", "hủy") instead interrupts the running turn, which keeps what it produced and ends with `stop_reason: "interrupted"`, and the message then runs as a normal turn.
+      parameters:
+      - description: Message request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MessagesRequest'
+      produces:
+      - application/json
+      - text/event-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/dto.SteeredResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a message (streaming or buffered)
+      tags:
+      - Messages
+  /v1/parser/engines:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EngineList'
+      security:
+      - ApiKeyAuth: []
+      summary: Registered OCR engines and their health
+      tags:
+      - Pages
+  /v1/search:
+    post:
+      consumes:
+      - application/json
+      description: 'mode=reasoning (default): an LLM picks documents, walks their
+        table of contents and cites exact lines; mode=keyword: Postgres full-text
+        + trigram; mode=metadata: list documents matching the metadata filter. No
+        embeddings are used.'
+      parameters:
+      - description: Query, scope and filters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.SearchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.SearchResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Search documents (reasoning over the document tree, keyword, or metadata
+        only)
+      tags:
+      - Search
+  /v1/sessions:
+    get:
+      parameters:
+      - default: 30
+        description: Page size (1-100)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque cursor from a previous response's next_cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SessionList'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List the authenticated user's sessions
+      tags:
+      - Sessions
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Session fields
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.CreateSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.SessionBrief'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a session explicitly
+      tags:
+      - Sessions
+  /v1/sessions/{id}:
+    delete:
+      parameters:
+      - description: Session id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.DeleteResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Soft-delete a session
+      tags:
+      - Sessions
+    get:
+      parameters:
+      - description: Session id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SessionDetail'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get a session with its reconstructed transcript
+      tags:
+      - Sessions
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Session id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SessionBrief'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Update a session's title or metadata
+      tags:
+      - Sessions
+  /v1/sessions/{id}/attachments:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Files go into the session's temporary knowledge base, which is
+        added to the session's kb_ids so the agent can search them while parsing continues.
+      parameters:
+      - description: Session id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: File (repeat for several files)
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: JSON metadata for every file
+        in: formData
+        name: metadata
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/document.UploadResult'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Attach files to a chat session (parsed on the high-priority lanes)
+      tags:
+      - Sessions
+  /v1/sessions/{id}/messages:
+    get:
+      parameters:
+      - description: Session id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 0
+        description: Return messages with seq greater than this
+        in: query
+        name: after_seq
+        type: integer
+      - default: 200
+        description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List a session's messages
+      tags:
+      - Sessions
+  /v1/sessions/{id}/report:
+    get:
+      parameters:
+      - description: Session id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SessionReport'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get a session's saved task results
+      tags:
+      - Sessions
+  /v1/skills:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SkillListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List skills and their status
+      tags:
+      - Skills
+  /v1/skills/sync:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SkillSyncResult'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Rescan the skills directory and reconcile the database
+      tags:
+      - Skills
+schemes:
+- http
+- https
+securityDefinitions:
+  ApiKeyAuth:
+    description: 'An API key issued by `cmd/seed`. `Authorization: Bearer <key>` is
+      also accepted.'
+    in: header
+    name: x-api-key
+    type: apiKey
+swagger: "2.0"

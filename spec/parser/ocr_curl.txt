@@ -1,0 +1,14 @@
+POST /ocr/raw
+Body raw binary (file ảnh). Trả JSON có results[] (text + confidence + bounding_box) theo đúng thứ tự đọc.
+curl -X POST "http://10.215.122.20:30189/ocr/raw" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary "@/path/to/image.jpg"
+Query param table/formula
+Param	Giá trị	Tác dụng
+layout	1	Bật phân tích layout (bounding box theo vùng nội dung)
+reading_order	1	Trả thêm thứ tự đọc theo layout
+tables	1	Nhận diện bảng → HTML (cần TABLE_BACKEND=slanext đã load)
+formulas	1	Nhận diện công thức → LaTeX (cần FORMULA_BACKEND đã load)
+curl -X POST 'http://10.215.122.20:30189/ocr/raw?layout=1&reading_order=1&tables=1&formulas=1' \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary "@/path/to/image.jpg"

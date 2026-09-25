@@ -1,0 +1,5472 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "A streaming AI agent backend with document processing. `/v1/messages` mirrors the Anthropic Messages API (with additive `provider` and `metadata.session_id` / `metadata.kb_ids` fields); `/v1/sessions` manages conversations; `/v1/kbs`, `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer) and search them without embeddings; `/v1/graph` and `/v1/kbs/{id}/wiki` expose the extracted knowledge graph.",
+        "title": "bepilot API",
+        "contact": {},
+        "version": "1.0.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/healthz": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Liveness probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/readyz": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Readiness probe (checks the database)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ReadyResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ReadyResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/dead-letters": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Tasks that exhausted their retries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by task type",
+                        "name": "task_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by scope id (document/KB id)",
+                        "name": "scope_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Max rows",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.DeadLetterList"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/dead-letters/{id}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Re-enqueue a dead-lettered task",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Dead letter id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/queues": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Queue depths per worker pool",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.QueueStats"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/ag-ui/run": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Accepts an AG-UI `RunAgentInput` and streams the turn back as AG-UI protocol Server-Sent Events: `RUN_STARTED`, `TEXT_MESSAGE_START` / `TEXT_MESSAGE_CONTENT` / `TEXT_MESSAGE_END`, `TOOL_CALL_START` / `TOOL_CALL_ARGS` / `TOOL_CALL_END` / `TOOL_CALL_RESULT`, then `RUN_FINISHED` (or `RUN_ERROR`). Each frame is a `data:` line whose JSON carries a `type` field.\n`threadId` maps to a bepilot session: pass an existing session id to continue a conversation, or leave it empty to start a new one (the new id is returned in `RUN_STARTED.threadId` — persist it for the next turn). Only the last user message drives the turn; history is loaded server-side. `state` and `context` are folded into the system prompt for this turn. `tools` are bound as client-executed tools: the agent may call one, but bepilot only emits the `TOOL_CALL_*` frames and ends the run — the client must execute the tool and send the result back as a `tool` message on the next run. `forwardedProps` is accepted but has no defined effect. A request whose `messages` carries no user turn is treated as a history replay for an existing `threadId` (CopilotKit issues this when a thread becomes the active one in the UI): the response is `RUN_STARTED` + `MESSAGES_SNAPSHOT` (the session's persisted messages) + `RUN_FINISHED`, with no new turn run or saved. Such a request naming an empty or unknown `threadId` is a 400, since there is nothing to replay.\nA thread runs one turn at a time, but a message never has to wait for it. If a run is already in progress on the thread, the new message is handed to it — the model reads it before its next step — and this request answers immediately with an empty `RUN_STARTED` + `RUN_FINISHED`; the reply appears on the stream of the run that is in progress. A short stop message (\"stop\", \"dừng\", \"hủy\") interrupts the run in progress instead: it keeps what it produced and ends with a normal `RUN_FINISHED`, and the message then runs as a normal turn.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "AG-UI"
+                ],
+                "summary": "Run an agent turn (AG-UI protocol)",
+                "parameters": [
+                    {
+                        "description": "AG-UI RunAgentInput",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.AGUIRunAgentInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "AG-UI protocol SSE event stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/citations": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "Resolve a citation id (doc:\u003cid\u003e:p\u003cpage\u003e:l\u003ca\u003e-\u003cb\u003e) to text and boxes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Citation id",
+                        "name": "id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LocationsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Get a document with progress, failed pages and (optionally) spans",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include processing spans",
+                        "name": "spans",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/document.DocumentDetail"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Delete a document (async purge of rows and objects)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Cancel processing (finished pages are kept)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/events": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Emits a \"status\" event whenever status, stage or page counters change, and ends when the document reaches a terminal state.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Stream processing progress (Server-Sent Events)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "event stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/file": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Download the original file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/locate": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Pages"
+                ],
+                "summary": "Resolve a line, a markdown range or a text to page positions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "line+page | md_start+md_end | text",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/document.LocateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/document.Location"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/markdown": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Markdown of the document (optionally a page range)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page range, e.g. 1-5",
+                        "name": "pages",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MarkdownResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/metadata": {
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metadata"
+                ],
+                "summary": "Merge or replace a document's metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Metadata",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MetadataUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Document"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/pages": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Pages"
+                ],
+                "summary": "List page rows (status, size, text source)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "First page",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Last page",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.PagesResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/pages/{n}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Pages"
+                ],
+                "summary": "One page with markdown, blocks and lines (with boxes)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (1-based)",
+                        "name": "n",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/document.PageView"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/pages/{n}/image": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "image/jpeg"
+                ],
+                "tags": [
+                    "Pages"
+                ],
+                "summary": "The rendered page image (redirect to a presigned URL, or streamed)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (1-based)",
+                        "name": "n",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "302": {
+                        "description": "Redirect to the presigned S3 URL",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/reparse": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Reparse the whole document (new generation) or selected pages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "pages and/or engine",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/document.ReparseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/types.Document"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/search": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "Find a term in one document, grouped by page",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Query",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.DocumentSearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.DocumentSearchResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/tree": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "The document's table of contents (vectorless tree) with summaries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.TreeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/graph/entities/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph"
+                ],
+                "summary": "An entity with relations and evidence (with page positions)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Entity id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/graph.EntityDetail"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/graph/entities/{id}/neighbors": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph"
+                ],
+                "summary": "Entities within N hops (≤3)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Entity id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Hops (1-3)",
+                        "name": "depth",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated relation types",
+                        "name": "relation_types",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Subgraph"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/graph/schemas": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph schemas"
+                ],
+                "summary": "List graph schemas (latest version of each)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SchemaList"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph schemas"
+                ],
+                "summary": "Create a graph schema version (validated)",
+                "parameters": [
+                    {
+                        "description": "Schema (version 0 = next version)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.GraphSchema"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.GraphSchema"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/graph/schemas/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph schemas"
+                ],
+                "summary": "Every version of a graph schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Schema name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SchemaList"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/graph/schemas/{name}/test": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph schemas"
+                ],
+                "summary": "Dry-run extraction of a text with a schema (nothing stored)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Schema name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Text",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SchemaTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/graph.TestResult"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge bases"
+                ],
+                "summary": "List knowledge bases",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.KBList"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge bases"
+                ],
+                "summary": "Create a knowledge base",
+                "parameters": [
+                    {
+                        "description": "Knowledge base",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateKBRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.KnowledgeBase"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge bases"
+                ],
+                "summary": "Get a knowledge base",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.KnowledgeBase"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge bases"
+                ],
+                "summary": "Delete a knowledge base and its documents",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge bases"
+                ],
+                "summary": "Update a knowledge base",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateKBRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.KnowledgeBase"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/documents": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "List documents, filtered by status, batch, metadata or text",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated statuses",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Upload batch id",
+                        "name": "batch_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON metadata filter, e.g. {\\",
+                        "name": "metadata",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Full-text over file name, card and metadata values",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Page size (max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor: created_at of the last item (RFC3339)",
+                        "name": "before",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.DocumentList"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Upload one or more files (streamed) with optional metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "File (repeat for several files)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON metadata for every file, e.g. {\\",
+                        "name": "metadata",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON per-file metadata keyed by file name or index",
+                        "name": "files_metadata",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Use the high-priority lanes (chat attachments)",
+                        "name": "interactive",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/document.UploadResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/documents/metadata/bulk-update": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metadata"
+                ],
+                "summary": "Set or remove metadata keys on every matching document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Filter and changes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.BulkMetadataRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BulkMetadataResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/graph/entities": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph"
+                ],
+                "summary": "Find graph entities by name/alias/attribute (accent-insensitive)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search text",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Entity type",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Max results",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EntityList"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/graph/path": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph"
+                ],
+                "summary": "Shortest relation path between two entities (≤4 hops)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Entity id",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Entity id",
+                        "name": "to",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 4,
+                        "description": "Max hops",
+                        "name": "max_depth",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Subgraph"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/graph/rebuild": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph"
+                ],
+                "summary": "Re-extract the graph of every document (after a schema change)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RebuildResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/metadata-schema": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metadata"
+                ],
+                "summary": "Get a knowledge base's metadata schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MetadataSchemaBody"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metadata"
+                ],
+                "summary": "Replace a knowledge base's metadata schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Schema (null clears it)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MetadataSchemaBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.KnowledgeBase"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/metadata/values": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metadata"
+                ],
+                "summary": "Distinct values of a metadata key (e.g. every case code)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Metadata key, e.g. ma_ho_so",
+                        "name": "key",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only values starting with this (accent-insensitive)",
+                        "name": "prefix",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Max values",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MetadataValuesResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/wiki/pages": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "List wiki pages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiPageList"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/wiki/pages/{slug}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Read a wiki page",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiPage"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Edit a wiki page by hand (later generations will not overwrite it)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New content",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiEditRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiPage"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/wiki/pages/{slug}/revisions": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "A wiki page's revision history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/postgres.WikiRevision"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/mcp/servers": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "List attached MCP servers",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MCPServerListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Attach or update an MCP server",
+                "parameters": [
+                    {
+                        "description": "MCP server connection",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MCPServerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MCPServerView"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/mcp/servers/{name}": {
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Detach an API-registered MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.DeleteResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/messages": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Runs one agent turn. With `stream: true` (or `Accept: text/event-stream`) the response is Server-Sent Events using Anthropic frame types (`message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`, `ping`, `error`) plus the extension events `tool_execution_start` / `tool_execution_stop`. `message_start.message.session_id` is a bepilot extension carrying the session the turn was persisted under — capture it (when `metadata.session_id` was omitted, a new session is created) and pass it back as `metadata.session_id` on the next call to continue the conversation. Otherwise a single JSON message is returned, whose `session` field carries the same information.\nA session runs one turn at a time, but a message never has to wait for it. If a turn is already running on the session, the new message is handed to that turn, which reads it before its next step: the response is `202` with `{\"type\":\"steered\"}` (or, when streaming, a single `steered` event) and the reply arrives on the stream of the turn that is running. A short stop message (\"stop\", \"dừng\", \"hủy\") instead interrupts the running turn, which keeps what it produced and ends with `stop_reason: \"interrupted\"`, and the message then runs as a normal turn.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json",
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Messages"
+                ],
+                "summary": "Create a message (streaming or buffered)",
+                "parameters": [
+                    {
+                        "description": "Message request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessagesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SteeredResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/parser/engines": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Pages"
+                ],
+                "summary": "Registered OCR engines and their health",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.EngineList"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/search": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "mode=reasoning (default): an LLM picks documents, walks their table of contents and cites exact lines; mode=keyword: Postgres full-text + trigram; mode=metadata: list documents matching the metadata filter. No embeddings are used.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Search"
+                ],
+                "summary": "Search documents (reasoning over the document tree, keyword, or metadata only)",
+                "parameters": [
+                    {
+                        "description": "Query, scope and filters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.SearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.SearchResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "List the authenticated user's sessions",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Page size (1-100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque cursor from a previous response's next_cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SessionList"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "Create a session explicitly",
+                "parameters": [
+                    {
+                        "description": "Session fields",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SessionBrief"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "Get a session with its reconstructed transcript",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SessionDetail"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "Soft-delete a session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.DeleteResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "Update a session's title or metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SessionBrief"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}/attachments": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Files go into the session's temporary knowledge base, which is added to the session's kb_ids so the agent can search them while parsing continues.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "Attach files to a chat session (parsed on the high-priority lanes)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "File (repeat for several files)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON metadata for every file",
+                        "name": "metadata",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/document.UploadResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}/messages": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "List a session's messages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Return messages with seq greater than this",
+                        "name": "after_seq",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 200,
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sessions/{id}/report": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sessions"
+                ],
+                "summary": "Get a session's saved task results",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SessionReport"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Skills"
+                ],
+                "summary": "List skills and their status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SkillListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/skills/sync": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Skills"
+                ],
+                "summary": "Rescan the skills directory and reconcile the database",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SkillSyncResult"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "document.Accepted": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "duplicate": {
+                    "type": "boolean"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "document.DocumentDetail": {
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "doc_type": {
+                    "type": "string"
+                },
+                "engine": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "failed_pages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/document.FailedPage"
+                    }
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "graph_status": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "index_status": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "mime_type": {
+                    "type": "string"
+                },
+                "page_count": {
+                    "type": "integer"
+                },
+                "pages_done": {
+                    "type": "integer"
+                },
+                "pages_failed": {
+                    "type": "integer"
+                },
+                "pages_text_layer": {
+                    "type": "integer"
+                },
+                "parse_status": {
+                    "type": "string"
+                },
+                "pdf_info": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "pdfa_conformance": {
+                    "type": "string"
+                },
+                "pdfa_part": {
+                    "type": "integer"
+                },
+                "progress": {
+                    "type": "number"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/postgres.Span"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "document.FailedPage": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "page_no": {
+                    "type": "integer"
+                }
+            }
+        },
+        "document.LocateRequest": {
+            "type": "object",
+            "properties": {
+                "fuzzy": {
+                    "type": "boolean"
+                },
+                "line": {
+                    "type": "integer"
+                },
+                "md_end": {
+                    "type": "integer"
+                },
+                "md_start": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "document.Location": {
+            "type": "object",
+            "properties": {
+                "bbox": {
+                    "$ref": "#/definitions/types.BBox"
+                },
+                "bbox_pt": {
+                    "description": "BBoxPt is the box in PDF points (origin top-left of the page).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.BBox"
+                        }
+                    ]
+                },
+                "block_no": {
+                    "type": "integer"
+                },
+                "line_no": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "quad": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                },
+                "score": {
+                    "type": "number"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "document.PageView": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "blocks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/postgres.PageBlock"
+                    }
+                },
+                "doc_md_offset": {
+                    "type": "integer"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "dpi": {
+                    "type": "number"
+                },
+                "engine": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "height": {
+                    "type": "integer"
+                },
+                "height_pt": {
+                    "type": "number"
+                },
+                "is_blank": {
+                    "type": "boolean"
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/postgres.PageLine"
+                    }
+                },
+                "markdown": {
+                    "type": "string"
+                },
+                "ocr_ms": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "render_ms": {
+                    "type": "integer"
+                },
+                "rotation": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "text_plain": {
+                    "type": "string"
+                },
+                "text_quality": {
+                    "type": "number"
+                },
+                "text_source": {
+                    "type": "string"
+                },
+                "width": {
+                    "type": "integer"
+                },
+                "width_pt": {
+                    "type": "number"
+                }
+            }
+        },
+        "document.Rejected": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                }
+            }
+        },
+        "document.ReparseRequest": {
+            "type": "object",
+            "properties": {
+                "engine": {
+                    "type": "string"
+                },
+                "pages": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "document.UploadResult": {
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "string"
+                },
+                "documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/document.Accepted"
+                    }
+                },
+                "rejected": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/document.Rejected"
+                    }
+                }
+            }
+        },
+        "dto.AGUIContextItem": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AGUIMessage": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "description": "user | assistant | tool | system | developer",
+                    "type": "string"
+                },
+                "toolCallId": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.AGUIRunAgentInput": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AGUIContextItem"
+                    }
+                },
+                "forwardedProps": {
+                    "type": "object"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AGUIMessage"
+                    }
+                },
+                "runId": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "object"
+                },
+                "threadId": {
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AGUIToolDefinition"
+                    }
+                }
+            }
+        },
+        "dto.AGUIToolDefinition": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "object"
+                }
+            }
+        },
+        "dto.BulkMetadataRequest": {
+            "type": "object",
+            "properties": {
+                "filter": {
+                    "type": "object",
+                    "properties": {
+                        "batch_id": {
+                            "type": "string"
+                        },
+                        "document_ids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "metadata": {
+                            "$ref": "#/definitions/types.MetadataFilter"
+                        }
+                    }
+                },
+                "set": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "unset": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "dto.BulkMetadataResponse": {
+            "type": "object",
+            "properties": {
+                "updated": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.CreateKBRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "$ref": "#/definitions/types.KBConfig"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "metadata_schema": {
+                    "$ref": "#/definitions/types.MetadataSchema"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CreateSessionRequest": {
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "system": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.DeadLetter": {
+            "type": "object",
+            "properties": {
+                "fail_count": {
+                    "type": "integer"
+                },
+                "failed_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "object"
+                },
+                "queue": {
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "scope_id": {
+                    "type": "string"
+                },
+                "task_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.DeadLetterList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.DeadLetter"
+                    }
+                }
+            }
+        },
+        "dto.DeleteResponse": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.DocumentList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Document"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.DocumentSearchRequest": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "description": "keyword (default) | reasoning",
+                    "type": "string"
+                },
+                "query": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.DocumentSearchResponse": {
+            "type": "object",
+            "properties": {
+                "pages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PageSearchHit"
+                    }
+                }
+            }
+        },
+        "dto.EngineInfo": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "default": {
+                    "type": "boolean"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.EngineList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.EngineInfo"
+                    }
+                }
+            }
+        },
+        "dto.EntityList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Entity"
+                    }
+                }
+            }
+        },
+        "dto.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string"
+                        },
+                        "type": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "type": {
+                    "description": "\"error\"",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "dto.InputMessage": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "string, or an array of content blocks",
+                    "type": "object"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.KBList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.KnowledgeBase"
+                    }
+                }
+            }
+        },
+        "dto.LocationsResponse": {
+            "type": "object",
+            "properties": {
+                "hits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SearchHit"
+                    }
+                }
+            }
+        },
+        "dto.MCPServerListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.MCPServerView"
+                    }
+                }
+            }
+        },
+        "dto.MCPServerRequest": {
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "command": {
+                    "description": "stdio",
+                    "type": "string"
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tool_allowlist": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "transport": {
+                    "description": "stdio | sse | streamable_http",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "sse | streamable_http",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MCPServerView": {
+            "type": "object",
+            "properties": {
+                "connected_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "source": {
+                    "description": "file | api",
+                    "type": "string"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "transport": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MarkdownResponse": {
+            "type": "object",
+            "properties": {
+                "markdown": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MessageListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.TranscriptMessage"
+                    }
+                }
+            }
+        },
+        "dto.MessageResponse": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.OutputBlock"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "role": {
+                    "description": "\"assistant\"",
+                    "type": "string"
+                },
+                "session": {
+                    "description": "bepilot extension",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.SessionBrief"
+                        }
+                    ]
+                },
+                "stop_reason": {
+                    "type": "string"
+                },
+                "stop_sequence": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"message\"",
+                    "type": "string"
+                },
+                "usage": {
+                    "$ref": "#/definitions/dto.Usage"
+                }
+            }
+        },
+        "dto.MessagesRequest": {
+            "type": "object",
+            "properties": {
+                "history_token_budget": {
+                    "description": "HistoryTokenBudget (bepilot extension) caps the approximate number of\ntokens of conversation history sent to the model this turn. Oldest\nmessages are dropped first; the latest user message is always kept, even\nif it alone exceeds the budget. 0 or omitted uses the server default\n(agent.history_token_budget); a negative value is rejected.",
+                    "type": "integer",
+                    "example": 24000
+                },
+                "max_tokens": {
+                    "type": "integer"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.InputMessage"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/dto.Metadata"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "bepilot extension",
+                    "type": "string"
+                },
+                "stream": {
+                    "type": "boolean"
+                },
+                "system": {
+                    "description": "string, or [{\"type\":\"text\",\"text\":\"...\"}]",
+                    "type": "object"
+                },
+                "temperature": {
+                    "type": "number"
+                }
+            }
+        },
+        "dto.Metadata": {
+            "type": "object",
+            "properties": {
+                "kb_filter": {
+                    "description": "KBFilter pins a metadata filter for every knowledge search of the session.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "kb_ids": {
+                    "description": "KBIDs attaches knowledge bases to the session (enables the kb_* tools).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "session_id": {
+                    "description": "bepilot extension",
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MetadataSchemaBody": {
+            "type": "object",
+            "properties": {
+                "schema": {
+                    "$ref": "#/definitions/types.MetadataSchema"
+                }
+            }
+        },
+        "dto.MetadataUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "mode": {
+                    "description": "Mode is merge (default; null values delete keys) or replace.",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MetadataValue": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.MetadataValuesResponse": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.MetadataValue"
+                    }
+                }
+            }
+        },
+        "dto.OK": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "dto.OutputBlock": {
+            "type": "object",
+            "properties": {
+                "content": {},
+                "id": {
+                    "type": "string"
+                },
+                "input": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "is_error": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "thinking": {
+                    "type": "string"
+                },
+                "tool_use_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "text | tool_use | tool_result | thinking",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PagesResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.DocumentPage"
+                    }
+                }
+            }
+        },
+        "dto.QueueStat": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "integer"
+                },
+                "archived": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "pool": {
+                    "type": "string"
+                },
+                "retry": {
+                    "type": "integer"
+                },
+                "scheduled": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "weight": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.QueueStats": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.QueueStat"
+                    }
+                }
+            }
+        },
+        "dto.ReadyResponse": {
+            "type": "object",
+            "properties": {
+                "default_model": {
+                    "type": "string"
+                },
+                "default_provider": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "providers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ready"
+                }
+            }
+        },
+        "dto.RebuildResponse": {
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.SchemaList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.GraphSchema"
+                    }
+                }
+            }
+        },
+        "dto.SchemaTestRequest": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SessionBrief": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SessionDetail": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.TranscriptMessage"
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SessionList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SessionBrief"
+                    }
+                },
+                "has_more": {
+                    "type": "boolean"
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SessionReport": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "model": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.TaskResultDTO"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SkillListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SkillView"
+                    }
+                }
+            }
+        },
+        "dto.SkillSyncResult": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "integer"
+                },
+                "discovered": {
+                    "type": "integer"
+                },
+                "embedded": {
+                    "type": "integer"
+                },
+                "slugs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "dto.SkillView": {
+            "type": "object",
+            "properties": {
+                "allowed_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "has_embedding": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SteeredResponse": {
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "description": "the stored user message",
+                    "type": "string"
+                },
+                "session": {
+                    "$ref": "#/definitions/dto.SessionBrief"
+                },
+                "type": {
+                    "description": "\"steered\"",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.TaskResultDTO": {
+            "type": "object",
+            "properties": {
+                "result": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "task_key": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.TranscriptMessage": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.OutputBlock"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "stop_reason": {
+                    "type": "string"
+                },
+                "usage": {
+                    "$ref": "#/definitions/dto.Usage"
+                }
+            }
+        },
+        "dto.TreeResponse": {
+            "type": "object",
+            "properties": {
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.TreeNode"
+                    }
+                }
+            }
+        },
+        "dto.UpdateKBRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "$ref": "#/definitions/types.KBConfig"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.UpdateSessionRequest": {
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.Usage": {
+            "type": "object",
+            "properties": {
+                "input_tokens": {
+                    "type": "integer"
+                },
+                "output_tokens": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.WikiEditRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.WikiPageList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiPage"
+                    }
+                }
+            }
+        },
+        "graph.EntityDetail": {
+            "type": "object",
+            "properties": {
+                "aliases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "conflict": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "mentions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Mention"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/graph.RelationView"
+                    }
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "wiki_slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "graph.EntityRef": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "graph.ExtractedEntity": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "evidence": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
+        "graph.ExtractedRelation": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "evidence": {
+                    "type": "string"
+                },
+                "source": {
+                    "$ref": "#/definitions/graph.EntityRef"
+                },
+                "target": {
+                    "$ref": "#/definitions/graph.EntityRef"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "unit": {
+                    "type": "string"
+                }
+            }
+        },
+        "graph.Extraction": {
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/graph.ExtractedEntity"
+                    }
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/graph.ExtractedRelation"
+                    }
+                }
+            }
+        },
+        "graph.RelationView": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "direction": {
+                    "description": "out | in",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "other_name": {
+                    "type": "string"
+                },
+                "other_type": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "graph.TestResult": {
+            "type": "object",
+            "properties": {
+                "extraction": {
+                    "$ref": "#/definitions/graph.Extraction"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/graph.Warning"
+                    }
+                }
+            }
+        },
+        "graph.Warning": {
+            "type": "object",
+            "properties": {
+                "item": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "postgres.PageBlock": {
+            "type": "object",
+            "properties": {
+                "asset_key": {
+                    "type": "string"
+                },
+                "bbox": {
+                    "$ref": "#/definitions/types.BBox"
+                },
+                "block_no": {
+                    "type": "integer"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "html": {
+                    "type": "string"
+                },
+                "is_furniture": {
+                    "type": "boolean"
+                },
+                "latex": {
+                    "type": "string"
+                },
+                "md_end": {
+                    "type": "integer"
+                },
+                "md_start": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "raw_class": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "integer"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/types.BlockType"
+                }
+            }
+        },
+        "postgres.PageLine": {
+            "type": "object",
+            "properties": {
+                "bbox": {
+                    "$ref": "#/definitions/types.BBox"
+                },
+                "block_no": {
+                    "type": "integer"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "in_figure": {
+                    "type": "boolean"
+                },
+                "line_no": {
+                    "type": "integer"
+                },
+                "low_confidence": {
+                    "type": "boolean"
+                },
+                "md_end": {
+                    "type": "integer"
+                },
+                "md_start": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "quad": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                },
+                "source_id": {
+                    "type": "integer"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "text_layer": {
+                    "type": "string"
+                },
+                "text_ocr": {
+                    "type": "string"
+                },
+                "text_source": {
+                    "type": "string"
+                }
+            }
+        },
+        "postgres.Span": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "ref": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "postgres.WikiRevision": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "edit_source": {
+                    "type": "string"
+                },
+                "edited_at": {
+                    "type": "string"
+                },
+                "editor_id": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.AttributeDef": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "string | number | money | date | bool",
+                    "type": "string"
+                }
+            }
+        },
+        "types.BBox": {
+            "type": "object",
+            "properties": {
+                "x0": {
+                    "type": "number"
+                },
+                "x1": {
+                    "type": "number"
+                },
+                "y0": {
+                    "type": "number"
+                },
+                "y1": {
+                    "type": "number"
+                }
+            }
+        },
+        "types.BlockType": {
+            "type": "string",
+            "enum": [
+                "title",
+                "heading",
+                "paragraph",
+                "table",
+                "formula",
+                "figure",
+                "caption",
+                "header",
+                "footer",
+                "page_number",
+                "footnote",
+                "unknown"
+            ],
+            "x-enum-varnames": [
+                "BlockTitle",
+                "BlockHeading",
+                "BlockParagraph",
+                "BlockTable",
+                "BlockFormula",
+                "BlockFigure",
+                "BlockCaption",
+                "BlockHeader",
+                "BlockFooter",
+                "BlockPageNumber",
+                "BlockFootnote",
+                "BlockUnknown"
+            ]
+        },
+        "types.Document": {
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "doc_type": {
+                    "type": "string"
+                },
+                "engine": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "graph_status": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "index_status": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "mime_type": {
+                    "type": "string"
+                },
+                "page_count": {
+                    "type": "integer"
+                },
+                "pages_done": {
+                    "type": "integer"
+                },
+                "pages_failed": {
+                    "type": "integer"
+                },
+                "pages_text_layer": {
+                    "type": "integer"
+                },
+                "parse_status": {
+                    "type": "string"
+                },
+                "pdf_info": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "pdfa_conformance": {
+                    "type": "string"
+                },
+                "pdfa_part": {
+                    "type": "integer"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.DocumentBrief": {
+            "type": "object",
+            "properties": {
+                "doc_type": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "page_count": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.DocumentPage": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "doc_md_offset": {
+                    "type": "integer"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "dpi": {
+                    "type": "number"
+                },
+                "engine": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "height": {
+                    "type": "integer"
+                },
+                "height_pt": {
+                    "type": "number"
+                },
+                "is_blank": {
+                    "type": "boolean"
+                },
+                "markdown": {
+                    "type": "string"
+                },
+                "ocr_ms": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "render_ms": {
+                    "type": "integer"
+                },
+                "rotation": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "text_plain": {
+                    "type": "string"
+                },
+                "text_quality": {
+                    "type": "number"
+                },
+                "text_source": {
+                    "type": "string"
+                },
+                "width": {
+                    "type": "integer"
+                },
+                "width_pt": {
+                    "type": "number"
+                }
+            }
+        },
+        "types.Entity": {
+            "type": "object",
+            "properties": {
+                "aliases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "conflict": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "mentions": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "wiki_slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.EntityTypeDef": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.AttributeDef"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "identity": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resolve_scope": {
+                    "description": "ResolveScope lists document metadata keys that must match for two\nmentions to merge (e.g. ma_ho_so).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "types.ExtractionSettings": {
+            "type": "object",
+            "properties": {
+                "examples": {
+                    "type": "array",
+                    "items": {}
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "unit": {
+                    "description": "section | page",
+                    "type": "string"
+                }
+            }
+        },
+        "types.GraphSchema": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "entity_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.EntityTypeDef"
+                    }
+                },
+                "extraction": {
+                    "$ref": "#/definitions/types.ExtractionSettings"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "relation_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.RelationTypeDef"
+                    }
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.KBConfig": {
+            "type": "object",
+            "properties": {
+                "graph_enabled": {
+                    "type": "boolean"
+                },
+                "graph_schema": {
+                    "type": "string"
+                },
+                "parser_engine": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.KnowledgeBase": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "$ref": "#/definitions/types.KBConfig"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "graph_schema_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_temporary": {
+                    "type": "boolean"
+                },
+                "metadata_schema": {
+                    "$ref": "#/definitions/types.MetadataSchema"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.LineMatch": {
+            "type": "object",
+            "properties": {
+                "bbox": {
+                    "$ref": "#/definitions/types.BBox"
+                },
+                "line_no": {
+                    "type": "integer"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "snippet": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.Mention": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "evidence": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "relation_id": {
+                    "type": "string"
+                },
+                "section_id": {
+                    "type": "string"
+                },
+                "source_spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SourceSpan"
+                    }
+                }
+            }
+        },
+        "types.MetadataField": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "indexed": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "normalize": {
+                    "description": "upper_trim | lower_trim | none",
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "string | number | bool | date | enum",
+                    "type": "string"
+                },
+                "values": {
+                    "description": "enum",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "types.MetadataFilter": {
+            "type": "object",
+            "additionalProperties": {}
+        },
+        "types.MetadataSchema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.MetadataField"
+                    }
+                },
+                "strict": {
+                    "description": "Strict rejects keys that are not declared.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "types.PageSearchHit": {
+            "type": "object",
+            "properties": {
+                "hits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.LineMatch"
+                    }
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "score": {
+                    "type": "number"
+                }
+            }
+        },
+        "types.Relation": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "id": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.RelationTypeDef": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.AttributeDef"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "target": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SearchHit": {
+            "type": "object",
+            "properties": {
+                "bboxes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.BBox"
+                    }
+                },
+                "citation_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "node_path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "quote": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "relevance": {
+                    "type": "number"
+                },
+                "snippet": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SearchRequest": {
+            "type": "object",
+            "properties": {
+                "document_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "kb_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/types.MetadataFilter"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "page_from": {
+                    "type": "integer"
+                },
+                "page_to": {
+                    "type": "integer"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "top_k": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.SearchResponse": {
+            "type": "object",
+            "properties": {
+                "documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.DocumentBrief"
+                    }
+                },
+                "hits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SearchHit"
+                    }
+                },
+                "trace": {
+                    "$ref": "#/definitions/types.SearchTrace"
+                }
+            }
+        },
+        "types.SearchTrace": {
+            "type": "object",
+            "properties": {
+                "cached": {
+                    "type": "boolean"
+                },
+                "candidate_docs": {
+                    "type": "integer"
+                },
+                "dropped_hits": {
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "type": "integer"
+                },
+                "fallback": {
+                    "type": "string"
+                },
+                "llm_calls": {
+                    "type": "integer"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "selected_docs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "selected_nodes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "types.SourceSpan": {
+            "type": "object",
+            "properties": {
+                "bbox": {
+                    "$ref": "#/definitions/types.BBox"
+                },
+                "block_nos": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "line_from": {
+                    "type": "integer"
+                },
+                "line_to": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.Subgraph": {
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Entity"
+                    }
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Relation"
+                    }
+                }
+            }
+        },
+        "types.TreeNode": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "level": {
+                    "type": "integer"
+                },
+                "ord": {
+                    "type": "integer"
+                },
+                "origin": {
+                    "description": "root | bookmark | heading | llm | page",
+                    "type": "string"
+                },
+                "page_end": {
+                    "type": "integer"
+                },
+                "page_start": {
+                    "type": "integer"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "section_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "short_id": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "token_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.WikiPage": {
+            "type": "object",
+            "properties": {
+                "aliases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "content": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "in_links": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "last_edit_source": {
+                    "type": "string"
+                },
+                "out_links": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page_type": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "source_refs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "description": "An API key issued by `cmd/seed`. `Authorization: Bearer \u003ckey\u003e` is also accepted.",
+            "type": "apiKey",
+            "name": "x-api-key",
+            "in": "header"
+        }
+    }
+}

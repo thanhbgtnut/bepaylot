@@ -1,0 +1,218 @@
+# bepilot configuration. Values of the form ${VAR} are expanded from the
+# environment at load time. A few well-known env vars also override entries
+# directly: DATABASE_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY,
+# BEPILOT_DEFAULT_PROVIDER, BEPILOT_HTTP_ADDR.
+
+env: ${BEPILOT_ENV}
+
+http:
+  addr: ${BEPILOT_HTTP_ADDR}
+  read_timeout: 65s
+  write_timeout: 0s          # keep 0 for SSE
+  shutdown_timeout: 20s
+  cors_origins: []           # empty = allow any origin
+  # DEV ONLY: skips x-api-key verification entirely when true. Never enable
+  # this in a deployed environment.
+  auth_bypass: ${BEPILOT_AUTH_BYPASS}   # empty/false = auth required (default)
+
+db:
+  dsn: ${DATABASE_URL}
+  max_conns: 10
+  min_conns: 1
+  max_conn_lifetime: 1h
+  auto_migrate: true
+
+llm:
+  default_provider: ${BEPILOT_DEFAULT_PROVIDER}
+  default_model: ${BEPILOT_DEFAULT_MODEL}
+  summary_model: ${BEPILOT_DEFAULT_MODEL}
+  # Per-reply output cap. A reply cut off by it is continued automatically (up to
+  # 4 times), but every continuation re-sends the conversation, so a cap that fits
+  # typical long answers is cheaper than relying on that.
+  max_tokens: 16000
+  # Default sampling temperature when a request sets none. Leave unset for the
+  # provider's default; use 0-0.3 where the same request should give the same
+  # answer on every run.
+  # temperature: 0.2
+  request_timeout: 5m
+  providers:
+    claude:
+      kind: claude
+      api_key: ${ANTHROPIC_API_KEY}
+      base_url: ${ANTHROPIC_BASE_URL}
+    openai:
+      kind: openai
+      # api_key is optional for local OpenAI-compatible servers (LM Studio,
+      # llama.cpp, vLLM, Ollama). base_url may be the API base
+      # (http://127.0.0.1:1234/v1) or a full endpoint URL — the
+      # /chat/completions suffix is trimmed automatically.
+      api_key: ${OPENAI_API_KEY}
+      base_url: ${OPENAI_BASE_URL}
+    # Deterministic, network-free provider for local development and tests.
+    fake:
+      kind: fake
+
+embedding:
+  # 'hash' is deterministic and needs no API key. Switch to 'openai' for real
+  # semantic retrieval (keep dim consistent with the migration: 1536).
+  kind: ${BEPILOT_EMBEDDING_KIND}
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+  base_url: ${OPENAI_BASE_URL}
+  dim: 1536
+
+agent:
+  identity: >-
+    You are bepilot, a helpful, precise AI assistant. You give direct,
+    well-structured answers, use tools and skills when they materially improve
+    the result, and you never fabricate facts or tool output.
+  response_style: >-
+    Prefer concise, skimmable answers in Markdown. Lead with the answer, then
+    supporting detail. Match the user's language.
+  # Most times one turn may call the model (each tool round is one call). On the
+  # last call the model gets no tools and must answer, so a turn that runs out
+  # of budget still ends with a reply instead of an error.
+  max_steps: 16
+  history_token_budget: 24000
+  summarize_every_n: 8
+  skill_top_k: 4
+  ping_interval: 15s
+
+skills:
+  dir: ${BEPILOT_SKILLS_DIR}
+  sync_on_startup: true
+
+tools:
+  http_allowlist: []          # empty = any public host
+
+mcp:
+  # Model Context Protocol servers. Both sources below are hot-reloadable — a
+  # server can be attached or detached while the process runs, and its tools
+  # appear on the next message with no restart.
+  enabled: ${BEPILOT_MCP_ENABLED}   # empty/false = MCP off, API returns 503
+  # Static server list. Edit this file while running: changes are reconciled
+  # within reload_interval. Leave file blank to use the API only.
+  file: configs/mcp.yaml
+  reload_interval: 10s              # 0 = load once at startup, never re-read
+  init_timeout: 20s                 # per-server connect + handshake budget
+  tool_prefix: "mcp__"             # tools import as <prefix><server>__<tool>
+
+log:
+  level: ${BEPILOT_LOG_LEVEL}
+  format: ${BEPILOT_LOG_FORMAT}
+
+# ---------------------------------------------------------------------------
+# Document processing (spec/spec.md §4–§11)
+# ---------------------------------------------------------------------------
+
+# Broker for the asynq task queue. Empty = run tasks in-process (development,
+# single instance only).
+redis:
+  addr: ${REDIS_ADDR}
+  password: ${REDIS_PASSWORD}
+  db: 0
+
+# Original files, rendered page images and raw parser output live in S3;
+# Postgres only stores object keys. Empty bucket = in-memory store
+# (development only).
+storage:
+  s3:
+    endpoint: ${S3_ENDPOINT}
+    region: ${S3_REGION}
+    bucket: ${S3_BUCKET}
+    prefix: bepilot
+    access_key: ${S3_ACCESS_KEY}
+    secret_key: ${S3_SECRET_KEY}
+    use_path_style: true            # MinIO
+    create_bucket: true             # create the bucket when missing (dev)
+    part_size_mb: 16
+    upload_concurrency: 4
+  presign: true
+  presign_ttl: 15m
+
+upload:
+  max_bytes: 524288000              # 500 MB per file
+  max_files: 100                    # per request
+  allowed_types: [application/pdf, image/jpeg, image/png, image/tiff]
+
+workers:
+  role: ${BEPILOT_ROLE}             # api | worker | all (default all)
+  concurrency: { core: 4, ocr: 8, index: 6, enrichment: 8, wiki: 4, maintenance: 2 }   # render = parser.render.workers
+  render_inflight_batches: 1        # per document
+  render_ahead_pages: 32            # rendered pages waiting for OCR, per document
+  ocr_inflight_pages: 8             # per document
+  housekeeping_interval: 5m
+
+parser:
+  default_engine: turboocr
+  pdf_mode: ocr_all                 # ocr_all | auto
+  render:
+    mode: ${BEPILOT_RENDER_MODE}    # multi_threaded (prod, needs libpdfium) | webassembly (default)
+    worker_bin: ${BEPILOT_PDFIUM_WORKER}
+    workers: 0                      # 0 = min(NumCPU-1, 4)
+    dpi: 300
+    max_long_side: 4000
+    max_pixels: 16000000
+    jpeg_quality: 85
+    batch_pages: 8
+    page_timeout: 30s
+    recycle_after_pages: 500
+    max_worker_rss_mb: 1024
+    cache_dir: data/cache/pdf
+    cache_max_bytes: 21474836480    # 20 GB
+  text_layer:
+    enabled: all                    # all | pdfa_only | off
+    min_chars: 20
+    max_bad_char_ratio: 0.02
+    merge_min_similarity: 0.6
+  reading_order_fix: true
+  low_conf_threshold: 0.6
+  furniture_repeat_ratio: 0.5
+  class_map: {}
+  engines:
+    turboocr:
+      base_url: ${TURBOOCR_URL}     # e.g. http://10.215.122.20:30189
+      timeout: 120s
+      options: { layout: true, reading_order: true, tables: true, formulas: false }
+      breaker: { failures: 5, open_for: 30s }
+
+index:
+  section: { max_tokens: 1500 }
+  tree:
+    llm: true                       # false = extractive summaries, no LLM
+    flat_max_pages: 5
+    summary_words: 60
+    card_summary_words: 120
+    provider: ""                    # "" = llm.default_provider
+    model: ""                       # "" = llm.default_model
+
+search:
+  provider: ""
+  model: ""                         # a fast model is recommended
+  default_mode: reasoning           # reasoning | keyword | metadata
+  max_docs_direct: 5
+  doc_candidates: 30
+  max_docs_selected: 5
+  parallel_docs: 4
+  tree_token_budget: 8000
+  full_doc_token_budget: 12000
+  page_token_budget: 24000
+  max_hops: 3
+  max_llm_calls: 12
+  quote_min_similarity: 0.8
+  cache_ttl: 10m
+  timeout: 60s
+
+graph:
+  enabled_by_default: false         # per KB: config.graph_enabled
+  default_schema: generic
+  schema_dir: configs/graph_schemas
+  batch_size: 8
+  provider: ""
+  model: ""
+  resolve: { name_similarity: 0.85, llm_confirm: false }
+
+wiki:
+  min_mentions: 2
+  page_types: []
+  ingest_delay: 30s

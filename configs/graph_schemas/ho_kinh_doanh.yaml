@@ -1,0 +1,50 @@
+# Graph schema for household business registration certificates (§7.2).
+# Loaded into graph_schemas at startup; select it per KB with
+# config.graph_schema = "ho_kinh_doanh".
+name: ho_kinh_doanh
+version: 1
+description: Giấy chứng nhận đăng ký hộ kinh doanh
+entity_types:
+  - name: HoKinhDoanh
+    description: Hộ kinh doanh được cấp đăng ký
+    identity: [ma_so]
+    resolve_scope: [ma_ho_so]
+    attributes:
+      - { name: ten, type: string, required: true }
+      - { name: ma_so, type: string, pattern: "^[0-9]{9,13}$" }
+      - { name: von_kinh_doanh, type: money }
+      - { name: dia_chi, type: string }
+  - name: CaNhan
+    description: Cá nhân (chủ hộ, người đại diện)
+    identity: [so_dinh_danh]
+    attributes:
+      - { name: ho_ten, type: string, required: true }
+      - { name: so_dinh_danh, type: string }
+      - { name: ngay_sinh, type: date }
+      - { name: gioi_tinh, type: string }
+      - { name: noi_thuong_tru, type: string }
+  - name: NganhNghe
+    description: Ngành nghề kinh doanh theo mã ngành
+    identity: [ma_nganh]
+    attributes:
+      - { name: ten, type: string }
+      - { name: ma_nganh, type: string }
+  - name: CoQuan
+    description: Cơ quan cấp đăng ký
+    attributes:
+      - { name: ten, type: string }
+relation_types:
+  - { name: CHU_HO, source: CaNhan, target: HoKinhDoanh }
+  - name: KINH_DOANH
+    source: HoKinhDoanh
+    target: NganhNghe
+    attributes: [ { name: la_nganh_chinh, type: bool } ]
+  - name: CAP_BOI
+    source: HoKinhDoanh
+    target: CoQuan
+    attributes: [ { name: ngay_cap, type: date } ]
+extraction:
+  unit: section
+  instructions: |
+    Chỉ trích xuất thông tin có trong văn bản. Không suy đoán.
+    Mã ngành nằm trong cột "Mã ngành"; "(Chính)" nghĩa là ngành chính.
