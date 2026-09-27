@@ -14,6 +14,9 @@ http:
   # DEV ONLY: skips authentication entirely when true. Never enable
   # this in a deployed environment.
   auth_bypass: ${BEPAYLOT_AUTH_BYPASS}   # empty/false = auth required (default)
+  # Users allowed to call /v1/admin/* (queues, dead letters). Set with
+  # BEPAYLOT_ADMIN_EMAILS=a@x.vn,b@x.vn; empty = admin API disabled (403).
+  admin_emails: []
 
 # Sign-in for the web UI, like WeKnora: email + password (register/login on
 # /login) and optional OIDC. Both issue a JWT access token (Authorization:

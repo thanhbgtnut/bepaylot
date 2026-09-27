@@ -299,6 +299,14 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("BEPAYLOT_DEFAULT_PROVIDER"); v != "" {
 		c.LLM.DefaultProvider = v
 	}
+	if v := os.Getenv("BEPAYLOT_ADMIN_EMAILS"); v != "" {
+		c.HTTP.AdminEmails = nil
+		for _, e := range strings.Split(v, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				c.HTTP.AdminEmails = append(c.HTTP.AdminEmails, e)
+			}
+		}
+	}
 	if v := os.Getenv("BEPAYLOT_OIDC_SCOPES"); v != "" {
 		c.Auth.OIDC.Scopes = nil
 		for _, sc := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {

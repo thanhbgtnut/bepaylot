@@ -75,6 +75,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U26 | Tối ưu LLM Wiki theo đúng concept của Karpathy và **giảm số lần gọi LLM**: cây mục lục đã có sau khi index thì dùng luôn để hiển thị wiki theo nội dung, không để LLM dựng lại; LLM chỉ trích xuất entity/quan hệ (JSON có cấu trúc, không viết văn xuôi), code gộp theo định danh, kiểm với dòng gốc và dựng trang; gỡ file hay làm mới trang không gọi LLM | còn hiệu lực | §6.6–6.9 |
 | U27 | Index và tóm tắt theo đúng `index.md` của LLM Wiki (catalog mọi trang: link, tóm tắt một dòng, metadata như ngày hoặc số nguồn, nhóm theo loại; đọc index trước rồi mới đi vào trang), tóm tắt được làm ngay khi ingest; **tối ưu token**, tránh token thừa; dữ liệu vẫn lưu Postgres | còn hiệu lực | §6.6, §6.8, §6.10, §8.2 |
 | U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6 | §10.8, §9.2 (migration `0015`), §11, frontend `/login` |
+| U29 | Viết **tài liệu vận hành** trong thư mục `spec` để bàn giao cho đội vận hành OPN: vận hành từng tính năng và các kiểm tra trạng thái dịch vụ | còn hiệu lực | [`spec/van-hanh.md`](van-hanh.md), `spec/van-hanh/healthcheck.sh`, `spec/van-hanh/kiem-tra.sql` |
 
 ## 1. Yêu cầu chung
 
@@ -2015,7 +2016,7 @@ Mọi endpoint kiểm tra quyền trên case; slug của case khác trả `404`.
 
 ### 10.6 Admin / vận hành
 
-Chỉ user có email nằm trong `http.admin_emails` được gọi (rỗng = tắt, trả `403`).
+Chỉ user có email nằm trong `http.admin_emails` (đặt bằng `BEPAYLOT_ADMIN_EMAILS`, phân cách dấu phẩy) được gọi (rỗng = tắt, trả `403`). Cách dùng khi vận hành: [van-hanh.md](van-hanh.md) §4, §6.
 
 | Method | Path | Mô tả |
 |---|---|---|
@@ -2084,7 +2085,7 @@ Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, h
 
 ## 11. Cấu hình (`configs/config.yaml`, phần bổ sung)
 
-Ngoài các khoá dưới đây, `http.admin_emails` (danh sách email) mở quyền gọi API admin §10.6. Mọi giá trị đều ghi đè được bằng biến môi trường `${...}` (xem `.env.example`).
+Ngoài các khoá dưới đây, `http.admin_emails` (danh sách email, hoặc biến `BEPAYLOT_ADMIN_EMAILS` phân cách dấu phẩy) mở quyền gọi API admin §10.6. Mọi giá trị đều ghi đè được bằng biến môi trường `${...}` (xem `.env.example`).
 
 ```yaml
 auth:                               # đăng nhập (§10.8)
@@ -2316,6 +2317,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Migrations `0006`–`0015` | `migrations/postgres` |
 | Callback hoàn thành document (tuỳ chọn, retry + lưu trạng thái, §4.7) | `internal/webhook`, `internal/application/service/document/callback.go` |
 | Worker PDFium native (cgo, tag `pdfium_cgo`), Docker target `api` / `worker` | `cmd/pdfium-worker`, `deploy/Dockerfile` |
+| Tài liệu vận hành bàn giao OPN, script kiểm tra trạng thái, bộ SQL kiểm tra (U29) | `spec/van-hanh.md`, `spec/van-hanh/` |
 | Đăng nhập / đăng ký / OIDC như WeKnora, API key tự phục vụ (§10.8) | `internal/application/service/auth`, `internal/handler/auth.go`, `internal/middleware`, `repository/postgres/{users,authtokens,apikeys}.go`, `migrations/postgres/0015_auth.sql`, `frontend/src/pages/auth`, `frontend/src/components/AuthContext.tsx` |
 
 ### 15.2 Khác biệt so với spec (có chủ đích, có thể bổ sung sau)
@@ -2348,6 +2350,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 - **VLM (§5.9):** đã chạy thật với `allenai/olmocr-2-7b` qua LM Studio (`localhost:1234`) trên một trang dựng lại từ layout mẫu. Kết quả: 30 vùng, 0 lỗi, ≈ 59 s/trang ở `max_concurrency: 4`, 28 block được refine, 38/38 dòng VLM định vị được offset. Chưa chạy chung với TurboOCR thật và chưa đo trên bản scan thật.
 - **Chạy đầu-cuối (25/09/2026):** Postgres + Redis + MinIO (Docker), `role=all`, engine `turboocr_vlm`, VLM olmOCR-2-7B (LM Studio), LLM `inclusionai/ling-3.0-flash-fin:free` qua OpenRouter. TurboOCR không truy cập được, nên cả hai trang của một PDF scan đi nhánh `full_page` (≈ 70 s cho 2 trang). Cây mục lục dựng từ tiêu đề nhận diện được (Hợp đồng → Điều 1–4). Search `keyword` và `reasoning` (1 lần gọi LLM) trả đúng dòng bảng "Tiền thuê hằng tháng | 12.000.000" và dòng thời hạn thuê. Agent gọi `kb_list_documents` (lọc `ma_ho_so`), `kb_search`, `kb_read_pages` rồi trả lời có trích dẫn `p/l`. Model `inclusionai/ling-3.0-flash` (trả phí) chưa chạy được vì key hết hạn mức. Chế độ cả trang đọc kém hơn chế độ theo vùng (ví dụ "TÍNH" thay cho "TÌNH") vì ảnh bị thu về 1288 px.
 - **LLM thật:** tóm tắt cây, search `reasoning` qua wiki và ingest wiki mới chạy với LLM kịch bản (`testkit.ScriptLLM`) và LLM giả. Chưa đo N19 (token/câu hỏi) và N15. Ingest kiểu 0.5 (LLM viết từng trang) đã thử với `qwythos-9b` qua LM Studio: khoảng 12 token/s, 1–4 phút mỗi lần gọi, 8–16 lần gọi mỗi file, quá chậm; đây là lý do của U26. Ingest 0.6 (1 lần gọi trích xuất mỗi file) chưa đo với model thật.
+- **Dọn dữ liệu sau reparse (`document:gen_cleanup`)** lỗi `relation "kg_mentions" does not exist` từ migration `0014` (bảng đã bị xoá nhưng code vẫn xoá ở đó); đã sửa (27/09/2026). Dead-letter cũ loại này không cần retry (van-hanh.md §6.2).
 - **Đăng nhập (27/09/2026):** server thật + Vite trên DB dev: đăng ký, đăng nhập sai/đúng, `/auth/me`, gọi `/v1/kbs` bằng JWT và bằng API key (header và Bearer), thu hồi key, refresh xoay vòng, đổi mật khẩu, đăng xuất; OIDC với provider giả (tự duyệt) qua Vite cùng origin và khi API khác origin, replay callback bị chặn, `return_to` lạ → 400. Trình duyệt (Playwright): chặn route → `/login`, đăng ký, token hỏng → tự refresh, tạo API key, đăng xuất, đăng nhập OIDC. **Chưa thử với provider OIDC thật** (Keycloak, Google…).
 - **Chạy đầu-cuối bản 0.5 (27/09/2026):** server thật trên một database mới, LLM `fake`, OCR không truy cập được: tạo KB, upload theo `case_code= rt112233` + `case_type=thanh_toan` (case `RT112233` tự tạo, mã sai → 422, thiếu `case_code` → 422), PDF có text layer xong ở `completed`; ingest bằng LLM giả lỗi 5 lần rồi rơi về trang nguồn mẫu; index wiki, trang có slug chứa `/`, lịch sử, log, xuất zip, search `keyword` theo case, session gắn case qua `metadata.case_id`, `kb_ids` → 422, slug của case khác → 404. Migration `0014` chưa chạy trên DB dev có dữ liệu thật (sẽ xoá dữ liệu graph/wiki cũ theo U25).
 

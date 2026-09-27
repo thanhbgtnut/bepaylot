@@ -180,7 +180,6 @@ func (r *IndexRepo) DeleteOldGens(ctx context.Context, doc uuid.UUID, keep int) 
 	for _, q := range []string{
 		`DELETE FROM sections WHERE document_id = $1 AND gen < $2`,
 		`DELETE FROM doc_tree_nodes WHERE document_id = $1 AND gen < $2`,
-		`DELETE FROM kg_mentions WHERE document_id = $1 AND gen < $2`,
 	} {
 		if _, err := r.pool.Exec(ctx, q, doc, keep); err != nil {
 			return err

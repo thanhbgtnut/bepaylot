@@ -559,6 +559,8 @@ Cấu hình nằm trong `configs/config.yaml`; mọi giá trị `${VAR}` đượ
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | khoá / endpoint LLM | |
 | `BEPAYLOT_MCP_ENABLED` | bật MCP | `false` |
 | `BEPAYLOT_AUTH_BYPASS` | bỏ qua xác thực (**chỉ dev**) | `false` |
+| `BEPAYLOT_ADMIN_EMAILS` | email được gọi `/v1/admin/*` (hàng đợi, dead-letter), phân cách dấu phẩy | rỗng = tắt |
+| `BEPAYLOT_JWT_SECRET`, `BEPAYLOT_REGISTRATION`, `BEPAYLOT_OIDC_*` | đăng nhập web, OIDC | xem `.env.example` |
 
 Các nhóm tinh chỉnh chính trong `config.yaml` (giải thích chi tiết ở spec §11):
 
@@ -572,6 +574,8 @@ Các nhóm tinh chỉnh chính trong `config.yaml` (giải thích chi tiết ở
 ---
 
 ## Triển khai
+
+Tài liệu vận hành cho đội vận hành (kiểm tra trạng thái, runbook sự cố, backup): [spec/van-hanh.md](spec/van-hanh.md).
 
 Một binary, chọn vai trò bằng `-role`:
 
