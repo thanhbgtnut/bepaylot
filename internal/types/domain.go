@@ -54,9 +54,12 @@ type Session struct {
 	SystemOverride string
 	Summary        string
 	Metadata       map[string]any
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      *time.Time
+	// CaseID binds the session to one case for its whole life (§8.1): the
+	// document and wiki tools only see that case. nil = no case, no tools.
+	CaseID    *uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time
 }
 
 // Message is a single turn in a Session. Its content is stored as an ordered

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/parser"
 	"github.com/thanhenti/bepaylot/internal/parser/pdf"
@@ -21,6 +22,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/storage"
 	"github.com/thanhenti/bepaylot/internal/types"
+	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // fakeOCR returns one text region per page with the lines configured for
@@ -98,9 +100,17 @@ func setup(t *testing.T) (*Service, *queue.Inline, *postgres.Store, uuid.UUID, *
 	engines := parser.NewRegistry("fake")
 	engines.Register(ocr)
 	q := queue.NewInline()
-	svc := New(Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: r, Engines: engines, Config: cfg})
+	cs, err := cases.New(st, q, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: r, Engines: engines, Cases: cs, Config: cfg})
 	handlers := svc.Handlers()
+	for k, v := range cs.Handlers() {
+		handlers[k] = v
+	}
 	handlers[types.TaskIndexBuild] = func(context.Context, []byte) error { return nil } // Module 2 stub
+	handlers[types.TaskWikiIngest] = func(context.Context, []byte) error { return nil } // wiki stub
 	q.Register(handlers, nil)
 	return svc, q, st, user.ID, ocr
 }
@@ -108,7 +118,7 @@ func setup(t *testing.T) (*Service, *queue.Inline, *postgres.Store, uuid.UUID, *
 func TestPipelineEndToEnd(t *testing.T) {
 	svc, q, st, owner, ocr := setup(t)
 	ctx := context.Background()
-	schema := &types.MetadataSchema{Fields: []types.MetadataField{{Key: "ma_ho_so", Type: "string", Normalize: "upper_trim", Indexed: true}}}
+	schema := &types.MetadataSchema{Fields: []types.MetadataField{{Key: "loai_giay_to", Type: "string", Normalize: "upper_trim", Indexed: true}}}
 	kb, err := svc.CreateKB(ctx, owner, "Hồ sơ vay", "", types.KBConfig{}, schema, false)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +138,8 @@ func TestPipelineEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	up.SetSharedMetadata(map[string]any{"ma_ho_so": " hs-2026-000123 "})
+	up.SetCase(interfaces.CaseRef{Code: " HS-2026-000123 ", Create: true})
+	up.SetSharedMetadata(map[string]any{"loai_giay_to": " gcn_hkd "})
 	if err := up.AddFile(ctx, "gcn.pdf", "application/pdf", bytes.NewReader(pdfBytes)); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +147,7 @@ func TestPipelineEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Documents) != 1 || res.Documents[0].Metadata["ma_ho_so"] != "HS-2026-000123" {
+	if len(res.Documents) != 1 || res.Documents[0].Metadata["loai_giay_to"] != "GCN_HKD" || res.Case.Code != "HS-2026-000123" || !res.Case.Created {
 		t.Fatalf("upload result = %+v", res)
 	}
 	docID := res.Documents[0].DocumentID
@@ -201,17 +212,18 @@ func TestPipelineEndToEnd(t *testing.T) {
 	}
 
 	// Metadata filter lists the document; a wrong code does not.
-	docs, err := svc.ListDocuments(ctx, owner, kb.ID, postgres.DocumentFilter{Metadata: types.MetadataFilter{"ma_ho_so": "hs-2026-000123"}})
-	if err != nil || len(docs) != 1 {
+	docs, err := svc.ListDocuments(ctx, owner, kb.ID, postgres.DocumentFilter{Metadata: types.MetadataFilter{"loai_giay_to": "gcn_hkd"}})
+	if err != nil || len(docs) != 1 || docs[0].CaseID != res.Case.ID {
 		t.Fatalf("filter docs = %d err %v", len(docs), err)
 	}
-	docs, _ = svc.ListDocuments(ctx, owner, kb.ID, postgres.DocumentFilter{Metadata: types.MetadataFilter{"ma_ho_so": "HS-OTHER"}})
+	docs, _ = svc.ListDocuments(ctx, owner, kb.ID, postgres.DocumentFilter{Metadata: types.MetadataFilter{"loai_giay_to": "OTHER"}})
 	if len(docs) != 0 {
 		t.Fatalf("wrong code matched %d docs", len(docs))
 	}
 
-	// Duplicate upload returns the existing document.
+	// Duplicate upload into the same case returns the existing document.
 	up2, _ := svc.BeginUpload(ctx, owner, kb.ID, false)
+	up2.SetCase(interfaces.CaseRef{Code: "HS-2026-000123", Create: true})
 	_ = up2.AddFile(ctx, "copy.pdf", "", bytes.NewReader(pdfBytes))
 	res2, _ := up2.Finish(ctx)
 	if len(res2.Documents) != 1 || !res2.Documents[0].Duplicate || res2.Documents[0].DocumentID != docID {

@@ -6,6 +6,7 @@ package document
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/storage"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
+	"github.com/thanhenti/bepaylot/internal/webhook"
 )
 
 // Renderer is the subset of pdf.Renderer the pipeline uses.
@@ -42,8 +44,12 @@ type Deps struct {
 	Queue    queue.Enqueuer
 	Renderer Renderer
 	Engines  *parser.Registry
-	Config   *config.Config
-	Log      *slog.Logger
+	// Cases resolves the case of an upload and the rules of its type.
+	Cases  interfaces.CaseService
+	Config *config.Config
+	Log    *slog.Logger
+	// Webhook sends completion callbacks; nil builds one from Config.Callback.
+	Webhook *webhook.Client
 }
 
 // Service implements Module 1.
@@ -54,8 +60,10 @@ type Service struct {
 	q        queue.Enqueuer
 	renderer Renderer
 	engines  *parser.Registry
+	cases    interfaces.CaseService
 	cfg      *config.Config
 	keys     storage.Keys
+	hooks    *webhook.Client
 	log      *slog.Logger
 }
 
@@ -65,8 +73,14 @@ func New(d Deps) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
+	hooks := d.Webhook
+	if hooks == nil {
+		cb := d.Config.Callback
+		hooks = webhook.New(webhook.Config{Timeout: cb.Timeout, Secret: cb.SigningSecret, AllowPrivate: cb.AllowPrivateNetworks})
+	}
 	return &Service{
-		st: d.Store, objects: d.Objects, files: d.Files, q: d.Queue, renderer: d.Renderer, engines: d.Engines,
+		hooks: hooks,
+		st:    d.Store, objects: d.Objects, files: d.Files, q: d.Queue, renderer: d.Renderer, engines: d.Engines, cases: d.Cases,
 		cfg: d.Config, keys: storage.Keys{Prefix: d.Config.Storage.S3.Prefix}, log: log.With("module", "document"),
 	}
 }
@@ -133,7 +147,9 @@ func (s *Service) LoadPages(ctx context.Context, doc uuid.UUID, gen, from, to in
 	return out, nil
 }
 
-// SetIndexResult implements interfaces.DocumentStore.
+// SetIndexResult implements interfaces.DocumentStore. A document whose case
+// has a wiki moves to enriching and is queued for ingest (§6.8); search works
+// from here on either way.
 func (s *Service) SetIndexResult(ctx context.Context, doc uuid.UUID, gen int, card interfaces.DocumentCard, failed error) error {
 	d, err := s.st.Documents.Get(ctx, doc)
 	if err != nil {
@@ -145,16 +161,13 @@ func (s *Service) SetIndexResult(ctx context.Context, doc uuid.UUID, gen int, ca
 		u.IndexStatus, u.Error = &st, &msg
 		status := types.DocFailed
 		u.Status = &status
-		_, err := s.st.Documents.Update(ctx, doc, gen, u)
+		_, err := s.updateStatus(ctx, doc, gen, u)
 		return err
 	}
 	done := types.StageDone
 	u.IndexStatus = &done
 	if card.Title != "" {
 		u.Title = &card.Title
-	}
-	if card.DocType != "" {
-		u.DocType = &card.DocType
 	}
 	if card.Summary != "" {
 		u.Summary = &card.Summary
@@ -163,35 +176,48 @@ func (s *Service) SetIndexResult(ctx context.Context, doc uuid.UUID, gen int, ca
 	if d.ParseStatus == types.StagePartial {
 		final = types.DocPartial
 	}
-	kb, _ := s.st.KBs.Get(ctx, d.KBID)
-	if kb.Config.GraphEnabled || (s.cfg.Graph.EnabledByDefault && kb.Config.GraphSchema != "none") {
-		final = types.DocEnriching
-		pending := types.StagePending
-		u.GraphStatus = &pending
+	wiki := types.StageSkipped
+	if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil && s.cases.WikiEnabled(c) {
+		final, wiki = types.DocEnriching, types.StagePending
 	}
+	u.WikiStatus = &wiki
 	u.Status = &final
-	_, err = s.st.Documents.Update(ctx, doc, gen, u)
-	return err
+	ok, err := s.updateStatus(ctx, doc, gen, u)
+	if err != nil || !ok || wiki != types.StagePending {
+		return err
+	}
+	return s.queueWikiOp(ctx, d, types.WikiOpIngestDoc, gen)
 }
 
-// SetGraphStatus implements interfaces.DocumentStore.
-func (s *Service) SetGraphStatus(ctx context.Context, doc uuid.UUID, gen int, status string, failed error) error {
+// SetWikiStatus implements interfaces.DocumentStore. A finished ingest
+// (done, partial, failed, skipped) settles the document status.
+func (s *Service) SetWikiStatus(ctx context.Context, doc uuid.UUID, gen int, status string, failed error) error {
 	d, err := s.st.Documents.Get(ctx, doc)
 	if err != nil {
 		return err
 	}
-	u := postgres.DocUpdate{GraphStatus: &status}
+	u := postgres.DocUpdate{WikiStatus: &status}
 	if failed != nil {
-		msg := "graph: " + failed.Error()
+		msg := "wiki: " + failed.Error()
 		u.Error = &msg
 	}
-	if status == types.StageDone || status == types.StageFailed || status == types.StageSkipped {
+	if d.Status == types.DocEnriching && status != types.StagePending && status != types.StageProcessing {
 		final := types.DocCompleted
 		if d.ParseStatus == types.StagePartial {
 			final = types.DocPartial
 		}
 		u.Status = &final
 	}
-	_, err = s.st.Documents.Update(ctx, doc, gen, u)
+	_, err = s.updateStatus(ctx, doc, gen, u)
 	return err
+}
+
+// queueWikiOp records a wiki op of the document's case and wakes the case's
+// ingest stream (§6.8). The op survives restarts in task_pending_ops.
+func (s *Service) queueWikiOp(ctx context.Context, d types.Document, op string, gen int) error {
+	if _, err := s.st.Tasks.EnqueueWikiOp(ctx, d.CaseID, op, types.WikiOpPayload{DocumentID: d.ID, Gen: gen, FileName: d.FileName}); err != nil {
+		return err
+	}
+	return s.q.Enqueue(ctx, types.TaskWikiIngest, types.CaseTaskPayload{CaseID: d.CaseID},
+		queue.Opts{TaskID: fmt.Sprintf("wi:%s:%s:%d:%s", d.CaseID, d.ID, gen, op)})
 }

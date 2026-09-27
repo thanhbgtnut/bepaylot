@@ -160,6 +160,20 @@ func itoa(v int) string {
 	return string(b)
 }
 
+// TableRows returns the cell texts of a table's HTML, row by row.
+func TableRows(src string) [][]string {
+	rows, _ := parseTable(src)
+	out := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		cells := make([]string, 0, len(r))
+		for _, c := range r {
+			cells = append(cells, c.text)
+		}
+		out = append(out, cells)
+	}
+	return out
+}
+
 // TableCells returns the flat cell texts of a table's HTML, in row order. It
 // lets the text-layer merge rewrite cell text.
 func TableCells(src string) []string {

@@ -48,3 +48,29 @@ func TestMetaFilterRejectsBadKeysAndOps(t *testing.T) {
 		t.Fatal("want error for unknown operator")
 	}
 }
+
+func TestMetaFilterEqMatchesNumberAndString(t *testing.T) {
+	for _, tc := range []struct {
+		v    any
+		alts []string
+	}{
+		{"123", []string{`{"group_code":"123"}`, `{"group_code":123}`}},
+		{123.0, []string{`{"group_code":123}`, `{"group_code":"123"}`}},
+		{"0123", []string{`{"group_code":"0123"}`}}, // not a round-trip number
+		{"G-01", []string{`{"group_code":"G-01"}`}},
+	} {
+		var a sqlArgs
+		sql, err := metaFilterSQL("m", types.MetadataFilter{"group_code": tc.v}, nil, &a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(a.vals) != len(tc.alts) || strings.Count(sql, "@>") != len(tc.alts) {
+			t.Fatalf("%v: sql %s args %v", tc.v, sql, a.vals)
+		}
+		for i, want := range tc.alts {
+			if a.vals[i] != want {
+				t.Fatalf("%v: arg %d = %v, want %s", tc.v, i, a.vals[i], want)
+			}
+		}
+	}
+}

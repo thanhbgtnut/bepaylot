@@ -70,18 +70,33 @@ func Render(page *types.ParsedPage) {
 				break
 			}
 		}
+		// A VLM-refined block renders its transcription verbatim; its lines
+		// are located inside it (§5.9).
+		refined := b.TextSource == types.TextSourceVLM && strings.TrimSpace(b.Text) != ""
+		writeRefined := func() {
+			base := pos
+			write(b.Text)
+			locateLines(page, lines, b.Text, base)
+		}
 
 		switch b.Type {
 		case types.BlockTable:
 			md := tableMarkdown(b.HTML)
-			if md == "" && !hasText {
+			if md == "" && !refined && !hasText {
 				continue
 			}
 			sep()
 			b.MdStart = pos
-			if md != "" {
+			switch {
+			case md != "":
+				base := pos
 				write(md)
-			} else {
+				locateLines(page, lines, md, base) // synthetic row lines
+			case refined:
+				base := pos
+				write(b.Text)
+				locateLines(page, lines, b.Text, base)
+			default:
 				writeLines("")
 			}
 			b.MdEnd = pos
@@ -112,7 +127,7 @@ func Render(page *types.ParsedPage) {
 			}
 			b.MdEnd = pos
 		case types.BlockTitle, types.BlockHeading:
-			if !hasText {
+			if !hasText && !refined {
 				continue
 			}
 			sep()
@@ -123,6 +138,11 @@ func Render(page *types.ParsedPage) {
 			}
 			// A multi-line heading is one markdown heading line.
 			write(prefix)
+			if refined {
+				writeRefined()
+				b.MdEnd = pos
+				break
+			}
 			n := 0
 			for _, li := range lines {
 				l := &page.Lines[li]
@@ -139,12 +159,16 @@ func Render(page *types.ParsedPage) {
 			}
 			b.MdEnd = pos
 		default:
-			if !hasText {
+			if !hasText && !refined {
 				continue
 			}
 			sep()
 			b.MdStart = pos
-			writeLines("")
+			if refined {
+				writeRefined()
+			} else {
+				writeLines("")
+			}
 			b.MdEnd = pos
 		}
 	}
@@ -158,7 +182,7 @@ func Render(page *types.ParsedPage) {
 		}
 	}
 	for _, b := range page.Blocks {
-		if b.HTML != "" || b.LaTeX != "" {
+		if b.HTML != "" || b.LaTeX != "" || (b.TextSource == types.TextSourceVLM && strings.TrimSpace(b.Text) != "") {
 			blank = false
 		}
 	}
@@ -202,16 +226,32 @@ func renumber(page *types.ParsedPage) {
 
 // PlainText returns the page text (non-furniture lines joined by newlines),
 // used for page-level full-text search.
+// A VLM-refined block contributes its whole transcription, which may hold
+// words no OCR line aligned to.
 func PlainText(page *types.ParsedPage) string {
-	furniture := map[int]bool{}
+	skip := map[int]bool{}
 	for _, b := range page.Blocks {
 		if b.IsFurniture {
-			furniture[b.BlockNo] = true
+			skip[b.BlockNo] = true
 		}
 	}
 	var parts []string
+	emitted := map[int]bool{}
 	for _, l := range page.Lines {
-		if l.Text != "" && !furniture[l.BlockNo] {
+		if skip[l.BlockNo] {
+			continue
+		}
+		if l.BlockNo >= 0 && l.BlockNo < len(page.Blocks) {
+			b := page.Blocks[l.BlockNo]
+			if b.BlockNo == l.BlockNo && b.TextSource == types.TextSourceVLM && b.Type != types.BlockTable {
+				if !emitted[l.BlockNo] {
+					emitted[l.BlockNo] = true
+					parts = append(parts, b.Text)
+				}
+				continue
+			}
+		}
+		if l.Text != "" {
 			parts = append(parts, l.Text)
 		}
 	}

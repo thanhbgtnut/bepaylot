@@ -13,8 +13,8 @@ import (
 
 // Search handles POST /v1/search.
 //
-// @Summary   Search documents (reasoning over the document tree, keyword, or metadata only)
-// @Description mode=reasoning (default): an LLM picks documents, walks their table of contents and cites exact lines; mode=keyword: Postgres full-text + trigram; mode=metadata: list documents matching the metadata filter. No embeddings are used.
+// @Summary   Search cases (reasoning over the case wiki and document trees, keyword, or metadata only)
+// @Description Scope: case_ids, or kb_ids (every case of those KBs; API only). mode=reasoning (default): an LLM reads the case wiki index, then wiki pages, then walks file trees and cites exact source lines, every hit re-checked against the current lines; mode=keyword: Postgres full-text + trigram; mode=metadata: list documents matching the metadata filter. No embeddings are used.
 // @Tags      Search
 // @Accept    json
 // @Produce   json
@@ -68,7 +68,7 @@ func (h *Handlers) SearchInDocument(ctx context.Context, c *app.RequestContext) 
 		h.badRequest(c, "invalid JSON: "+err.Error())
 		return
 	}
-	pages, err := h.Searcher.FindInDocument(ctx, u.ID, id, req.Query, req.Mode)
+	pages, err := h.Searcher.FindInDocument(ctx, u.ID, id, req.Query, req.Mode, req.PageFrom, req.PageTo)
 	if err != nil {
 		h.serviceError(c, err)
 		return
@@ -114,7 +114,7 @@ func (h *Handlers) DocumentTree(ctx context.Context, c *app.RequestContext) {
 // @Summary   Resolve a citation id (doc:<id>:p<page>:l<a>-<b>) to text and boxes
 // @Tags      Search
 // @Produce   json
-// @Param     id   query     string  true  "Citation id"
+// @Param     id   query     string  true  "Citation id: doc:<id>:p<page>, optionally :l<a>-<b> or :l<a>"
 // @Success   200  {object}  dto.LocationsResponse
 // @Failure   404  {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth

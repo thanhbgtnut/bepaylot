@@ -1,3 +1,6 @@
+# Fixed project name: `make up` and `docker compose -p bepaylot` manage the same containers.
+name: bepaylot
+
 services:
   postgres:
     image: pgvector/pgvector:pg17

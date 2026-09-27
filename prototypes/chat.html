@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BePaylot · Hỏi đáp</title>
+<link rel="stylesheet" href="assets/app.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="assets/api.js"></script>
+<style>
+  .chat { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: 100%; }
+  .sessions { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .sessions .head { padding: 12px; border-bottom: 1px solid var(--border); }
+  .sessions .list { flex: 1; overflow: auto; }
+  .sess { display: flex; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .sess:hover { background: var(--surface-2); }
+  .sess.active { background: var(--accent-soft); }
+  .sess .t { font-weight: 500; }
+  .sess .del { visibility: hidden; }
+  .sess:hover .del { visibility: visible; }
+
+  .conv { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .scope { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+  .scope .kbs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .kbchip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; font-size: 13px; user-select: none; }
+  .kbchip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 500; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .frow { display: inline-flex; gap: 4px; align-items: center; }
+  .frow input { height: 28px; width: 130px; font-size: 13px; }
+
+  .msgs { flex: 1; overflow: auto; padding: 20px 0; }
+  .msgs .inner { max-width: 860px; margin: 0 auto; padding: 0 20px; display: flex; flex-direction: column; gap: 18px; }
+  .msg.user { align-self: flex-end; max-width: 80%; background: var(--accent); color: #fff; padding: 10px 14px; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.assistant { display: flex; gap: 12px; }
+  .avatar { width: 30px; height: 30px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; flex: none; }
+  .blocks { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  details.tool, details.think { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); font-size: 13px; }
+  details.tool summary, details.think summary { padding: 7px 12px; cursor: pointer; display: flex; gap: 8px; align-items: center; list-style: none; }
+  details.tool summary::-webkit-details-marker { display: none; }
+  details.tool summary .args { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  details.tool pre, details.think .tb { margin: 0; padding: 10px 12px; border-top: 1px solid var(--border); max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+  details.think summary { color: var(--muted); }
+  details.think .tb { color: var(--muted); font-style: italic; }
+  .foot { font-size: 12px; color: var(--muted); }
+  .notice { align-self: center; font-size: 12.5px; color: var(--muted); background: var(--surface-2); padding: 4px 12px; border-radius: 999px; }
+  .caret::after { content: '▍'; animation: blink 1s steps(2) infinite; color: var(--accent); }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .composer { padding: 12px 20px 16px; border-top: 1px solid var(--border); background: var(--surface); }
+  .composer .box { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; border: 1px solid var(--border); border-radius: 14px; padding: 8px 8px 8px 14px; background: var(--bg); }
+  .composer textarea { flex: 1; border: 0; background: none; resize: none; max-height: 200px; min-height: 24px; padding: 4px 0; outline: none; line-height: 1.5; }
+  .composer .hint { max-width: 860px; margin: 6px auto 0; font-size: 12px; color: var(--muted); }
+  .suggest { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 16px; }
+  .suggest button { text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; line-height: 1.45; }
+  .suggest button:hover { border-color: var(--accent); }
+  @media (max-width: 860px) { .chat { grid-template-columns: 1fr; } .sessions { display: none; } }
+</style>
+</head>
+<body>
+<div id="page"></div>
+
+<script>
+const { api, Cfg, esc, $, $$, h, fmtDate, toast, fail, renderMarkdown, readSSE, Shell, dialog } = BP;
+const root = document.getElementById('page');
+const S = { kbs: [], sessions: [], sessionId: null, kbIds: new Set(), filter: [], busy: false, abort: null };
+
+Shell.init({ page: 'chat', title: 'Hỏi đáp', kbSelector: false,
+  actions: `<button class="btn" id="newChat">${BP.ICONS.plus} Cuộc trò chuyện mới</button>` });
+
+root.classList.add('flush');
+root.innerHTML = `
+  <div class="chat">
+    <aside class="sessions">
+      <div class="head row"><b style="flex:1">Lịch sử</b><button class="btn sm icon" id="reloadS" title="Làm mới">⟳</button></div>
+      <div class="list" id="slist"></div>
+    </aside>
+    <section class="conv">
+      <div class="scope">
+        <div class="row wrap"><span class="small muted" style="width:92px">Knowledge base</span><div class="kbs" id="kbs"></div></div>
+        <div class="row wrap"><span class="small muted" style="width:92px">Lọc metadata</span>
+          <div class="filters" id="filters"></div><button class="btn sm" id="addF">+ điều kiện</button>
+          <span class="small muted" id="scopeNote"></span></div>
+      </div>
+      <div class="msgs" id="msgs"><div class="inner" id="inner"></div></div>
+      <div class="composer">
+        <div class="box">
+          <textarea id="input" rows="1" placeholder="Đặt câu hỏi về tài liệu… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+          <button class="btn primary" id="send">Gửi</button>
+        </div>
+        <div class="hint">Agent dùng các tool kb_* (kb_search, kb_page_overview, kb_find_in_document, kb_read_pages…) trong phạm vi KB và bộ lọc ở trên. Bấm vào nhãn <span class="cite">tr.3</span> để xem vị trí trích dẫn.</div>
+      </div>
+    </section>
+  </div>`;
+
+// ---------------------------------------------------------------- scope
+async function loadKBs() {
+  try { S.kbs = (await api('/kbs')).data || []; } catch (e) { fail(e); }
+  if (!S.kbIds.size && S.kbs.length) S.kbIds.add((S.kbs.find((k) => k.id === Cfg.kb) || S.kbs[0]).id);
+  renderScope();
+}
+function renderScope() {
+  $('#kbs').innerHTML = S.kbs.map((k) => `<span class="kbchip ${S.kbIds.has(k.id) ? 'on' : ''}" data-id="${k.id}">${S.kbIds.has(k.id) ? '✓ ' : ''}${esc(k.name)}</span>`).join('') || '<span class="muted small">Chưa có knowledge base</span>';
+  $$('.kbchip').forEach((c) => c.onclick = () => { S.kbIds.has(c.dataset.id) ? S.kbIds.delete(c.dataset.id) : S.kbIds.add(c.dataset.id); renderScope(); });
+  const f = $('#filters');
+  f.innerHTML = '';
+  S.filter.forEach((row, i) => {
+    const el = h(`<span class="frow"><input type="text" placeholder="key (vd group_code)" value="${esc(row.k)}"><span>=</span><input type="text" placeholder="value" value="${esc(row.v)}"><button class="btn sm icon" title="Bỏ">✕</button></span>`);
+    const [ki, vi] = $$('input', el);
+    ki.oninput = () => { row.k = ki.value; note(); }; vi.oninput = () => { row.v = vi.value; note(); };
+    el.querySelector('button').onclick = () => { S.filter.splice(i, 1); renderScope(); };
+    f.appendChild(el);
+  });
+  note();
+}
+function filterObj() {
+  const o = {};
+  for (const { k, v } of S.filter) if (k.trim() && v.trim()) o[k.trim()] = v.trim();
+  return o;
+}
+function note() {
+  const n = Object.keys(filterObj()).length;
+  $('#scopeNote').textContent = n ? 'Bộ lọc được ghim: agent chỉ đọc tài liệu khớp (tool graph/wiki bị tắt).' : '';
+}
+$('#addF').onclick = () => { S.filter.push({ k: 'group_code', v: '' }); renderScope(); const ins = $$('#filters input'); ins[ins.length - 1].focus(); };
+
+// ---------------------------------------------------------------- sessions
+async function loadSessions() {
+  try { S.sessions = (await api('/sessions?limit=50')).data || []; } catch (e) { fail(e); S.sessions = []; }
+  renderSessions();
+}
+function renderSessions() {
+  $('#slist').innerHTML = S.sessions.map((s) => `
+    <div class="sess ${s.id === S.sessionId ? 'active' : ''}" data-id="${s.id}">
+      <div style="flex:1;min-width:0"><div class="t ellipsis">${esc(s.title || 'Cuộc trò chuyện')}</div>
+        <div class="small muted">${fmtDate(s.updated_at)}${s.metadata && s.metadata.kb_filter ? ' · 📌 ' + esc(Object.entries(s.metadata.kb_filter).map(([k, v]) => k + '=' + v).join(', ')) : ''}</div></div>
+      <button class="btn sm icon del" title="Xoá">✕</button>
+    </div>`).join('') || '<div class="empty small">Chưa có cuộc trò chuyện</div>';
+  $$('.sess').forEach((el) => {
+    el.onclick = (e) => { if (!e.target.closest('.del')) openSession(el.dataset.id); };
+    el.querySelector('.del').onclick = async () => {
+      if (!confirm('Xoá cuộc trò chuyện này?')) return;
+      try { await api('/sessions/' + el.dataset.id, { method: 'DELETE' }); if (S.sessionId === el.dataset.id) newChat(); loadSessions(); } catch (e) { fail(e); }
+    };
+  });
+}
+$('#reloadS').onclick = loadSessions;
+
+function newChat() {
+  if (S.busy) return;
+  S.sessionId = null;
+  renderSessions();
+  renderEmpty();
+  $('#input').focus();
+}
+document.addEventListener('click', (e) => { if (e.target.closest('#newChat')) newChat(); });
+
+async function openSession(id) {
+  if (S.busy) return;
+  S.sessionId = id;
+  renderSessions();
+  const inner = $('#inner');
+  inner.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  const s = S.sessions.find((x) => x.id === id);
+  if (s && s.metadata) {
+    if (Array.isArray(s.metadata.kb_ids) && s.metadata.kb_ids.length) S.kbIds = new Set(s.metadata.kb_ids);
+    S.filter = Object.entries(s.metadata.kb_filter || {}).map(([k, v]) => ({ k, v: typeof v === 'object' ? JSON.stringify(v) : String(v) }));
+    renderScope();
+  }
+  try {
+    const res = await api(`/sessions/${id}/messages?limit=500`);
+    renderTranscript(res.data || []);
+  } catch (e) { inner.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+// ---------------------------------------------------------------- rendering
+const SUGGEST = [
+  'Liệt kê các tài liệu trong phạm vi và mỗi tài liệu gồm những loại giấy tờ nào, ở trang nào.',
+  'Xem tổng quan từng trang của hồ sơ, tìm các trang là hợp đồng chuyển nhượng rồi cho biết giá chuyển nhượng và các bên.',
+  'Số định danh cá nhân của người nộp thuế là gì? Trích dẫn đúng trang.',
+  'Tìm thửa đất số 215 xuất hiện ở những trang nào, mỗi trang thuộc loại giấy tờ gì?',
+];
+function renderEmpty() {
+  $('#inner').innerHTML = `
+    <div style="margin-top:6vh">
+      <h1 style="font-size:22px">Hỏi đáp trên tài liệu</h1>
+      <p class="muted">Chọn knowledge base, (tuỳ chọn) ghim bộ lọc metadata như <code>group_code</code>, rồi đặt câu hỏi. Bạn có thể mô tả cách tìm ngay trong câu hỏi — ví dụ "xem tổng quan trang trước, rồi tìm trong trang 7–12".</p>
+      <div class="suggest">${SUGGEST.map((s) => `<button>${esc(s)}</button>`).join('')}</div>
+    </div>`;
+  $$('.suggest button').forEach((b) => b.onclick = () => { $('#input').value = b.textContent; autosize(); $('#input').focus(); });
+}
+
+function userBubble(text) { return h(`<div class="msg user">${esc(text)}</div>`); }
+function assistantShell() {
+  const el = h(`<div class="msg assistant"><div class="avatar">B</div><div class="blocks"></div></div>`);
+  return { el, blocks: el.querySelector('.blocks') };
+}
+function pretty(x) {
+  if (x == null) return '';
+  let s = x;
+  if (typeof x === 'string') { try { s = JSON.parse(x); } catch { return x.length > 6000 ? x.slice(0, 6000) + '\n…' : x; } }
+  const out = JSON.stringify(s, null, 2);
+  return out.length > 6000 ? out.slice(0, 6000) + '\n…' : out;
+}
+function argsLine(input) {
+  if (!input) return '';
+  let o = input;
+  if (typeof o === 'string') { try { o = JSON.parse(o); } catch { return o; } }
+  return Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join('  ');
+}
+function toolCard(name, input) {
+  const el = h(`<details class="tool"><summary><span>🔧</span><b class="mono">${esc(name)}</b><span class="args mono"></span><span class="st"><span class="spinner" style="width:12px;height:12px"></span></span></summary>
+    <pre class="in"></pre><pre class="out" hidden></pre></details>`);
+  const api = {
+    el,
+    setInput(inp) { el.querySelector('.args').textContent = argsLine(inp); el.querySelector('.in').textContent = 'input: ' + pretty(inp); },
+    setResult(res, isErr) {
+      const st = el.querySelector('.st');
+      st.innerHTML = isErr ? '<span class="badge err">lỗi</span>' : '<span class="badge ok">xong</span>';
+      const out = el.querySelector('.out');
+      out.hidden = false;
+      out.textContent = pretty(res);
+      if (isErr) out.style.color = 'var(--err)';
+    },
+  };
+  api.setInput(input);
+  return api;
+}
+function textBlock() {
+  const el = h(`<div class="md-wrap"></div>`);
+  let raw = '', frame = 0;
+  return {
+    el,
+    append(t) { raw += t; if (!frame) frame = requestAnimationFrame(() => { frame = 0; this.render(true); }); },
+    set(t) { raw = t; this.render(false); },
+    render(streaming) { el.innerHTML = ''; const md = renderMarkdown(raw); if (streaming) md.classList.add('caret'); el.appendChild(md); },
+    done() { cancelAnimationFrame(frame); frame = 0; this.render(false); },
+  };
+}
+function thinkBlock() {
+  const el = h(`<details class="think"><summary>💭 Suy nghĩ</summary><div class="tb"></div></details>`);
+  return { el, append(t) { el.querySelector('.tb').textContent += t; } };
+}
+
+function contentText(c) {
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.map((b) => (b.type === 'text' ? b.text : '')).join('');
+  return '';
+}
+
+function renderTranscript(msgs) {
+  const inner = $('#inner');
+  inner.innerHTML = '';
+  if (!msgs.length) return renderEmpty();
+  const cards = {};
+  let cur = null;
+  for (const m of msgs) {
+    const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: contentText(m.content) }];
+    if (m.role === 'user') {
+      const results = blocks.filter((b) => b.type === 'tool_result');
+      for (const r of results) cards[r.tool_use_id] && cards[r.tool_use_id].setResult(r.content, r.is_error);
+      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+      if (text) { inner.appendChild(userBubble(text)); cur = null; }
+      continue;
+    }
+    if (!cur) { cur = assistantShell(); inner.appendChild(cur.el); }
+    for (const b of blocks) {
+      if (b.type === 'text' && b.text) { const t = textBlock(); t.set(b.text); cur.blocks.appendChild(t.el); }
+      else if (b.type === 'thinking' && b.thinking) { const t = thinkBlock(); t.append(b.thinking); cur.blocks.appendChild(t.el); }
+      else if (b.type === 'tool_use') { const c = toolCard(b.name, b.input); cards[b.id] = c; cur.blocks.appendChild(c.el); }
+      else if (b.type === 'tool_result') { cards[b.tool_use_id] && cards[b.tool_use_id].setResult(b.content, b.is_error); }
+    }
+    if (m.stop_reason && m.stop_reason !== 'end_turn' && m.stop_reason !== 'tool_use') cur.blocks.appendChild(h(`<div class="foot">stop_reason: ${esc(m.stop_reason)}</div>`));
+  }
+  // Tool cards whose result never arrived.
+  Object.values(cards).forEach((c) => { const st = c.el.querySelector('.st .spinner'); if (st) st.parentElement.innerHTML = '<span class="badge">—</span>'; });
+  scrollDown(true);
+}
+
+function scrollDown(force) {
+  const box = $('#msgs');
+  if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 160) box.scrollTop = box.scrollHeight;
+}
+
+// ---------------------------------------------------------------- send
+const input = $('#input');
+function autosize() { input.style.height = 'auto'; input.style.height = Math.min(200, input.scrollHeight) + 'px'; }
+input.addEventListener('input', autosize);
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+$('#send').onclick = () => (S.busy ? stop() : send());
+
+function setBusy(b) {
+  S.busy = b;
+  const btn = $('#send');
+  btn.textContent = b ? 'Dừng' : 'Gửi';
+  btn.classList.toggle('primary', !b);
+  btn.classList.toggle('danger', b);
+}
+function stop() { S.abort && S.abort.abort(); }
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || S.busy) return;
+  if (!S.kbIds.size) toast('Chưa chọn knowledge base nào: agent sẽ trả lời không có tài liệu.', 'err');
+  input.value = ''; autosize();
+  const inner = $('#inner');
+  if (!S.sessionId) inner.innerHTML = '';
+  inner.appendChild(userBubble(text));
+  const shell = assistantShell();
+  inner.appendChild(shell.el);
+  const waiting = h(`<div class="row muted small"><span class="spinner"></span> Đang xử lý…</div>`);
+  shell.blocks.appendChild(waiting);
+  scrollDown(true);
+
+  const metadata = { kb_ids: [...S.kbIds] };
+  const f = filterObj();
+  if (Object.keys(f).length) metadata.kb_filter = f;
+  if (S.sessionId) metadata.session_id = S.sessionId;
+  const body = { max_tokens: 4096, stream: true, messages: [{ role: 'user', content: text }], metadata };
+
+  setBusy(true);
+  S.abort = new AbortController();
+  const byIndex = {};
+  const byTool = {};
+  let lastStop = '';
+  let created = !S.sessionId;
+  try {
+    const res = await api('/messages', { body, raw: true, headers: { Accept: 'text/event-stream' }, signal: S.abort.signal });
+    await readSSE(res, (ev, d) => {
+      if (waiting.isConnected && ev !== 'ping') waiting.remove();
+      switch (ev) {
+        case 'message_start':
+          if (d.message && d.message.session_id && d.message.session_id !== S.sessionId) { S.sessionId = d.message.session_id; created = true; }
+          break;
+        case 'content_block_start': {
+          const b = d.content_block || {};
+          if (b.type === 'text') { const t = textBlock(); byIndex[d.index] = t; shell.blocks.appendChild(t.el); }
+          else if (b.type === 'thinking') { const t = thinkBlock(); byIndex[d.index] = t; shell.blocks.appendChild(t.el); }
+          else if (b.type === 'tool_use') { const c = toolCard(b.name, ''); c.json = ''; byIndex[d.index] = c; byTool[b.id] = c; shell.blocks.appendChild(c.el); }
+          break;
+        }
+        case 'content_block_delta': {
+          const blk = byIndex[d.index]; const dl = d.delta || {};
+          if (!blk) break;
+          if (dl.type === 'text_delta') blk.append(dl.text);
+          else if (dl.type === 'thinking_delta') blk.append(dl.thinking);
+          else if (dl.type === 'input_json_delta') { blk.json += dl.partial_json; blk.setInput(blk.json); }
+          scrollDown();
+          break;
+        }
+        case 'content_block_stop': { const blk = byIndex[d.index]; blk && blk.done && blk.done(); break; }
+        case 'tool_execution_start': {
+          let c = byTool[d.tool_use_id];
+          if (!c) { c = toolCard(d.name, d.input); byTool[d.tool_use_id] = c; shell.blocks.appendChild(c.el); }
+          else if (d.input) c.setInput(d.input);
+          scrollDown();
+          break;
+        }
+        case 'tool_execution_stop': { const c = byTool[d.tool_use_id]; c && c.setResult(d.result, d.is_error); break; }
+        case 'message_delta': lastStop = (d.delta && d.delta.stop_reason) || lastStop; break;
+        case 'steered':
+          shell.blocks.appendChild(h(`<div class="notice">Phiên đang chạy một lượt khác — tin nhắn đã được chuyển vào lượt đó.</div>`));
+          break;
+        case 'error':
+          shell.blocks.appendChild(h(`<div class="badge err" style="white-space:normal">${esc((d.error && d.error.message) || JSON.stringify(d))}</div>`));
+          break;
+      }
+    });
+    Object.values(byIndex).forEach((b) => b.done && b.done());
+    if (lastStop === 'max_tokens') shell.blocks.appendChild(h(`<div class="foot">⚠️ Câu trả lời bị cắt do giới hạn max_tokens.</div>`));
+    if (lastStop === 'interrupted') shell.blocks.appendChild(h(`<div class="foot">Đã dừng.</div>`));
+  } catch (e) {
+    waiting.remove();
+    Object.values(byIndex).forEach((b) => b.done && b.done());
+    if (e.name === 'AbortError') shell.blocks.appendChild(h(`<div class="foot">Đã ngắt kết nối stream (agent có thể vẫn chạy tiếp ở server).</div>`));
+    else { shell.blocks.appendChild(h(`<div class="badge err" style="white-space:normal">${esc(e.message)}</div>`)); }
+  } finally {
+    Object.values(byTool).forEach((c) => { const sp = c.el.querySelector('.st .spinner'); if (sp) sp.parentElement.innerHTML = '<span class="badge">—</span>'; });
+    setBusy(false);
+    S.abort = null;
+    scrollDown();
+    if (created) loadSessions(); else renderSessions();
+  }
+}
+
+// ---------------------------------------------------------------- boot
+renderScope();
+renderEmpty();
+loadKBs();
+loadSessions();
+</script>
+</body>
+</html>

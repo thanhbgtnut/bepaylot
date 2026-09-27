@@ -14,8 +14,8 @@ import (
 // the turn as client-executed tools: the agent may call them, but bepaylot
 // only forwards the call as AG-UI `TOOL_CALL_*` frames and ends the run
 // immediately after — the client must execute the tool itself and send the
-// result back as a `tool` message on the next run. `forwardedProps` has no
-// defined bepaylot semantics and remains accepted-but-ignored.
+// result back as a `tool` message on the next run. `metadata` (or the same
+// fields in `forwardedProps`) binds the session to a case (§8.1).
 type AGUIRunAgentInput struct {
 	ThreadID       string               `json:"threadId"`
 	RunID          string               `json:"runId,omitempty"`
@@ -24,6 +24,9 @@ type AGUIRunAgentInput struct {
 	Tools          []AGUIToolDefinition `json:"tools,omitempty"`
 	Context        []AGUIContextItem    `json:"context,omitempty"`
 	ForwardedProps json.RawMessage      `json:"forwardedProps,omitempty" swaggertype:"object"`
+	// Metadata (bepaylot extension) binds the thread's session to a case with
+	// case_id or case {kb_id, code}; forwardedProps may carry the same fields.
+	Metadata *Metadata `json:"metadata,omitempty"`
 }
 
 // AGUIContextItem is one entry of AG-UI's `context` array: a labeled piece of

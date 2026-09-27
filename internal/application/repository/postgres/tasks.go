@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/thanhenti/bepaylot/internal/types"
 )
 
 // TasksRepo persists dead letters, pending ops and processing spans (§4.5).
@@ -93,6 +96,48 @@ func (r *TasksRepo) EnqueueOp(ctx context.Context, op PendingOp) error {
 	}
 	_, err := r.pool.Exec(ctx, `INSERT INTO task_pending_ops (task_type, scope, scope_id, op, dedup_key, payload) VALUES ($1, $2, $3, $4, $5, $6)`,
 		op.TaskType, op.Scope, op.ScopeID, op.Op, op.DedupKey, []byte(payload))
+	return err
+}
+
+// HasDeadLetter reports whether a dead letter with this scope exists.
+func (r *TasksRepo) HasDeadLetter(ctx context.Context, scope, scopeID, relatedID string) (bool, error) {
+	var ok bool
+	err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM task_dead_letters WHERE scope = $1 AND scope_id = $2 AND related_id = $3)`,
+		scope, scopeID, relatedID).Scan(&ok)
+	return ok, err
+}
+
+// EnqueueWikiOp queues one wiki op of a case (task_pending_ops, task type
+// wiki:ingest, scope case), once per (op, document, generation).
+func (r *TasksRepo) EnqueueWikiOp(ctx context.Context, caseID uuid.UUID, op string, p types.WikiOpPayload) (bool, error) {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return false, err
+	}
+	return r.EnqueueOpOnce(ctx, PendingOp{TaskType: types.TaskWikiIngest, Scope: types.ScopeCase, ScopeID: caseID.String(),
+		Op: op, DedupKey: fmt.Sprintf("%s:%d:%v", p.DocumentID, p.Gen, p.PageIDs), Payload: b})
+}
+
+// EnqueueOpOnce stores a pending op unless one with the same identity and
+// dedup key is already waiting; it reports whether a row was added.
+func (r *TasksRepo) EnqueueOpOnce(ctx context.Context, op PendingOp) (bool, error) {
+	payload := op.Payload
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	tag, err := r.pool.Exec(ctx, `INSERT INTO task_pending_ops (task_type, scope, scope_id, op, dedup_key, payload)
+		SELECT $1, $2, $3, $4, $5, $6 WHERE NOT EXISTS (
+			SELECT 1 FROM task_pending_ops WHERE task_type = $1 AND scope = $2 AND scope_id = $3 AND op = $4 AND dedup_key = $5)`,
+		op.TaskType, op.Scope, op.ScopeID, op.Op, op.DedupKey, []byte(payload))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// DeleteScopeOps removes every pending op of a scope (case deleted).
+func (r *TasksRepo) DeleteScopeOps(ctx context.Context, scope, scopeID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM task_pending_ops WHERE scope = $1 AND scope_id = $2`, scope, scopeID)
 	return err
 }
 

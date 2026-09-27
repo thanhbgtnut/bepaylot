@@ -13,12 +13,18 @@ type CreateSessionRequest struct {
 	Model    string         `json:"model,omitempty"`
 	System   string         `json:"system,omitempty"`
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// CaseID binds the new session to a case for its whole life (§8.1).
+	CaseID string `json:"case_id,omitempty"`
+	// Case names the case by knowledge base and code instead of CaseID.
+	Case *CaseRef `json:"case,omitempty"`
 }
 
 // UpdateSessionRequest is the body of PATCH /v1/sessions/{id}.
 type UpdateSessionRequest struct {
 	Title    *string        `json:"title,omitempty"`
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// CaseID cannot change once set: a different case answers 409.
+	CaseID *string `json:"case_id,omitempty"`
 }
 
 // SessionBrief is a session without its transcript.
@@ -29,6 +35,7 @@ type SessionBrief struct {
 	Model     string         `json:"model"`
 	Summary   string         `json:"summary,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	CaseID    string         `json:"case_id,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 }
@@ -85,7 +92,12 @@ type TranscriptMessage struct {
 
 // BriefFromDomain maps a domain session to its brief DTO.
 func BriefFromDomain(s types.Session) SessionBrief {
+	caseID := ""
+	if s.CaseID != nil {
+		caseID = s.CaseID.String()
+	}
 	return SessionBrief{
+		CaseID:    caseID,
 		ID:        s.ID.String(),
 		Title:     s.Title,
 		Provider:  s.Provider,

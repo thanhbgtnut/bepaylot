@@ -1,7 +1,39 @@
 basePath: /
 definitions:
+  cases.CreateRequest:
+    properties:
+      case_type:
+        type: string
+      code:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      title:
+        type: string
+    type: object
+  cases.UpdateRequest:
+    properties:
+      case_type:
+        type: string
+      code:
+        description: 'Code, CaseType and KBID are rejected: they never change.'
+        type: string
+      kb_id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      status:
+        type: string
+      title:
+        type: string
+    type: object
   document.Accepted:
     properties:
+      callback_url:
+        description: CallbackURL echoes the completion callback, when one was given.
+        type: string
       document_id:
         type: string
       duplicate:
@@ -18,11 +50,18 @@ definitions:
     properties:
       batch_id:
         type: string
+      callback_url:
+        description: |-
+          CallbackURL, when set, receives a POST once the document reaches a
+          terminal status (§4.7).
+        type: string
+      case_code:
+        type: string
+      case_id:
+        type: string
       created_at:
         type: string
       created_by:
-        type: string
-      doc_type:
         type: string
       engine:
         type: string
@@ -36,8 +75,6 @@ definitions:
         type: string
       gen:
         type: integer
-      graph_status:
-        type: string
       id:
         type: string
       index_status:
@@ -81,6 +118,8 @@ definitions:
       title:
         type: string
       updated_at:
+        type: string
+      wiki_status:
         type: string
     type: object
   document.FailedPage:
@@ -201,6 +240,11 @@ definitions:
     type: object
   document.ReparseRequest:
     properties:
+      callback_url:
+        description: |-
+          CallbackURL replaces the document's completion callback URL; empty
+          keeps the current one. The callback fires again when the reparse ends.
+        type: string
       engine:
         type: string
       pages:
@@ -208,10 +252,23 @@ definitions:
           type: integer
         type: array
     type: object
+  document.UploadCase:
+    properties:
+      case_type:
+        type: string
+      code:
+        type: string
+      created:
+        type: boolean
+      id:
+        type: string
+    type: object
   document.UploadResult:
     properties:
       batch_id:
         type: string
+      case:
+        $ref: '#/definitions/document.UploadCase'
       documents:
         items:
           $ref: '#/definitions/document.Accepted'
@@ -254,6 +311,12 @@ definitions:
         items:
           $ref: '#/definitions/dto.AGUIMessage'
         type: array
+      metadata:
+        allOf:
+        - $ref: '#/definitions/dto.Metadata'
+        description: |-
+          Metadata (bepaylot extension) binds the thread's session to a case with
+          case_id or case {kb_id, code}; forwardedProps may carry the same fields.
       runId:
         type: string
       state:
@@ -280,6 +343,8 @@ definitions:
         properties:
           batch_id:
             type: string
+          case_id:
+            type: string
           document_ids:
             items:
               type: string
@@ -300,6 +365,51 @@ definitions:
       updated:
         type: integer
     type: object
+  dto.CallbackList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.DocumentCallback'
+        type: array
+    type: object
+  dto.CaseConflict:
+    properties:
+      case:
+        $ref: '#/definitions/types.Case'
+      error:
+        properties:
+          message:
+            type: string
+          type:
+            type: string
+        type: object
+      type:
+        description: '"error"'
+        type: string
+    type: object
+  dto.CaseList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.Case'
+        type: array
+      next_cursor:
+        type: string
+    type: object
+  dto.CaseRef:
+    properties:
+      code:
+        type: string
+      kb_id:
+        type: string
+    type: object
+  dto.CaseTypeList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.CaseType'
+        type: array
+    type: object
   dto.CreateKBRequest:
     properties:
       config:
@@ -313,6 +423,13 @@ definitions:
     type: object
   dto.CreateSessionRequest:
     properties:
+      case:
+        allOf:
+        - $ref: '#/definitions/dto.CaseRef'
+        description: Case names the case by knowledge base and code instead of CaseID.
+      case_id:
+        description: CaseID binds the new session to a case for its whole life (§8.1).
+        type: string
       metadata:
         additionalProperties: {}
         type: object
@@ -374,6 +491,10 @@ definitions:
       mode:
         description: keyword (default) | reasoning
         type: string
+      page_from:
+        type: integer
+      page_to:
+        type: integer
       query:
         type: string
     type: object
@@ -400,13 +521,6 @@ definitions:
       data:
         items:
           $ref: '#/definitions/dto.EngineInfo'
-        type: array
-    type: object
-  dto.EntityList:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/types.Entity'
         type: array
     type: object
   dto.ErrorResponse:
@@ -576,17 +690,15 @@ definitions:
     type: object
   dto.Metadata:
     properties:
-      kb_filter:
-        additionalProperties: {}
-        description: KBFilter pins a metadata filter for every knowledge search of
-          the session.
-        type: object
-      kb_ids:
-        description: KBIDs attaches knowledge bases to the session (enables the kb_*
-          tools).
-        items:
-          type: string
-        type: array
+      case:
+        allOf:
+        - $ref: '#/definitions/dto.CaseRef'
+        description: Case names the case by KB and code instead of CaseID.
+      case_id:
+        description: |-
+          CaseID binds the session to one case (§8.1): the wiki_* and kb_* tools
+          then see that case only. Binding is permanent: another case is 409.
+        type: string
       session_id:
         description: bepaylot extension
         type: string
@@ -703,25 +815,30 @@ definitions:
         example: ready
         type: string
     type: object
-  dto.RebuildResponse:
+  dto.RetryCallbackRequest:
     properties:
-      queued:
-        type: integer
+      callback_id:
+        description: CallbackID selects a delivery; empty retries the latest one.
+        type: string
     type: object
   dto.SchemaList:
     properties:
       data:
         items:
-          $ref: '#/definitions/types.GraphSchema'
+          $ref: '#/definitions/types.WikiSchema'
         type: array
     type: object
   dto.SchemaTestRequest:
     properties:
+      document_id:
+        type: string
       text:
         type: string
     type: object
   dto.SessionBrief:
     properties:
+      case_id:
+        type: string
       created_at:
         type: string
       id:
@@ -742,6 +859,8 @@ definitions:
     type: object
   dto.SessionDetail:
     properties:
+      case_id:
+        type: string
       created_at:
         type: string
       id:
@@ -777,6 +896,8 @@ definitions:
     type: object
   dto.SessionReport:
     properties:
+      case_id:
+        type: string
       created_at:
         type: string
       id:
@@ -896,6 +1017,9 @@ definitions:
     type: object
   dto.UpdateSessionRequest:
     properties:
+      case_id:
+        description: 'CaseID cannot change once set: a different case answers 409.'
+        type: string
       metadata:
         additionalProperties: {}
         type: object
@@ -909,139 +1033,55 @@ definitions:
       output_tokens:
         type: integer
     type: object
-  dto.WikiEditRequest:
+  dto.WikiIndexResponse:
     properties:
       content:
         type: string
-      summary:
-        type: string
-      title:
-        type: string
     type: object
-  dto.WikiPageList:
+  dto.WikiLintList:
     properties:
       data:
         items:
-          $ref: '#/definitions/types.WikiPage'
+          $ref: '#/definitions/types.WikiLintIssue'
         type: array
     type: object
-  graph.EntityDetail:
+  dto.WikiLintPatch:
     properties:
-      aliases:
+      status:
+        description: fixed | dismissed | open
+        type: string
+    type: object
+  dto.WikiLogList:
+    properties:
+      data:
         items:
-          type: string
+          $ref: '#/definitions/types.WikiLogEntry'
         type: array
-      attributes:
-        additionalProperties: {}
-        type: object
-      conflict:
-        type: boolean
-      id:
+    type: object
+  dto.WikiProposalRequest:
+    properties:
+      action:
+        description: accept | reject
         type: string
-      kb_id:
-        type: string
-      mentions:
+    type: object
+  dto.WikiSearchResponse:
+    properties:
+      data:
         items:
-          $ref: '#/definitions/types.Mention'
-        type: array
-      name:
-        type: string
-      relations:
-        items:
-          $ref: '#/definitions/graph.RelationView'
-        type: array
-      summary:
-        type: string
-      type:
-        type: string
-      wiki_slug:
-        type: string
-    type: object
-  graph.EntityRef:
-    properties:
-      name:
-        type: string
-      type:
-        type: string
-    type: object
-  graph.ExtractedEntity:
-    properties:
-      attributes:
-        additionalProperties: {}
-        type: object
-      evidence:
-        type: string
-      name:
-        type: string
-      type:
-        type: string
-      unit:
-        type: string
-    type: object
-  graph.ExtractedRelation:
-    properties:
-      attributes:
-        additionalProperties: {}
-        type: object
-      evidence:
-        type: string
-      source:
-        $ref: '#/definitions/graph.EntityRef'
-      target:
-        $ref: '#/definitions/graph.EntityRef'
-      type:
-        type: string
-      unit:
-        type: string
-    type: object
-  graph.Extraction:
-    properties:
-      entities:
-        items:
-          $ref: '#/definitions/graph.ExtractedEntity'
-        type: array
-      relations:
-        items:
-          $ref: '#/definitions/graph.ExtractedRelation'
+          $ref: '#/definitions/interfaces.WikiSearchHit'
         type: array
     type: object
-  graph.RelationView:
+  interfaces.WikiSearchHit:
     properties:
-      attributes:
-        additionalProperties: {}
-        type: object
-      direction:
-        description: out | in
-        type: string
-      id:
-        type: string
-      other_name:
-        type: string
-      other_type:
-        type: string
-      source_id:
-        type: string
-      target_id:
-        type: string
-      type:
-        type: string
-    type: object
-  graph.TestResult:
-    properties:
-      extraction:
-        $ref: '#/definitions/graph.Extraction'
-      warnings:
-        items:
-          $ref: '#/definitions/graph.Warning'
-        type: array
-    type: object
-  graph.Warning:
-    properties:
-      item:
-        type: string
       kind:
         type: string
-      reason:
+      score:
+        type: number
+      slug:
+        type: string
+      snippet:
+        type: string
+      title:
         type: string
     type: object
   postgres.PageBlock:
@@ -1071,6 +1111,12 @@ definitions:
       source_id:
         type: integer
       text:
+        type: string
+      text_source:
+        description: |-
+          TextSource is "vlm" when Text is a VLM transcription of the region that
+          is rendered verbatim as the block's markdown; empty otherwise (Text is
+          then the block's lines joined).
         type: string
       type:
         $ref: '#/definitions/types.BlockType'
@@ -1134,21 +1180,6 @@ definitions:
       status:
         type: string
     type: object
-  postgres.WikiRevision:
-    properties:
-      content:
-        type: string
-      edit_source:
-        type: string
-      edited_at:
-        type: string
-      editor_id:
-        type: string
-      summary:
-        type: string
-      version:
-        type: integer
-    type: object
   types.AttributeDef:
     properties:
       name:
@@ -1200,15 +1231,117 @@ definitions:
     - BlockPageNumber
     - BlockFootnote
     - BlockUnknown
-  types.Document:
+  types.CallbackAttempt:
     properties:
-      batch_id:
+      attempt:
+        type: integer
+      created_at:
+        type: string
+      duration_ms:
+        type: integer
+      error:
+        type: string
+      response:
+        type: string
+      status_code:
+        type: integer
+    type: object
+  types.Case:
+    properties:
+      case_type:
+        type: string
+      code:
         type: string
       created_at:
         type: string
       created_by:
         type: string
-      doc_type:
+      deleted_at:
+        type: string
+      documents:
+        additionalProperties:
+          type: integer
+        description: Documents counts the case's live documents by status (list/detail
+          only).
+        type: object
+      id:
+        type: string
+      kb_id:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      status:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      wiki_built_at:
+        type: string
+      wiki_docs_covered:
+        type: integer
+      wiki_schema:
+        type: string
+      wiki_status:
+        type: string
+      wiki_version:
+        type: integer
+    type: object
+  types.CaseCodeRule:
+    properties:
+      normalize:
+        description: upper_trim | lower_trim | trim (default)
+        type: string
+      pattern:
+        type: string
+    type: object
+  types.CaseType:
+    properties:
+      case_metadata_schema:
+        allOf:
+        - $ref: '#/definitions/types.MetadataSchema'
+        description: CaseMetadataSchema validates the metadata of the case itself.
+      code:
+        $ref: '#/definitions/types.CaseCodeRule'
+      metadata_schema:
+        allOf:
+        - $ref: '#/definitions/types.MetadataSchema'
+        description: |-
+          MetadataSchema validates document metadata in cases of this type; it
+          replaces the KB's metadata_schema.
+      name:
+        type: string
+      parser:
+        properties:
+          engine:
+            type: string
+        type: object
+      title:
+        type: string
+      wiki:
+        properties:
+          enabled:
+            description: Enabled nil = wiki.enabled_by_default.
+            type: boolean
+          schema:
+            type: string
+        type: object
+    type: object
+  types.Document:
+    properties:
+      batch_id:
+        type: string
+      callback_url:
+        description: |-
+          CallbackURL, when set, receives a POST once the document reaches a
+          terminal status (§4.7).
+        type: string
+      case_id:
+        type: string
+      created_at:
+        type: string
+      created_by:
         type: string
       engine:
         type: string
@@ -1218,8 +1351,6 @@ definitions:
         type: string
       gen:
         type: integer
-      graph_status:
-        type: string
       id:
         type: string
       index_status:
@@ -1258,10 +1389,12 @@ definitions:
         type: string
       updated_at:
         type: string
+      wiki_status:
+        type: string
     type: object
   types.DocumentBrief:
     properties:
-      doc_type:
+      case_id:
         type: string
       file_name:
         type: string
@@ -1279,6 +1412,50 @@ definitions:
       summary:
         type: string
       title:
+        type: string
+      wiki_status:
+        type: string
+    type: object
+  types.DocumentCallback:
+    properties:
+      attempts:
+        type: integer
+      created_at:
+        type: string
+      delivered_at:
+        type: string
+      document_id:
+        type: string
+      event:
+        type: string
+      gen:
+        type: integer
+      history:
+        items:
+          $ref: '#/definitions/types.CallbackAttempt'
+        type: array
+      id:
+        type: string
+      last_attempt_at:
+        type: string
+      last_error:
+        type: string
+      last_status_code:
+        type: integer
+      max_attempts:
+        type: integer
+      next_attempt_at:
+        type: string
+      payload:
+        additionalProperties: {}
+        type: object
+      run:
+        type: integer
+      state:
+        type: string
+      updated_at:
+        type: string
+      url:
         type: string
     type: object
   types.DocumentPage:
@@ -1330,96 +1507,8 @@ definitions:
       width_pt:
         type: number
     type: object
-  types.Entity:
-    properties:
-      aliases:
-        items:
-          type: string
-        type: array
-      attributes:
-        additionalProperties: {}
-        type: object
-      conflict:
-        type: boolean
-      id:
-        type: string
-      kb_id:
-        type: string
-      mentions:
-        type: integer
-      name:
-        type: string
-      summary:
-        type: string
-      type:
-        type: string
-      wiki_slug:
-        type: string
-    type: object
-  types.EntityTypeDef:
-    properties:
-      attributes:
-        items:
-          $ref: '#/definitions/types.AttributeDef'
-        type: array
-      description:
-        type: string
-      identity:
-        items:
-          type: string
-        type: array
-      name:
-        type: string
-      resolve_scope:
-        description: |-
-          ResolveScope lists document metadata keys that must match for two
-          mentions to merge (e.g. ma_ho_so).
-        items:
-          type: string
-        type: array
-    type: object
-  types.ExtractionSettings:
-    properties:
-      examples:
-        items: {}
-        type: array
-      instructions:
-        type: string
-      unit:
-        description: section | page
-        type: string
-    type: object
-  types.GraphSchema:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      entity_types:
-        items:
-          $ref: '#/definitions/types.EntityTypeDef'
-        type: array
-      extraction:
-        $ref: '#/definitions/types.ExtractionSettings'
-      id:
-        type: string
-      model:
-        type: string
-      name:
-        type: string
-      relation_types:
-        items:
-          $ref: '#/definitions/types.RelationTypeDef'
-        type: array
-      version:
-        type: integer
-    type: object
   types.KBConfig:
     properties:
-      graph_enabled:
-        type: boolean
-      graph_schema:
-        type: string
       parser_engine:
         type: string
     type: object
@@ -1431,11 +1520,12 @@ definitions:
         type: string
       description:
         type: string
-      graph_schema_id:
-        type: string
       id:
         type: string
       is_temporary:
+        description: |-
+          IsTemporary marks the chat-attachment KBs of spec 0.4; none are
+          created since cases replaced them (§8.2).
         type: boolean
       metadata_schema:
         $ref: '#/definitions/types.MetadataSchema'
@@ -1456,27 +1546,6 @@ definitions:
         type: number
       snippet:
         type: string
-    type: object
-  types.Mention:
-    properties:
-      document_id:
-        type: string
-      entity_id:
-        type: string
-      evidence:
-        type: string
-      file_name:
-        type: string
-      id:
-        type: integer
-      relation_id:
-        type: string
-      section_id:
-        type: string
-      source_spans:
-        items:
-          $ref: '#/definitions/types.SourceSpan'
-        type: array
     type: object
   types.MetadataField:
     properties:
@@ -1524,41 +1593,16 @@ definitions:
       score:
         type: number
     type: object
-  types.Relation:
-    properties:
-      attributes:
-        additionalProperties: {}
-        type: object
-      id:
-        type: string
-      source_id:
-        type: string
-      target_id:
-        type: string
-      type:
-        type: string
-    type: object
-  types.RelationTypeDef:
-    properties:
-      attributes:
-        items:
-          $ref: '#/definitions/types.AttributeDef'
-        type: array
-      description:
-        type: string
-      name:
-        type: string
-      source:
-        type: string
-      target:
-        type: string
-    type: object
   types.SearchHit:
     properties:
       bboxes:
         items:
           $ref: '#/definitions/types.BBox'
         type: array
+      case_code:
+        type: string
+      case_id:
+        type: string
       citation_id:
         type: string
       document_id:
@@ -1588,9 +1632,22 @@ definitions:
         type: number
       snippet:
         type: string
+      via:
+        description: |-
+          Via is "wiki" when the hit came from a wiki footnote, "raw" when it was
+          read from the source pages, "keyword" for full-text hits.
+        type: string
+      wiki_pages:
+        items:
+          type: string
+        type: array
     type: object
   types.SearchRequest:
     properties:
+      case_ids:
+        items:
+          type: string
+        type: array
       document_ids:
         items:
           type: string
@@ -1631,6 +1688,10 @@ definitions:
         type: boolean
       candidate_docs:
         type: integer
+      cases:
+        items:
+          type: string
+        type: array
       dropped_hits:
         type: integer
       elapsed_ms:
@@ -1641,6 +1702,10 @@ definitions:
         type: integer
       mode:
         type: string
+      raw_refs:
+        items:
+          type: string
+        type: array
       selected_docs:
         items:
           type: string
@@ -1651,34 +1716,18 @@ definitions:
             type: string
           type: array
         type: object
+      stale_footnotes:
+        type: integer
       truncated:
         type: boolean
-    type: object
-  types.SourceSpan:
-    properties:
-      bbox:
-        $ref: '#/definitions/types.BBox'
-      block_nos:
+      wiki_pages:
         items:
+          type: string
+        type: array
+      wiki_versions:
+        additionalProperties:
           type: integer
-        type: array
-      line_from:
-        type: integer
-      line_to:
-        type: integer
-      page:
-        type: integer
-    type: object
-  types.Subgraph:
-    properties:
-      entities:
-        items:
-          $ref: '#/definitions/types.Entity'
-        type: array
-      relations:
-        items:
-          $ref: '#/definitions/types.Relation'
-        type: array
+        type: object
     type: object
   types.TreeNode:
     properties:
@@ -1714,38 +1763,196 @@ definitions:
       token_count:
         type: integer
     type: object
+  types.WikiAttrValue:
+    properties:
+      citation_id:
+        type: string
+      footnotes:
+        items:
+          type: integer
+        type: array
+      value: {}
+    type: object
+  types.WikiAttribute:
+    properties:
+      conflict:
+        type: boolean
+      footnotes:
+        items:
+          type: integer
+        type: array
+      history:
+        items:
+          $ref: '#/definitions/types.WikiAttrValue'
+        type: array
+      value: {}
+    type: object
+  types.WikiEntityType:
+    properties:
+      attributes:
+        items:
+          $ref: '#/definitions/types.AttributeDef'
+        type: array
+      description:
+        type: string
+      identity:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      title:
+        type: string
+    type: object
+  types.WikiFootnote:
+    properties:
+      citation_id:
+        type: string
+      document_id:
+        type: string
+      file_name:
+        type: string
+      gen:
+        type: integer
+      line_from:
+        type: integer
+      line_to:
+        type: integer
+      "n":
+        type: integer
+      page_no:
+        type: integer
+      quote:
+        type: string
+      status:
+        type: string
+    type: object
+  types.WikiLink:
+    properties:
+      attributes:
+        additionalProperties: {}
+        type: object
+      footnote_n:
+        type: integer
+      from:
+        type: string
+      from_title:
+        type: string
+      relation:
+        type: string
+      to:
+        type: string
+      to_title:
+        type: string
+    type: object
+  types.WikiLintIssue:
+    properties:
+      case_id:
+        type: string
+      detail:
+        additionalProperties: {}
+        type: object
+      found_at:
+        type: string
+      id:
+        type: integer
+      kind:
+        type: string
+      page_ids:
+        items:
+          type: string
+        type: array
+      pages:
+        items:
+          type: string
+        type: array
+      resolved_at:
+        type: string
+      resolved_by:
+        type: string
+      status:
+        type: string
+    type: object
+  types.WikiLogEntry:
+    properties:
+      actor:
+        type: string
+      at:
+        type: string
+      case_id:
+        type: string
+      document_id:
+        type: string
+      id:
+        type: integer
+      llm_calls:
+        type: integer
+      op:
+        type: string
+      pages:
+        items:
+          type: string
+        type: array
+      ref:
+        type: string
+      summary:
+        type: string
+      tokens_in:
+        type: integer
+      tokens_out:
+        type: integer
+    type: object
   types.WikiPage:
     properties:
       aliases:
         items:
           type: string
         type: array
+      attributes:
+        additionalProperties:
+          $ref: '#/definitions/types.WikiAttribute'
+        type: object
+      case_id:
+        type: string
       content:
         type: string
-      entity_id:
+      created_at:
         type: string
+      document_id:
+        type: string
+      entity_type:
+        type: string
+      footnotes:
+        description: Filled on single-page reads.
+        items:
+          $ref: '#/definitions/types.WikiFootnote'
+        type: array
       id:
         type: string
-      in_links:
-        items:
-          type: string
-        type: array
-      kb_id:
+      identity_key:
+        type: string
+      kind:
         type: string
       last_edit_source:
         type: string
-      out_links:
+      links_in:
         items:
-          type: string
+          $ref: '#/definitions/types.WikiLink'
         type: array
-      page_type:
+      links_out:
+        items:
+          $ref: '#/definitions/types.WikiLink'
+        type: array
+      ord:
+        type: integer
+      proposed_attributes:
+        additionalProperties:
+          $ref: '#/definitions/types.WikiAttribute'
+        type: object
+      proposed_content:
         type: string
       slug:
         type: string
-      source_refs:
-        items:
-          type: string
-        type: array
       summary:
         type: string
       title:
@@ -1754,6 +1961,180 @@ definitions:
         type: string
       version:
         type: integer
+    type: object
+  types.WikiPageRef:
+    properties:
+      document_id:
+        type: string
+      entity_type:
+        type: string
+      kind:
+        type: string
+      proposed:
+        type: boolean
+      slug:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.WikiPending:
+    properties:
+      document_id:
+        type: string
+      file_name:
+        type: string
+      status:
+        type: string
+      wiki_status:
+        type: string
+    type: object
+  types.WikiRelationType:
+    properties:
+      attributes:
+        items:
+          $ref: '#/definitions/types.AttributeDef'
+        type: array
+      description:
+        type: string
+      from:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      to:
+        items:
+          type: string
+        type: array
+    type: object
+  types.WikiSchema:
+    properties:
+      conventions:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      entity_types:
+        items:
+          $ref: '#/definitions/types.WikiEntityType'
+        type: array
+      id:
+        type: string
+      language:
+        type: string
+      limits:
+        properties:
+          max_pages:
+            type: integer
+          max_pages_touched:
+            type: integer
+        type: object
+      name:
+        type: string
+      relations:
+        items:
+          $ref: '#/definitions/types.WikiRelationType'
+        type: array
+      topics:
+        items:
+          type: string
+        type: array
+      version:
+        type: integer
+    type: object
+  types.WikiTOC:
+    properties:
+      case:
+        $ref: '#/definitions/types.Case'
+      documents_total:
+        type: integer
+      open_lint_issues:
+        type: integer
+      pages:
+        items:
+          $ref: '#/definitions/types.WikiPageRef'
+        type: array
+      pending:
+        items:
+          $ref: '#/definitions/types.WikiPending'
+        type: array
+    type: object
+  wiki.EditRequest:
+    properties:
+      attributes:
+        additionalProperties:
+          $ref: '#/definitions/types.WikiAttribute'
+        type: object
+      content:
+        type: string
+      footnotes:
+        additionalProperties:
+          type: string
+        type: object
+      title:
+        type: string
+    type: object
+  wiki.EditResult:
+    properties:
+      invalid_footnotes:
+        items:
+          type: string
+        type: array
+      page:
+        $ref: '#/definitions/types.WikiPage'
+    type: object
+  wiki.GraphNode:
+    properties:
+      entity_type:
+        type: string
+      kind:
+        type: string
+      slug:
+        type: string
+      title:
+        type: string
+    type: object
+  wiki.LinkGraph:
+    properties:
+      edges:
+        items:
+          $ref: '#/definitions/types.WikiLink'
+        type: array
+      nodes:
+        items:
+          $ref: '#/definitions/wiki.GraphNode'
+        type: array
+    type: object
+  wiki.NoteRequest:
+    properties:
+      content:
+        type: string
+      message_id:
+        type: string
+      session_id:
+        type: string
+      title:
+        type: string
+    type: object
+  wiki.TestResult:
+    properties:
+      entities:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
+      llm_calls:
+        type: integer
+      relations:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
     type: object
 info:
   contact: {}
@@ -1911,10 +2292,740 @@ paths:
       summary: Run an agent turn (AG-UI protocol)
       tags:
       - AG-UI
+  /v1/case-types:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CaseTypeList'
+      security:
+      - ApiKeyAuth: []
+      summary: List the case types loaded from configs/case_types
+      tags:
+      - Cases
+  /v1/cases/{id}:
+    delete:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a case, its documents and its whole wiki (async)
+      tags:
+      - Cases
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Case'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 'Case detail: document counts by status and wiki state'
+      tags:
+      - Cases
+    patch:
+      consumes:
+      - application/json
+      description: code, case_type and kb_id never change (422).
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/cases.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Case'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Change a case's title, status (open/closed) or metadata
+      tags:
+      - Cases
+  /v1/cases/{id}/documents:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Comma-separated statuses
+        in: query
+        name: status
+        type: string
+      - description: Upload batch id
+        in: query
+        name: batch_id
+        type: string
+      - description: JSON metadata filter, e.g. {\
+        in: query
+        name: metadata
+        type: string
+      - description: Full-text over file name, card and metadata values
+        in: query
+        name: q
+        type: string
+      - default: 100
+        description: Page size (max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: 'Cursor: created_at of the last item (RFC3339)'
+        in: query
+        name: before
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.DocumentList'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List the documents of a case
+      tags:
+      - Cases
+    post:
+      consumes:
+      - multipart/form-data
+      description: Same fields as POST /v1/kbs/{id}/documents, without case_code.
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: File (repeat for several files)
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: JSON metadata for every file
+        in: formData
+        name: metadata
+        type: string
+      - description: JSON per-file metadata keyed by file name or index
+        in: formData
+        name: files_metadata
+        type: string
+      - description: Optional URL that receives a POST (JSON) when each document finishes
+        in: formData
+        name: callback_url
+        type: string
+      - description: Use the high-priority lanes (chat attachments)
+        in: query
+        name: interactive
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/document.UploadResult'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Upload one or more files (streamed) into a case
+      tags:
+      - Cases
+  /v1/cases/{id}/search:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Query and filters (case_ids/kb_ids are ignored)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.SearchRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.SearchResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Search one case (wiki index → wiki pages → source lines)
+      tags:
+      - Cases
+  /v1/cases/{id}/wiki:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.WikiTOC'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 'Case wiki navigation: pages by kind, files not in the wiki yet, wiki
+        state'
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/events:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: event stream
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Stream wiki events (ingest_started, page_updated, ingest_done, lint_done)
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/export:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: md (default) | html
+        in: query
+        name: format
+        type: string
+      produces:
+      - application/zip
+      - text/html
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 'Export the wiki: zip of markdown pages or one static HTML file'
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/index:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Index id to expand, e.g. w4 or w4.n2
+        in: query
+        name: expand
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WikiIndexResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: The wiki index exactly as given to the LLM (index.md of LLM Wiki)
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/links:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: overview | source | entity | topic | note
+        in: query
+        name: kind
+        type: string
+      - description: Entity type of the schema
+        in: query
+        name: entity_type
+        type: string
+      - description: Only this relation
+        in: query
+        name: relation
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wiki.LinkGraph'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: The link graph of the wiki (nodes = pages, edges = links)
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/lint:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: open | fixed | dismissed
+        in: query
+        name: status
+        type: string
+      - description: stale | contradiction | orphan | missing_link | gap | index_drift
+        in: query
+        name: kind
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WikiLintList'
+      security:
+      - ApiKeyAuth: []
+      summary: Lint issues of the wiki
+      tags:
+      - Wiki
+    post:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/dto.OK'
+      security:
+      - ApiKeyAuth: []
+      summary: Run the wiki lint now (async)
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/lint/{issue_id}:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Issue id
+        in: path
+        name: issue_id
+        required: true
+        type: integer
+      - description: New status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.WikiLintPatch'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Mark a lint issue fixed or dismissed
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/log:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: ingest | retract | lint | edit | note | rebuild | query
+        in: query
+        name: op
+        type: string
+      - description: Only lines about this file
+        format: uuid
+        in: query
+        name: document_id
+        type: string
+      - description: 'Cursor: at of the last line (RFC3339)'
+        in: query
+        name: before
+        type: string
+      - default: 100
+        description: Page size (max 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WikiLogList'
+      security:
+      - ApiKeyAuth: []
+      summary: The wiki log (log.md of LLM Wiki), newest first
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/notes:
+    post:
+      consumes:
+      - application/json
+      description: Body {title, content} or {session_id, message_id} (an assistant
+        answer of a session bound to this case). Inline citation ids become footnotes
+        after being checked; sentences without a valid citation are dropped.
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Note
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wiki.NoteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.WikiPage'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Save an answer as a note page ("Lưu vào wiki")
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/pages/{slug}:
+    delete:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Note slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a note page (other pages are maintained by ingest)
+      tags:
+      - Wiki
+    get:
+      description: Returns content, attributes, footnotes (n → citation_id, quote,
+        file, page, status), links in and out and the ingest proposal if any. The
+        slug contains "/", e.g. nguon/hop-dong-15-2026. A slug of another case is
+        404.
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page slug (optionally followed by /revisions)
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.WikiPage'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Read a wiki page, or its history with …/{slug}/revisions
+      tags:
+      - Wiki
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page slug followed by /proposal or /revisions/{v}/restore
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: 'For /proposal: {\'
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.WikiProposalRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.WikiPage'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Accept/reject an ingest proposal (…/{slug}/proposal) or restore a revision
+        (…/{slug}/revisions/{v}/restore)
+      tags:
+      - Wiki
+    put:
+      consumes:
+      - application/json
+      description: 'footnotes maps a footnote number to a citation id of this case
+        (doc:<id>:p<page>:l<a>-<b>); each is checked against the source lines. Invalid
+        footnotes are marked stale (or refused with 422 when wiki.strict_citations).
+        An edited page is not overwritten by ingest: later ingests leave a proposal.'
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: Changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/wiki.EditRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wiki.EditResult'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Edit a wiki page by hand (title, content, attributes, footnotes)
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/rebuild:
+    post:
+      description: Use after a schema change. Note pages and hand-edited pages are
+        kept; edited pages receive proposals.
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/dto.OK'
+      security:
+      - ApiKeyAuth: []
+      summary: 'Rebuild the wiki: drop generated pages and ingest every file again'
+      tags:
+      - Wiki
+  /v1/cases/{id}/wiki/search:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WikiSearchResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Full-text search in the wiki of a case
+      tags:
+      - Wiki
   /v1/citations:
     get:
       parameters:
-      - description: Citation id
+      - description: 'Citation id: doc:<id>:p<page>, optionally :l<a>-<b> or :l<a>'
         in: query
         name: id
         required: true
@@ -1986,6 +3097,69 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get a document with progress, failed pages and (optionally) spans
+      tags:
+      - Documents
+  /v1/documents/{id}/callbacks:
+    get:
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CallbackList'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Completion callback deliveries of a document, with every attempt
+      tags:
+      - Documents
+  /v1/documents/{id}/callbacks/retry:
+    post:
+      consumes:
+      - application/json
+      description: Re-arms the delivery for another callback.max_attempts attempts.
+        A finished document with a callback_url but no delivery yet gets one.
+      parameters:
+      - description: Document id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Which delivery
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.RetryCallbackRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/types.DocumentCallback'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Send a completion callback again now (the latest delivery, or callback_id)
       tags:
       - Documents
   /v1/documents/{id}/cancel:
@@ -2341,157 +3515,6 @@ paths:
       summary: The document's table of contents (vectorless tree) with summaries
       tags:
       - Search
-  /v1/graph/entities/{id}:
-    get:
-      parameters:
-      - description: Entity id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/graph.EntityDetail'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: An entity with relations and evidence (with page positions)
-      tags:
-      - Graph
-  /v1/graph/entities/{id}/neighbors:
-    get:
-      parameters:
-      - description: Entity id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - default: 1
-        description: Hops (1-3)
-        in: query
-        name: depth
-        type: integer
-      - description: Comma-separated relation types
-        in: query
-        name: relation_types
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.Subgraph'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Entities within N hops (≤3)
-      tags:
-      - Graph
-  /v1/graph/schemas:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.SchemaList'
-      security:
-      - ApiKeyAuth: []
-      summary: List graph schemas (latest version of each)
-      tags:
-      - Graph schemas
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Schema (version 0 = next version)
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.GraphSchema'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/types.GraphSchema'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Create a graph schema version (validated)
-      tags:
-      - Graph schemas
-  /v1/graph/schemas/{name}:
-    get:
-      parameters:
-      - description: Schema name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.SchemaList'
-      security:
-      - ApiKeyAuth: []
-      summary: Every version of a graph schema
-      tags:
-      - Graph schemas
-  /v1/graph/schemas/{name}/test:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Schema name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Text
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.SchemaTestRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/graph.TestResult'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Dry-run extraction of a text with a schema (nothing stored)
-      tags:
-      - Graph schemas
   /v1/kbs:
     get:
       produces:
@@ -2613,6 +3636,124 @@ paths:
       summary: Update a knowledge base
       tags:
       - Knowledge bases
+  /v1/kbs/{id}/cases:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Part of the code or title
+        in: query
+        name: q
+        type: string
+      - description: Case type
+        in: query
+        name: case_type
+        type: string
+      - description: open | closed
+        in: query
+        name: status
+        type: string
+      - description: JSON filter on case metadata
+        in: query
+        name: metadata
+        type: string
+      - default: 100
+        description: Page size (max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: 'Cursor: created_at of the last item (RFC3339)'
+        in: query
+        name: before
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CaseList'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List cases with per-status document counts
+      tags:
+      - Cases
+    post:
+      consumes:
+      - application/json
+      description: The code is normalized and checked by the case type (e.g. " rt112233"
+        → "RT112233"). An existing code answers 409 with the existing case.
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Code, case type, title, case metadata
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/cases.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.Case'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.CaseConflict'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a case (a file set identified by a business code)
+      tags:
+      - Cases
+  /v1/kbs/{id}/cases/by-code/{code}:
+    get:
+      parameters:
+      - description: Knowledge base id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Case code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.Case'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Find a case by code (normalized by its case type first)
+      tags:
+      - Cases
   /v1/kbs/{id}/documents:
     get:
       parameters:
@@ -2621,6 +3762,11 @@ paths:
         in: path
         name: id
         required: true
+        type: string
+      - description: Only this case
+        format: uuid
+        in: query
+        name: case_id
         type: string
       - description: Comma-separated statuses
         in: query
@@ -2660,12 +3806,15 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: List documents, filtered by status, batch, metadata or text
+      summary: List documents, filtered by case, status, batch, metadata or text
       tags:
       - Documents
     post:
       consumes:
       - multipart/form-data
+      description: The case is created when case_code is new (auto_create_on_upload);
+        a closed case answers 409, a case_type differing from the existing case's
+        422. Duplicates are detected per case.
       parameters:
       - description: Knowledge base id
         format: uuid
@@ -2678,6 +3827,18 @@ paths:
         name: file
         required: true
         type: file
+      - description: Case code, e.g. RT112233 (required unless case_id)
+        in: formData
+        name: case_code
+        type: string
+      - description: Existing case id (instead of case_code)
+        in: formData
+        name: case_id
+        type: string
+      - description: 'Case type of a new case (default: cases.default_type)'
+        in: formData
+        name: case_type
+        type: string
       - description: JSON metadata for every file, e.g. {\
         in: formData
         name: metadata
@@ -2685,6 +3846,11 @@ paths:
       - description: JSON per-file metadata keyed by file name or index
         in: formData
         name: files_metadata
+        type: string
+      - description: 'Optional URL that receives a POST (JSON) when each document
+          finishes: completed, partial, failed or cancelled'
+        in: formData
+        name: callback_url
         type: string
       - description: Use the high-priority lanes (chat attachments)
         in: query
@@ -2705,9 +3871,17 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Upload one or more files (streamed) with optional metadata
+      summary: Upload one or more files (streamed) into one case
       tags:
       - Documents
   /v1/kbs/{id}/documents/metadata/bulk-update:
@@ -2743,103 +3917,6 @@ paths:
       summary: Set or remove metadata keys on every matching document
       tags:
       - Metadata
-  /v1/kbs/{id}/graph/entities:
-    get:
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Search text
-        in: query
-        name: q
-        type: string
-      - description: Entity type
-        in: query
-        name: type
-        type: string
-      - default: 20
-        description: Max results
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.EntityList'
-      security:
-      - ApiKeyAuth: []
-      summary: Find graph entities by name/alias/attribute (accent-insensitive)
-      tags:
-      - Graph
-  /v1/kbs/{id}/graph/path:
-    get:
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Entity id
-        format: uuid
-        in: query
-        name: from
-        required: true
-        type: string
-      - description: Entity id
-        format: uuid
-        in: query
-        name: to
-        required: true
-        type: string
-      - default: 4
-        description: Max hops
-        in: query
-        name: max_depth
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.Subgraph'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Shortest relation path between two entities (≤4 hops)
-      tags:
-      - Graph
-  /v1/kbs/{id}/graph/rebuild:
-    post:
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: Accepted
-          schema:
-            $ref: '#/definitions/dto.RebuildResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Re-extract the graph of every document (after a schema change)
-      tags:
-      - Graph
   /v1/kbs/{id}/metadata-schema:
     get:
       parameters:
@@ -2902,10 +3979,15 @@ paths:
         name: id
         required: true
         type: string
-      - description: Metadata key, e.g. ma_ho_so
+      - description: Metadata key, e.g. loai_giay_to
         in: query
         name: key
         required: true
+        type: string
+      - description: Only count the documents of this case
+        format: uuid
+        in: query
+        name: case_id
         type: string
       - description: Only values starting with this (accent-insensitive)
         in: query
@@ -2925,129 +4007,9 @@ paths:
             $ref: '#/definitions/dto.MetadataValuesResponse'
       security:
       - ApiKeyAuth: []
-      summary: Distinct values of a metadata key (e.g. every case code)
+      summary: Distinct values of a metadata key, in a KB or one case of it
       tags:
       - Metadata
-  /v1/kbs/{id}/wiki/pages:
-    get:
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.WikiPageList'
-      security:
-      - ApiKeyAuth: []
-      summary: List wiki pages
-      tags:
-      - Wiki
-  /v1/kbs/{id}/wiki/pages/{slug}:
-    get:
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Page slug
-        in: path
-        name: slug
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.WikiPage'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Read a wiki page
-      tags:
-      - Wiki
-    put:
-      consumes:
-      - application/json
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Page slug
-        in: path
-        name: slug
-        required: true
-        type: string
-      - description: New content
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.WikiEditRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.WikiPage'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Edit a wiki page by hand (later generations will not overwrite it)
-      tags:
-      - Wiki
-  /v1/kbs/{id}/wiki/pages/{slug}/revisions:
-    get:
-      parameters:
-      - description: Knowledge base id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Page slug
-        in: path
-        name: slug
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/postgres.WikiRevision'
-            type: array
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: A wiki page's revision history
-      tags:
-      - Wiki
   /v1/mcp/servers:
     get:
       produces:
@@ -3213,10 +4175,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'mode=reasoning (default): an LLM picks documents, walks their
-        table of contents and cites exact lines; mode=keyword: Postgres full-text
-        + trigram; mode=metadata: list documents matching the metadata filter. No
-        embeddings are used.'
+      description: 'Scope: case_ids, or kb_ids (every case of those KBs; API only).
+        mode=reasoning (default): an LLM reads the case wiki index, then wiki pages,
+        then walks file trees and cites exact source lines, every hit re-checked against
+        the current lines; mode=keyword: Postgres full-text + trigram; mode=metadata:
+        list documents matching the metadata filter. No embeddings are used.'
       parameters:
       - description: Query, scope and filters
         in: body
@@ -3237,8 +4200,8 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Search documents (reasoning over the document tree, keyword, or metadata
-        only)
+      summary: Search cases (reasoning over the case wiki and document trees, keyword,
+        or metadata only)
       tags:
       - Search
   /v1/sessions:
@@ -3252,6 +4215,11 @@ paths:
       - description: Opaque cursor from a previous response's next_cursor
         in: query
         name: cursor
+        type: string
+      - description: Only the sessions bound to this case
+        format: uuid
+        in: query
+        name: case_id
         type: string
       produces:
       - application/json
@@ -3272,6 +4240,8 @@ paths:
     post:
       consumes:
       - application/json
+      description: 'case_id (or case {kb_id, code}) binds the session to one case
+        for its whole life: the wiki_* and kb_* tools only see that case (§8.1).'
       parameters:
       - description: Session fields
         in: body
@@ -3289,9 +4259,17 @@ paths:
           description: Unauthorized
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Create a session explicitly
+      summary: Create a session explicitly, optionally bound to a case
       tags:
       - Sessions
   /v1/sessions/{id}:
@@ -3407,8 +4385,9 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Files go into the session's temporary knowledge base, which is
-        added to the session's kb_ids so the agent can search them while parsing continues.
+      description: Files go into the case bound to the session (§8.2), so the agent
+        can search them while parsing continues. A session without a case answers
+        409.
       parameters:
       - description: Session id
         format: uuid
@@ -3434,6 +4413,10 @@ paths:
             $ref: '#/definitions/document.UploadResult'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
@@ -3553,6 +4536,106 @@ paths:
       summary: Rescan the skills directory and reconcile the database
       tags:
       - Skills
+  /v1/wiki/schemas:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SchemaList'
+      security:
+      - ApiKeyAuth: []
+      summary: List wiki schemas (latest version of each)
+      tags:
+      - Wiki schemas
+    post:
+      consumes:
+      - application/json
+      description: Existing cases keep their pages until POST /v1/cases/{id}/wiki/rebuild.
+      parameters:
+      - description: Schema
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.WikiSchema'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.WikiSchema'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a new wiki schema version (validated)
+      tags:
+      - Wiki schemas
+  /v1/wiki/schemas/{name}:
+    get:
+      parameters:
+      - description: Schema name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SchemaList'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Every version of a wiki schema
+      tags:
+      - Wiki schemas
+  /v1/wiki/schemas/{name}/test:
+    post:
+      consumes:
+      - application/json
+      description: Returns the entities (with identity keys and the lines of each
+        attribute) and relations an ingest would keep after checking them against
+        the source lines, and the LLM calls used. Nothing is stored.
+      parameters:
+      - description: Schema name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Text or document id
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SchemaTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wiki.TestResult'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Dry-run the extraction of a schema on a text or a document
+      tags:
+      - Wiki schemas
 schemes:
 - http
 - https

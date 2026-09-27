@@ -111,15 +111,24 @@ func TestToolGuidanceStatesTheStepBudget(t *testing.T) {
 	}
 }
 
-func TestKnowledgeSection(t *testing.T) {
-	out := Build(TurnContext{KnowledgeBases: []KnowledgeBase{{ID: "kb1", Name: "Hồ sơ vay", Documents: 3,
-		Fields: []MetadataField{{Key: "ma_ho_so", Type: "string", Description: "Mã hồ sơ"}}}}, KnowledgeFilter: `{"ma_ho_so":"HS-A"}`})
-	for _, want := range []string{"<knowledge_bases>", "Hồ sơ vay", "ma_ho_so (string): Mã hồ sơ", `{"ma_ho_so":"HS-A"}`, "<citations>"} {
+func TestCaseSection(t *testing.T) {
+	out := Build(TurnContext{Case: &CaseInfo{ID: "c1", Code: "RT112233", TypeTitle: "Hồ sơ thanh toán", Status: "open",
+		Documents: map[string]int{"completed": 3, "parsing": 1}, WikiStatus: "ready", WikiDocs: 3,
+		Fields: []MetadataField{{Key: "loai_giay_to", Type: "string", Description: "Loại giấy tờ"}}}})
+	for _, want := range []string{"<case>", "RT112233", "Hồ sơ thanh toán", "Files: 4", "3 of 4", "loai_giay_to (string): Loại giấy tờ", "<citations>"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(Build(TurnContext{}), "<knowledge_bases>") {
-		t.Fatal("knowledge section rendered without knowledge bases")
+	for _, banned := range []string{"<knowledge_bases>", "kb_ids"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("prompt still mentions %q", banned)
+		}
+	}
+	if strings.Contains(Build(TurnContext{}), "<case>") {
+		t.Fatal("case section rendered without a case")
+	}
+	if gone := Build(TurnContext{Case: &CaseInfo{Deleted: true}}); !strings.Contains(gone, "no longer exists") {
+		t.Fatalf("deleted case not stated:\n%s", gone)
 	}
 }

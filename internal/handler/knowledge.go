@@ -19,22 +19,30 @@ import (
 	hsse "github.com/hertz-contrib/sse"
 
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
-	"github.com/thanhenti/bepaylot/internal/application/service/graph"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
 	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
 	"github.com/thanhenti/bepaylot/internal/middleware"
 	"github.com/thanhenti/bepaylot/internal/types"
+	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // serviceError maps module errors to HTTP statuses.
 func (h *Handlers) serviceError(c *app.RequestContext, err error) {
 	switch {
-	case errors.Is(err, document.ErrNotFound), errors.Is(err, index.ErrNotFound), errors.Is(err, graph.ErrNotFound),
+	case errors.Is(err, document.ErrNotFound), errors.Is(err, index.ErrNotFound), errors.Is(err, cases.ErrNotFound),
 		errors.Is(err, wiki.ErrNotFound), errors.Is(err, postgres.ErrNotFound):
-		h.notFound(c, "not found")
-	case errors.Is(err, document.ErrBadRequest), errors.Is(err, index.ErrBadRequest), errors.Is(err, graph.ErrBadRequest):
+		msg := "not found"
+		if errors.Is(err, cases.ErrNotFound) && err.Error() != cases.ErrNotFound.Error() {
+			msg = err.Error()
+		}
+		h.notFound(c, msg)
+	case errors.Is(err, cases.ErrConflict), errors.Is(err, cases.ErrClosed), errors.Is(err, wiki.ErrBusy):
+		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", err.Error()))
+	case errors.Is(err, document.ErrBadRequest), errors.Is(err, index.ErrBadRequest), errors.Is(err, cases.ErrBadRequest),
+		errors.Is(err, wiki.ErrBadRequest):
 		c.JSON(consts.StatusUnprocessableEntity, dto.NewError("invalid_request_error", err.Error()))
 	case errors.Is(err, context.DeadlineExceeded):
 		c.JSON(consts.StatusGatewayTimeout, dto.NewError("timeout_error", err.Error()))
@@ -271,11 +279,12 @@ func (h *Handlers) PutMetadataSchema(ctx context.Context, c *app.RequestContext)
 
 // MetadataValues handles GET /v1/kbs/{id}/metadata/values.
 //
-// @Summary   Distinct values of a metadata key (e.g. every case code)
+// @Summary   Distinct values of a metadata key, in a KB or one case of it
 // @Tags      Metadata
 // @Produce   json
 // @Param     id      path      string  true   "Knowledge base id"  format(uuid)
-// @Param     key     query     string  true   "Metadata key, e.g. ma_ho_so"
+// @Param     key     query     string  true   "Metadata key, e.g. loai_giay_to"
+// @Param     case_id query     string  false  "Only count the documents of this case"  format(uuid)
 // @Param     prefix  query     string  false  "Only values starting with this (accent-insensitive)"
 // @Param     limit   query     int     false  "Max values"  default(100)
 // @Success   200     {object}  dto.MetadataValuesResponse
@@ -291,7 +300,16 @@ func (h *Handlers) MetadataValues(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	key := string(c.Query("key"))
-	vals, err := h.Docs.MetadataValues(ctx, u.ID, id, key, string(c.Query("prefix")), intQuery(c, "limit", 100))
+	var caseID *uuid.UUID
+	if raw := string(c.Query("case_id")); raw != "" {
+		cid, err := uuid.Parse(raw)
+		if err != nil {
+			h.badRequest(c, "invalid case_id")
+			return
+		}
+		caseID = &cid
+	}
+	vals, err := h.Docs.MetadataValues(ctx, u.ID, id, caseID, key, string(c.Query("prefix")), intQuery(c, "limit", 100))
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid metadata key") {
 			h.badRequest(c, err.Error())
@@ -311,22 +329,31 @@ func (h *Handlers) MetadataValues(ctx context.Context, c *app.RequestContext) {
 
 // UploadDocuments handles POST /v1/kbs/{id}/documents.
 //
-// Multipart form: one or more "file" parts, optional "metadata" (JSON object
-// applied to every file) and "files_metadata" (JSON object keyed by file name
-// or 0-based index). Files stream to S3 as they arrive.
+// Multipart form: one or more "file" parts into one case ("case_code" or
+// "case_id", required; "case_type" optional), optional "metadata" (JSON
+// object applied to every file) and "files_metadata" (JSON object keyed by
+// file name or 0-based index). Files stream to S3 as they arrive; the case
+// fields may come before or after them.
 //
-// @Summary   Upload one or more files (streamed) with optional metadata
+// @Summary   Upload one or more files (streamed) into one case
+// @Description The case is created when case_code is new (auto_create_on_upload); a closed case answers 409, a case_type differing from the existing case's 422. Duplicates are detected per case.
 // @Tags      Documents
 // @Accept    mpfd
 // @Produce   json
 // @Param     id              path      string  true   "Knowledge base id"  format(uuid)
 // @Param     file            formData  file    true   "File (repeat for several files)"
-// @Param     metadata        formData  string  false  "JSON metadata for every file, e.g. {\"ma_ho_so\":\"HS-2026-000123\"}"
+// @Param     case_code       formData  string  false  "Case code, e.g. RT112233 (required unless case_id)"
+// @Param     case_id         formData  string  false  "Existing case id (instead of case_code)"
+// @Param     case_type       formData  string  false  "Case type of a new case (default: cases.default_type)"
+// @Param     metadata        formData  string  false  "JSON metadata for every file, e.g. {\"loai_giay_to\":\"HOP_DONG\"}"
 // @Param     files_metadata  formData  string  false  "JSON per-file metadata keyed by file name or index"
+// @Param     callback_url    formData  string  false  "Optional URL that receives a POST (JSON) when each document finishes: completed, partial, failed or cancelled"
 // @Param     interactive     query     bool    false  "Use the high-priority lanes (chat attachments)"
 // @Success   202             {object}  document.UploadResult
 // @Failure   400             {object}  dto.ErrorResponse
 // @Failure   404             {object}  dto.ErrorResponse
+// @Failure   409             {object}  dto.ErrorResponse
+// @Failure   422             {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth
 // @Router    /v1/kbs/{id}/documents [post]
 func (h *Handlers) UploadDocuments(ctx context.Context, c *app.RequestContext) {
@@ -338,13 +365,9 @@ func (h *Handlers) UploadDocuments(ctx context.Context, c *app.RequestContext) {
 	if !ok {
 		return
 	}
-	res, err := h.upload(ctx, c, u.ID, id, string(c.Query("interactive")) == "true" || string(c.Query("interactive")) == "1")
+	res, err := h.upload(ctx, c, u.ID, id, nil, string(c.Query("interactive")) == "true" || string(c.Query("interactive")) == "1")
 	if err != nil {
-		if errors.Is(err, errMultipart) {
-			h.badRequest(c, err.Error())
-			return
-		}
-		h.serviceError(c, err)
+		h.uploadError(c, err)
 		return
 	}
 	c.JSON(consts.StatusAccepted, res)
@@ -352,8 +375,17 @@ func (h *Handlers) UploadDocuments(ctx context.Context, c *app.RequestContext) {
 
 var errMultipart = errors.New("request must be multipart/form-data with at least one file part")
 
+func (h *Handlers) uploadError(c *app.RequestContext, err error) {
+	if errors.Is(err, errMultipart) {
+		h.badRequest(c, err.Error())
+		return
+	}
+	h.serviceError(c, err)
+}
+
 // upload streams the multipart body part by part into the document service.
-func (h *Handlers) upload(ctx context.Context, c *app.RequestContext, owner, kb uuid.UUID, interactive bool) (*document.UploadResult, error) {
+// caseID fixes the case; otherwise the form names it (case_code/case_id).
+func (h *Handlers) upload(ctx context.Context, c *app.RequestContext, owner, kb uuid.UUID, caseID *uuid.UUID, interactive bool) (*document.UploadResult, error) {
 	_, params, err := mime.ParseMediaType(string(c.ContentType()))
 	if err != nil || params["boundary"] == "" {
 		return nil, errMultipart
@@ -361,6 +393,16 @@ func (h *Handlers) upload(ctx context.Context, c *app.RequestContext, owner, kb 
 	up, err := h.Docs.BeginUpload(ctx, owner, kb, interactive)
 	if err != nil {
 		return nil, err
+	}
+	if caseID != nil {
+		up.SetCase(interfaces.CaseRef{ID: *caseID})
+	}
+	formValue := func(part io.Reader) (string, error) {
+		raw, err := io.ReadAll(io.LimitReader(part, 4096))
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", errMultipart, err)
+		}
+		return strings.TrimSpace(string(raw)), nil
 	}
 	// With StreamBody the part bytes flow straight from the socket to S3;
 	// small requests that Hertz already buffered are read from memory.
@@ -392,6 +434,29 @@ func (h *Handlers) upload(ctx context.Context, c *app.RequestContext, owner, kb 
 				return nil, fmt.Errorf("%w: metadata must be a JSON object", document.ErrBadRequest)
 			}
 			up.SetSharedMetadata(m)
+		case part.FormName() == "callback_url":
+			v, err := formValue(part)
+			if err != nil {
+				return nil, err
+			}
+			up.SetCallbackURL(v)
+		case caseID == nil && (part.FormName() == "case_code" || part.FormName() == "case_id" || part.FormName() == "case_type"):
+			v, err := formValue(part)
+			if err != nil {
+				return nil, err
+			}
+			switch part.FormName() {
+			case "case_code":
+				up.SetCase(interfaces.CaseRef{Code: v, Create: true})
+			case "case_type":
+				up.SetCase(interfaces.CaseRef{CaseType: v})
+			default:
+				id, err := uuid.Parse(v)
+				if err != nil {
+					return nil, fmt.Errorf("%w: invalid case_id", document.ErrBadRequest)
+				}
+				up.SetCase(interfaces.CaseRef{ID: id})
+			}
 		case part.FormName() == "files_metadata":
 			var m map[string]map[string]any
 			if err := json.NewDecoder(io.LimitReader(part, 4<<20)).Decode(&m); err != nil {
@@ -409,13 +474,14 @@ func (h *Handlers) upload(ctx context.Context, c *app.RequestContext, owner, kb 
 
 // ListDocuments handles GET /v1/kbs/{id}/documents.
 //
-// @Summary   List documents, filtered by status, batch, metadata or text
+// @Summary   List documents, filtered by case, status, batch, metadata or text
 // @Tags      Documents
 // @Produce   json
 // @Param     id        path      string  true   "Knowledge base id"  format(uuid)
+// @Param     case_id   query     string  false  "Only this case"  format(uuid)
 // @Param     status    query     string  false  "Comma-separated statuses"
 // @Param     batch_id  query     string  false  "Upload batch id"
-// @Param     metadata  query     string  false  "JSON metadata filter, e.g. {\"ma_ho_so\":\"HS-2026-000123\"}"
+// @Param     metadata  query     string  false  "JSON metadata filter, e.g. {\"loai_giay_to\":\"GCN_HKD\"}"
 // @Param     q         query     string  false  "Full-text over file name, card and metadata values"
 // @Param     limit     query     int     false  "Page size (max 500)"  default(100)
 // @Param     before    query     string  false  "Cursor: created_at of the last item (RFC3339)"
@@ -432,45 +498,16 @@ func (h *Handlers) ListDocuments(ctx context.Context, c *app.RequestContext) {
 	if !ok {
 		return
 	}
-	f := postgres.DocumentFilter{Query: string(c.Query("q")), Limit: intQuery(c, "limit", 100)}
-	if s := string(c.Query("status")); s != "" {
-		f.Statuses = strings.Split(s, ",")
-	}
-	if b := string(c.Query("batch_id")); b != "" {
-		bid, err := uuid.Parse(b)
-		if err != nil {
-			h.badRequest(c, "invalid batch_id")
-			return
-		}
-		f.BatchID = &bid
-	}
-	if m := string(c.Query("metadata")); m != "" {
-		if err := json.Unmarshal([]byte(m), &f.Metadata); err != nil {
-			h.badRequest(c, "metadata must be a JSON object")
-			return
-		}
-	}
-	if b := string(c.Query("before")); b != "" {
-		t, err := time.Parse(time.RFC3339Nano, b)
-		if err != nil {
-			h.badRequest(c, "before must be RFC3339")
-			return
-		}
-		f.Before = &t
+	f, ok := h.documentFilter(c)
+	if !ok {
+		return
 	}
 	docs, err := h.Docs.ListDocuments(ctx, u.ID, id, f)
 	if err != nil {
 		h.serviceError(c, err)
 		return
 	}
-	out := dto.DocumentList{Data: docs}
-	if out.Data == nil {
-		out.Data = []types.Document{}
-	}
-	if len(docs) > 0 && len(docs) >= max(1, min(f.Limit, 500)) {
-		out.NextCursor = docs[len(docs)-1].CreatedAt.Format(time.RFC3339Nano)
-	}
-	c.JSON(consts.StatusOK, out)
+	h.writeDocumentList(c, docs, f.Limit)
 }
 
 // BulkUpdateMetadata handles POST /v1/kbs/{id}/documents/metadata/bulk-update.
@@ -500,6 +537,14 @@ func (h *Handlers) BulkUpdateMetadata(ctx context.Context, c *app.RequestContext
 		return
 	}
 	f := postgres.DocumentFilter{Metadata: req.Filter.Metadata}
+	if req.Filter.CaseID != "" {
+		cid, err := uuid.Parse(req.Filter.CaseID)
+		if err != nil {
+			h.badRequest(c, "invalid case_id")
+			return
+		}
+		f.CaseIDs = []uuid.UUID{cid}
+	}
 	for _, s := range req.Filter.DocumentIDs {
 		did, err := uuid.Parse(s)
 		if err != nil {
@@ -587,7 +632,7 @@ func (h *Handlers) DocumentEvents(ctx context.Context, c *app.RequestContext) {
 			_ = stream.Publish(&hsse.Event{Event: "gone", Data: []byte(`{}`)})
 			return
 		}
-		ev := map[string]any{"status": d.Status, "parse_status": d.ParseStatus, "index_status": d.IndexStatus, "graph_status": d.GraphStatus,
+		ev := map[string]any{"status": d.Status, "parse_status": d.ParseStatus, "index_status": d.IndexStatus, "wiki_status": d.WikiStatus,
 			"page_count": d.PageCount, "pages_done": d.PagesDone, "pages_failed": d.PagesFailed, "progress": d.Progress(), "error": d.Error}
 		b, _ := json.Marshal(ev)
 		if string(b) != last {
@@ -673,6 +718,74 @@ func (h *Handlers) ReparseDocument(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusAccepted, d)
+}
+
+// ListDocumentCallbacks handles GET /v1/documents/{id}/callbacks.
+//
+// @Summary   Completion callback deliveries of a document, with every attempt
+// @Tags      Documents
+// @Produce   json
+// @Param     id   path      string  true  "Document id"  format(uuid)
+// @Success   200  {object}  dto.CallbackList
+// @Failure   404  {object}  dto.ErrorResponse
+// @Security  ApiKeyAuth
+// @Router    /v1/documents/{id}/callbacks [get]
+func (h *Handlers) ListDocumentCallbacks(ctx context.Context, c *app.RequestContext) {
+	u, ok := h.user(c)
+	if !ok {
+		return
+	}
+	id, ok := h.uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	list, err := h.Docs.Callbacks(ctx, u.ID, id)
+	if err != nil {
+		h.serviceError(c, err)
+		return
+	}
+	if list == nil {
+		list = []types.DocumentCallback{}
+	}
+	c.JSON(consts.StatusOK, dto.CallbackList{Data: list})
+}
+
+// RetryDocumentCallback handles POST /v1/documents/{id}/callbacks/retry.
+//
+// @Summary   Send a completion callback again now (the latest delivery, or callback_id)
+// @Description Re-arms the delivery for another callback.max_attempts attempts. A finished document with a callback_url but no delivery yet gets one.
+// @Tags      Documents
+// @Accept    json
+// @Produce   json
+// @Param     id       path      string                     true   "Document id"  format(uuid)
+// @Param     request  body      dto.RetryCallbackRequest  false  "Which delivery"
+// @Success   202      {object}  types.DocumentCallback
+// @Failure   404      {object}  dto.ErrorResponse
+// @Failure   422      {object}  dto.ErrorResponse
+// @Security  ApiKeyAuth
+// @Router    /v1/documents/{id}/callbacks/retry [post]
+func (h *Handlers) RetryDocumentCallback(ctx context.Context, c *app.RequestContext) {
+	u, ok := h.user(c)
+	if !ok {
+		return
+	}
+	id, ok := h.uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.RetryCallbackRequest
+	if len(c.Request.Body()) > 0 {
+		if err := json.Unmarshal(c.Request.Body(), &req); err != nil {
+			h.badRequest(c, "invalid JSON: "+err.Error())
+			return
+		}
+	}
+	cb, err := h.Docs.RetryCallback(ctx, u.ID, id, req.CallbackID)
+	if err != nil {
+		h.serviceError(c, err)
+		return
+	}
+	c.JSON(consts.StatusAccepted, cb)
 }
 
 // DeleteDocument handles DELETE /v1/documents/{id}.

@@ -1,0 +1,41 @@
+# Wiki schema của hồ sơ thanh toán (§6.7): loại entity, định danh, quan hệ,
+# chủ đề gợi ý và quy ước viết. conventions là quy ước VIẾT WIKI (vào prompt
+# ingest), không phải workflow của agent.
+name: thanh_toan
+version: 1
+language: vi
+entity_types:
+  - name: to_chuc
+    title: Tổ chức
+    identity: [ma_so_thue]            # định danh để không tạo trùng trang
+    attributes:
+      - { name: ten, type: string, required: true }
+      - { name: ma_so_thue, type: string, pattern: "^[0-9]{10}(-[0-9]{3})?$" }
+      - { name: dia_chi, type: string }
+  - name: ca_nhan
+    title: Cá nhân
+    identity: [so_dinh_danh]
+    attributes:
+      - { name: ho_ten, type: string, required: true }
+      - { name: so_dinh_danh, type: string }
+      - { name: ngay_sinh, type: date }
+  - name: tai_khoan
+    title: Tài khoản
+    identity: [so_tai_khoan, ngan_hang]
+    attributes:
+      - { name: so_tai_khoan, type: string, required: true }
+      - { name: ngan_hang, type: string }
+relations:
+  - { name: chu_tai_khoan, from: [to_chuc, ca_nhan], to: tai_khoan }
+  - { name: dai_dien, from: ca_nhan, to: to_chuc, attributes: [ { name: chuc_vu, type: string } ] }
+  - { name: thanh_toan_cho, from: to_chuc, to: to_chuc, attributes: [ { name: so_tien, type: money }, { name: ngay, type: date } ] }
+topics:
+  - Giá trị hợp đồng và các đợt thanh toán
+  - Dòng thời gian
+conventions: |
+  Viết tiếng Việt, câu ngắn, trung lập.
+  Mọi con số, ngày tháng, tên riêng, số hiệu phải có chú thích về dòng gốc.
+  Không suy đoán, không kết luận đúng/sai hay tuân thủ.
+  Hai nguồn ghi khác nhau thì nêu cả hai kèm chú thích.
+  Được dùng sơ đồ mermaid (flowchart, timeline) khi giúp đọc nhanh hơn.
+limits: { max_pages_touched: 15, max_pages: 200 }

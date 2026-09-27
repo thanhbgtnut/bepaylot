@@ -49,18 +49,29 @@ func BuildSkeleton(pageCount int, bookmarks []types.PDFBookmark, secs []types.Se
 		root.children = children
 		return finish(root, secs), "heading"
 	}
-	if pageCount <= opt.FlatMaxPages {
-		for p := 1; p <= pageCount; p++ {
-			root.children = append(root.children, &node{title: pageTitle(pageTitles, p), origin: "page", pageStart: p, pageEnd: p})
-		}
-	} else {
-		for p := 1; p <= pageCount; p += opt.GroupPages {
-			end := min(p+opt.GroupPages-1, pageCount)
-			root.children = append(root.children, &node{title: fmt.Sprintf("Trang %d–%d: %s", p, end, pageTitle(pageTitles, p)), origin: "page", pageStart: p, pageEnd: end})
-		}
-	}
+	root.children = pageNodes(1, pageCount, pageTitles, opt)
 	assignByPage(root, secs)
 	return finish(root, secs), "page"
+}
+
+// pageNodes covers pages start..end with one node per page (short ranges) or
+// page groups.
+func pageNodes(start, end int, pageTitles map[int]string, opt SkeletonOptions) []*node {
+	if opt.GroupPages <= 0 {
+		opt.GroupPages = 10
+	}
+	var out []*node
+	if end-start+1 <= opt.FlatMaxPages {
+		for p := start; p <= end; p++ {
+			out = append(out, &node{title: pageTitle(pageTitles, p), origin: "page", pageStart: p, pageEnd: p})
+		}
+		return out
+	}
+	for p := start; p <= end; p += opt.GroupPages {
+		e := min(p+opt.GroupPages-1, end)
+		out = append(out, &node{title: fmt.Sprintf("Trang %d–%d: %s", p, e, pageTitle(pageTitles, p)), origin: "page", pageStart: p, pageEnd: e})
+	}
+	return out
 }
 
 // FromTOC builds children from an LLM-proposed table of contents (title +

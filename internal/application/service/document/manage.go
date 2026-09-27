@@ -83,10 +83,18 @@ func (s *Service) UpdateKB(ctx context.Context, owner, id uuid.UUID, p postgres.
 	return kb, nil
 }
 
-// DeleteKB soft-deletes a KB; housekeeping purges its documents.
+// DeleteKB soft-deletes a KB and its cases; housekeeping purges documents
+// and case wikis.
 func (s *Service) DeleteKB(ctx context.Context, owner, id uuid.UUID) error {
 	if err := notFound(s.st.KBs.SoftDelete(ctx, id, owner)); err != nil {
 		return err
+	}
+	caseIDs, err := s.st.Cases.SoftDeleteByKB(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, c := range caseIDs {
+		_ = s.q.Enqueue(ctx, types.TaskCaseDelete, types.CaseTaskPayload{CaseID: c}, queue.Opts{TaskID: "delcase:" + c.String()})
 	}
 	docs, _ := s.st.Documents.Deleting(ctx, 10000)
 	for _, d := range docs {
@@ -99,7 +107,8 @@ func (s *Service) DeleteKB(ctx context.Context, owner, id uuid.UUID) error {
 
 // ---- documents ----
 
-// ListDocuments lists documents with metadata filtering (§6.2).
+// ListDocuments lists documents of a KB (optionally of some cases) with
+// metadata filtering (§6.3).
 func (s *Service) ListDocuments(ctx context.Context, owner, kbID uuid.UUID, f postgres.DocumentFilter) ([]types.Document, error) {
 	kb, err := s.st.KBs.GetOwned(ctx, kbID, owner)
 	if err != nil {
@@ -108,7 +117,12 @@ func (s *Service) ListDocuments(ctx context.Context, owner, kbID uuid.UUID, f po
 	f.OwnerID = owner
 	f.KBIDs = []uuid.UUID{kbID}
 	f.Schema = kb.MetadataSchema
-	f.Metadata = metadata.NormalizeFilter(kb.MetadataSchema, f.Metadata)
+	if len(f.CaseIDs) == 1 {
+		if c, err := s.cases.GetCaseOwned(ctx, owner, f.CaseIDs[0]); err == nil {
+			f.Schema = s.schemaFor(c, kb)
+		}
+	}
+	f.Metadata = metadata.NormalizeFilter(f.Schema, f.Metadata)
 	docs, err := s.st.Documents.List(ctx, f)
 	if err != nil && strings.Contains(err.Error(), "metadata filter") {
 		return nil, fmt.Errorf("%w: %v", ErrBadRequest, err)
@@ -116,9 +130,29 @@ func (s *Service) ListDocuments(ctx context.Context, owner, kbID uuid.UUID, f po
 	return docs, err
 }
 
+// ListCaseDocuments lists the documents of one case.
+func (s *Service) ListCaseDocuments(ctx context.Context, owner, caseID uuid.UUID, f postgres.DocumentFilter) ([]types.Document, error) {
+	c, err := s.cases.GetCaseOwned(ctx, owner, caseID)
+	if err != nil {
+		return nil, err
+	}
+	f.CaseIDs = []uuid.UUID{c.ID}
+	return s.ListDocuments(ctx, owner, c.KBID, f)
+}
+
+// schemaFor is the metadata schema of documents in a case: the case type's,
+// else the KB's.
+func (s *Service) schemaFor(c types.Case, kb types.KnowledgeBase) *types.MetadataSchema {
+	if sc := s.cases.CaseType(c.CaseType).MetadataSchema; sc != nil {
+		return sc
+	}
+	return kb.MetadataSchema
+}
+
 // DocumentDetail is a document plus its failed pages and recent spans.
 type DocumentDetail struct {
 	types.Document
+	CaseCode    string          `json:"case_code,omitempty"`
 	Progress    float64         `json:"progress"`
 	FailedPages []FailedPage    `json:"failed_pages,omitempty"`
 	Spans       []postgres.Span `json:"spans,omitempty"`
@@ -143,6 +177,9 @@ func (s *Service) Detail(ctx context.Context, owner, id uuid.UUID, withSpans boo
 		return nil, err
 	}
 	out := &DocumentDetail{Document: d, Progress: d.Progress()}
+	if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil {
+		out.CaseCode = c.Code
+	}
 	if d.PagesFailed > 0 {
 		pages, err := s.st.Pages.List(ctx, d.ID, d.Gen, 0, 0)
 		if err == nil {
@@ -168,11 +205,12 @@ func (s *Service) Cancel(ctx context.Context, owner, id uuid.UUID) error {
 	if types.Terminal(d.Status) {
 		return fmt.Errorf("%w: document is already %s", ErrBadRequest, d.Status)
 	}
-	_, err = s.st.Documents.Update(ctx, d.ID, d.Gen, postgres.DocUpdate{Status: strp(types.DocCancelled)})
+	_, err = s.updateStatus(ctx, d.ID, d.Gen, postgres.DocUpdate{Status: strp(types.DocCancelled)})
 	return err
 }
 
-// Delete marks a document deleting and enqueues its purge.
+// Delete marks a document deleting, retracts it from the case wiki (§6.8)
+// and enqueues its purge.
 func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 	d, err := s.GetOwned(ctx, owner, id)
 	if err != nil {
@@ -181,6 +219,11 @@ func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 	if err := notFound(s.st.Documents.SoftDelete(ctx, d.ID)); err != nil {
 		return err
 	}
+	if d.WikiStatus != types.StageSkipped {
+		if err := s.queueWikiOp(ctx, d, types.WikiOpRetractDoc, d.Gen); err != nil {
+			s.log.Warn("wiki retract not queued", "doc", d.ID, "err", err)
+		}
+	}
 	return s.q.Enqueue(ctx, types.TaskDocumentDelete, types.DocTaskPayload{DocumentID: d.ID, KBID: d.KBID, Gen: -1}, queue.Opts{TaskID: "del:" + d.ID.String()})
 }
 
@@ -188,6 +231,9 @@ func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 type ReparseRequest struct {
 	Pages  []int  `json:"pages,omitempty"`
 	Engine string `json:"engine,omitempty"`
+	// CallbackURL replaces the document's completion callback URL; empty
+	// keeps the current one. The callback fires again when the reparse ends.
+	CallbackURL string `json:"callback_url,omitempty"`
 }
 
 // Reparse re-runs the pipeline for the whole document (new generation) or
@@ -196,6 +242,15 @@ func (s *Service) Reparse(ctx context.Context, owner, id uuid.UUID, req ReparseR
 	d, err := s.GetOwned(ctx, owner, id)
 	if err != nil {
 		return d, err
+	}
+	if req.CallbackURL != "" {
+		if err := s.ValidateCallbackURL(req.CallbackURL); err != nil {
+			return d, err
+		}
+		if err := s.st.Documents.SetCallbackURL(ctx, d.ID, req.CallbackURL); err != nil {
+			return d, err
+		}
+		d.CallbackURL = req.CallbackURL
 	}
 	if req.Engine != "" {
 		if _, err := s.engines.Get(req.Engine); err != nil {
@@ -206,9 +261,17 @@ func (s *Service) Reparse(ctx context.Context, owner, id uuid.UUID, req ReparseR
 		}
 	}
 	if len(req.Pages) == 0 {
+		old := d
 		gen, err := s.st.Documents.BumpGen(ctx, d.ID)
 		if err != nil {
 			return d, notFound(err)
+		}
+		// Full reparse = retract the old generation + ingest the new one
+		// once it is indexed (§6.8).
+		if old.WikiStatus != types.StageSkipped {
+			if err := s.queueWikiOp(ctx, old, types.WikiOpRetractDoc, old.Gen); err != nil {
+				s.log.Warn("wiki retract not queued", "doc", d.ID, "err", err)
+			}
 		}
 		d.Gen, d.Status = gen, types.DocQueued
 		return d, s.enqueue(ctx, types.TaskDocumentSplit, d, nil, fmt.Sprintf("split:%s:%d", d.ID, gen))
@@ -220,6 +283,9 @@ func (s *Service) Reparse(ctx context.Context, owner, id uuid.UUID, req ReparseR
 		if p < 1 || p > d.PageCount {
 			return d, fmt.Errorf("%w: page %d out of range 1..%d", ErrBadRequest, p, d.PageCount)
 		}
+	}
+	if err := s.st.Documents.BumpCallbackRun(ctx, d.ID); err != nil { // same generation, new run → new callback
+		return d, err
 	}
 	doneN, failedN, err := s.st.Pages.ResetPages(ctx, d.ID, d.Gen, req.Pages, types.PageRendered)
 	if err != nil {
@@ -245,6 +311,10 @@ func (s *Service) UpdateMetadata(ctx context.Context, owner, id uuid.UUID, meta 
 	if err != nil {
 		return d, err
 	}
+	schema := kb.MetadataSchema
+	if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil {
+		schema = s.schemaFor(c, kb)
+	}
 	next := meta
 	if !replace {
 		next = metadata.Merge(d.Metadata, meta)
@@ -254,7 +324,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, owner, id uuid.UUID, meta 
 			}
 		}
 	}
-	clean, errs := metadata.Validate(kb.MetadataSchema, next)
+	clean, errs := metadata.Validate(schema, next)
 	if len(errs) > 0 {
 		return d, fmt.Errorf("%w: %v", ErrBadRequest, errs)
 	}
@@ -268,15 +338,23 @@ func (s *Service) BulkMetadata(ctx context.Context, owner, kbID uuid.UUID, f pos
 	if err != nil {
 		return 0, notFound(err)
 	}
-	if len(f.Metadata) == 0 && len(f.DocumentIDs) == 0 && f.BatchID == nil {
-		return 0, fmt.Errorf("%w: a filter (metadata, document_ids or batch_id) is required", ErrBadRequest)
+	if len(f.Metadata) == 0 && len(f.DocumentIDs) == 0 && f.BatchID == nil && len(f.CaseIDs) == 0 {
+		return 0, fmt.Errorf("%w: a filter (case_id, metadata, document_ids or batch_id) is required", ErrBadRequest)
 	}
-	clean, errs := metadata.Validate(&types.MetadataSchema{Fields: fieldsOf(kb.MetadataSchema)}, set)
+	schema := kb.MetadataSchema
+	if len(f.CaseIDs) == 1 {
+		c, err := s.cases.GetCaseOwned(ctx, owner, f.CaseIDs[0])
+		if err != nil || c.KBID != kbID {
+			return 0, ErrNotFound
+		}
+		schema = s.schemaFor(c, kb)
+	}
+	clean, errs := metadata.Validate(&types.MetadataSchema{Fields: fieldsOf(schema)}, set)
 	if len(errs) > 0 {
 		return 0, fmt.Errorf("%w: %v", ErrBadRequest, errs)
 	}
-	f.OwnerID, f.KBIDs, f.Schema = owner, []uuid.UUID{kbID}, kb.MetadataSchema
-	f.Metadata = metadata.NormalizeFilter(kb.MetadataSchema, f.Metadata)
+	f.OwnerID, f.KBIDs, f.Schema = owner, []uuid.UUID{kbID}, schema
+	f.Metadata = metadata.NormalizeFilter(schema, f.Metadata)
 	return s.st.Documents.BulkUpdateMetadata(ctx, f, clean, unset)
 }
 
@@ -292,21 +370,29 @@ func fieldsOf(s *types.MetadataSchema) []types.MetadataField {
 	return out
 }
 
-// MetadataValues lists distinct values of a metadata key in a KB.
-func (s *Service) MetadataValues(ctx context.Context, owner, kbID uuid.UUID, key, prefix string, limit int) ([]postgres.MetadataValue, error) {
+// MetadataValues lists distinct values of a metadata key in a KB, or in one
+// case of it.
+func (s *Service) MetadataValues(ctx context.Context, owner, kbID uuid.UUID, caseID *uuid.UUID, key, prefix string, limit int) ([]postgres.MetadataValue, error) {
 	if _, err := s.st.KBs.GetOwned(ctx, kbID, owner); err != nil {
 		return nil, notFound(err)
 	}
-	return s.st.Documents.MetadataValues(ctx, kbID, key, prefix, limit)
+	if caseID != nil {
+		c, err := s.cases.GetCaseOwned(ctx, owner, *caseID)
+		if err != nil || c.KBID != kbID {
+			return nil, ErrNotFound
+		}
+	}
+	return s.st.Documents.MetadataValues(ctx, kbID, caseID, key, prefix, limit)
 }
 
-// MetadataKeys lists the metadata keys a KB exposes: the schema's fields, or
-// the keys in use when there is no schema.
-func (s *Service) MetadataKeys(ctx context.Context, kb types.KnowledgeBase) []types.MetadataField {
-	if kb.MetadataSchema != nil && len(kb.MetadataSchema.Fields) > 0 {
-		return kb.MetadataSchema.Fields
+// MetadataKeys lists the document metadata keys of a case: the schema's
+// fields (case type, else KB), or the keys in use when there is no schema.
+func (s *Service) MetadataKeys(ctx context.Context, c types.Case) []types.MetadataField {
+	kb, _ := s.st.KBs.Get(ctx, c.KBID)
+	if sc := s.schemaFor(c, kb); sc != nil && len(sc.Fields) > 0 {
+		return sc.Fields
 	}
-	keys, _ := s.st.Documents.MetadataKeys(ctx, kb.ID)
+	keys, _ := s.st.Documents.MetadataKeys(ctx, c.ID)
 	sort.Strings(keys)
 	out := make([]types.MetadataField, len(keys))
 	for i, k := range keys {
@@ -502,20 +588,4 @@ func (s *Service) Locate(ctx context.Context, owner, id uuid.UUID, req LocateReq
 		return nil, fmt.Errorf("%w: give line+page, md_start+md_end, or text", ErrBadRequest)
 	}
 	return out, nil
-}
-
-// EnsureTempKB returns (creating once) the temporary KB used for chat
-// attachments of a session.
-func (s *Service) EnsureTempKB(ctx context.Context, owner uuid.UUID, sessionID uuid.UUID) (types.KnowledgeBase, error) {
-	name := "session:" + sessionID.String()
-	kbs, err := s.st.KBs.List(ctx, owner, true)
-	if err != nil {
-		return types.KnowledgeBase{}, err
-	}
-	for _, kb := range kbs {
-		if kb.IsTemporary && kb.Name == name {
-			return kb, nil
-		}
-	}
-	return s.st.KBs.Create(ctx, types.KnowledgeBase{OwnerID: owner, Name: name, Description: "chat attachments", IsTemporary: true})
 }

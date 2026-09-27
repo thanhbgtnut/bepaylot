@@ -239,6 +239,1131 @@
                 }
             }
         },
+        "/v1/case-types": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "List the case types loaded from configs/case_types",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CaseTypeList"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Case detail: document counts by status and wiki state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Case"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Delete a case, its documents and its whole wiki (async)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "code, case_type and kb_id never change (422).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Change a case's title, status (open/closed) or metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cases.UpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Case"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/documents": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "List the documents of a case",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated statuses",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Upload batch id",
+                        "name": "batch_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON metadata filter, e.g. {\\",
+                        "name": "metadata",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Full-text over file name, card and metadata values",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Page size (max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor: created_at of the last item (RFC3339)",
+                        "name": "before",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.DocumentList"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Same fields as POST /v1/kbs/{id}/documents, without case_code.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Upload one or more files (streamed) into a case",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "File (repeat for several files)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON metadata for every file",
+                        "name": "metadata",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON per-file metadata keyed by file name or index",
+                        "name": "files_metadata",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Optional URL that receives a POST (JSON) when each document finishes",
+                        "name": "callback_url",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Use the high-priority lanes (chat attachments)",
+                        "name": "interactive",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/document.UploadResult"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/search": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Search one case (wiki index → wiki pages → source lines)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Query and filters (case_ids/kb_ids are ignored)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.SearchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.SearchResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Case wiki navigation: pages by kind, files not in the wiki yet, wiki state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiTOC"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/events": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Stream wiki events (ingest_started, page_updated, ingest_done, lint_done)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "event stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/export": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/zip",
+                    "text/html"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Export the wiki: zip of markdown pages or one static HTML file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "md (default) | html",
+                        "name": "format",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/index": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "The wiki index exactly as given to the LLM (index.md of LLM Wiki)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Index id to expand, e.g. w4 or w4.n2",
+                        "name": "expand",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiIndexResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/links": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "The link graph of the wiki (nodes = pages, edges = links)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "overview | source | entity | topic | note",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Entity type of the schema",
+                        "name": "entity_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only this relation",
+                        "name": "relation",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/wiki.LinkGraph"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/lint": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Lint issues of the wiki",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "open | fixed | dismissed",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "stale | contradiction | orphan | missing_link | gap | index_drift",
+                        "name": "kind",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiLintList"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Run the wiki lint now (async)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/lint/{issue_id}": {
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Mark a lint issue fixed or dismissed",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Issue id",
+                        "name": "issue_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New status",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiLintPatch"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/log": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "The wiki log (log.md of LLM Wiki), newest first",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ingest | retract | lint | edit | note | rebuild | query",
+                        "name": "op",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only lines about this file",
+                        "name": "document_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor: at of the last line (RFC3339)",
+                        "name": "before",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Page size (max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiLogList"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/notes": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Body {title, content} or {session_id, message_id} (an assistant answer of a session bound to this case). Inline citation ids become footnotes after being checked; sentences without a valid citation are dropped.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Save an answer as a note page (\"Lưu vào wiki\")",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Note",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/wiki.NoteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiPage"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/pages/{slug}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns content, attributes, footnotes (n → citation_id, quote, file, page, status), links in and out and the ingest proposal if any. The slug contains \"/\", e.g. nguon/hop-dong-15-2026. A slug of another case is 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Read a wiki page, or its history with …/{slug}/revisions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page slug (optionally followed by /revisions)",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiPage"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "footnotes maps a footnote number to a citation id of this case (doc:\u003cid\u003e:p\u003cpage\u003e:l\u003ca\u003e-\u003cb\u003e); each is checked against the source lines. Invalid footnotes are marked stale (or refused with 422 when wiki.strict_citations). An edited page is not overwritten by ingest: later ingests leave a proposal.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Edit a wiki page by hand (title, content, attributes, footnotes)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Changes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/wiki.EditRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/wiki.EditResult"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Accept/reject an ingest proposal (…/{slug}/proposal) or restore a revision (…/{slug}/revisions/{v}/restore)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Page slug followed by /proposal or /revisions/{v}/restore",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "For /proposal: {\\",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiProposalRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiPage"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Delete a note page (other pages are maintained by ingest)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Note slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/rebuild": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Use after a schema change. Note pages and hand-edited pages are kept; edited pages receive proposals.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Rebuild the wiki: drop generated pages and ingest every file again",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/wiki/search": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki"
+                ],
+                "summary": "Full-text search in the wiki of a case",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.WikiSearchResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/citations": {
             "get": {
                 "security": [
@@ -256,7 +1381,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Citation id",
+                        "description": "Citation id: doc:\u003cid\u003e:p\u003cpage\u003e, optionally :l\u003ca\u003e-\u003cb\u003e or :l\u003ca\u003e",
                         "name": "id",
                         "in": "query",
                         "required": true
@@ -355,6 +1480,104 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/callbacks": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Completion callback deliveries of a document, with every attempt",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CallbackList"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/callbacks/retry": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Re-arms the delivery for another callback.max_attempts attempts. A finished document with a callback_url but no delivery yet gets one.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Documents"
+                ],
+                "summary": "Send a completion callback again now (the latest delivery, or callback_id)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Which delivery",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/dto.RetryCallbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/types.DocumentCallback"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -919,249 +2142,6 @@
                 }
             }
         },
-        "/v1/graph/entities/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "An entity with relations and evidence (with page positions)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Entity id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/graph.EntityDetail"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/graph/entities/{id}/neighbors": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Entities within N hops (≤3)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Entity id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "default": 1,
-                        "description": "Hops (1-3)",
-                        "name": "depth",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Comma-separated relation types",
-                        "name": "relation_types",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.Subgraph"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/graph/schemas": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph schemas"
-                ],
-                "summary": "List graph schemas (latest version of each)",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/dto.SchemaList"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph schemas"
-                ],
-                "summary": "Create a graph schema version (validated)",
-                "parameters": [
-                    {
-                        "description": "Schema (version 0 = next version)",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/types.GraphSchema"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/types.GraphSchema"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/graph/schemas/{name}": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph schemas"
-                ],
-                "summary": "Every version of a graph schema",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Schema name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/dto.SchemaList"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/graph/schemas/{name}/test": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph schemas"
-                ],
-                "summary": "Dry-run extraction of a text with a schema (nothing stored)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Schema name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Text",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.SchemaTestRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/graph.TestResult"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/kbs": {
             "get": {
                 "security": [
@@ -1356,6 +2336,187 @@
                 }
             }
         },
+        "/v1/kbs/{id}/cases": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "List cases with per-status document counts",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Part of the code or title",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Case type",
+                        "name": "case_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "open | closed",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "JSON filter on case metadata",
+                        "name": "metadata",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Page size (max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor: created_at of the last item (RFC3339)",
+                        "name": "before",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CaseList"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "The code is normalized and checked by the case type (e.g. \" rt112233\" → \"RT112233\"). An existing code answers 409 with the existing case.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Create a case (a file set identified by a business code)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Code, case type, title, case metadata",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cases.CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.Case"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CaseConflict"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/kbs/{id}/cases/by-code/{code}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cases"
+                ],
+                "summary": "Find a case by code (normalized by its case type first)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Knowledge base id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Case code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.Case"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/kbs/{id}/documents": {
             "get": {
                 "security": [
@@ -1369,7 +2530,7 @@
                 "tags": [
                     "Documents"
                 ],
-                "summary": "List documents, filtered by status, batch, metadata or text",
+                "summary": "List documents, filtered by case, status, batch, metadata or text",
                 "parameters": [
                     {
                         "type": "string",
@@ -1378,6 +2539,13 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only this case",
+                        "name": "case_id",
+                        "in": "query"
                     },
                     {
                         "type": "string",
@@ -1438,6 +2606,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
+                "description": "The case is created when case_code is new (auto_create_on_upload); a closed case answers 409, a case_type differing from the existing case's 422. Duplicates are detected per case.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -1447,7 +2616,7 @@
                 "tags": [
                     "Documents"
                 ],
-                "summary": "Upload one or more files (streamed) with optional metadata",
+                "summary": "Upload one or more files (streamed) into one case",
                 "parameters": [
                     {
                         "type": "string",
@@ -1466,6 +2635,24 @@
                     },
                     {
                         "type": "string",
+                        "description": "Case code, e.g. RT112233 (required unless case_id)",
+                        "name": "case_code",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Existing case id (instead of case_code)",
+                        "name": "case_id",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Case type of a new case (default: cases.default_type)",
+                        "name": "case_type",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
                         "description": "JSON metadata for every file, e.g. {\\",
                         "name": "metadata",
                         "in": "formData"
@@ -1474,6 +2661,12 @@
                         "type": "string",
                         "description": "JSON per-file metadata keyed by file name or index",
                         "name": "files_metadata",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Optional URL that receives a POST (JSON) when each document finishes: completed, partial, failed or cancelled",
+                        "name": "callback_url",
                         "in": "formData"
                     },
                     {
@@ -1498,6 +2691,18 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -1552,156 +2757,6 @@
                         "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/kbs/{id}/graph/entities": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Find graph entities by name/alias/attribute (accent-insensitive)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Search text",
-                        "name": "q",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Entity type",
-                        "name": "type",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "default": 20,
-                        "description": "Max results",
-                        "name": "limit",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/dto.EntityList"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/kbs/{id}/graph/path": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Shortest relation path between two entities (≤4 hops)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Entity id",
-                        "name": "from",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Entity id",
-                        "name": "to",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "default": 4,
-                        "description": "Max hops",
-                        "name": "max_depth",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.Subgraph"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/kbs/{id}/graph/rebuild": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Graph"
-                ],
-                "summary": "Re-extract the graph of every document (after a schema change)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Accepted",
-                        "schema": {
-                            "$ref": "#/definitions/dto.RebuildResponse"
                         }
                     }
                 }
@@ -1804,7 +2859,7 @@
                 "tags": [
                     "Metadata"
                 ],
-                "summary": "Distinct values of a metadata key (e.g. every case code)",
+                "summary": "Distinct values of a metadata key, in a KB or one case of it",
                 "parameters": [
                     {
                         "type": "string",
@@ -1816,10 +2871,17 @@
                     },
                     {
                         "type": "string",
-                        "description": "Metadata key, e.g. ma_ho_so",
+                        "description": "Metadata key, e.g. loai_giay_to",
                         "name": "key",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only count the documents of this case",
+                        "name": "case_id",
+                        "in": "query"
                     },
                     {
                         "type": "string",
@@ -1840,194 +2902,6 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/dto.MetadataValuesResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/kbs/{id}/wiki/pages": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "List wiki pages",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/dto.WikiPageList"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/kbs/{id}/wiki/pages/{slug}": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Read a wiki page",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Page slug",
-                        "name": "slug",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.WikiPage"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "Edit a wiki page by hand (later generations will not overwrite it)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Page slug",
-                        "name": "slug",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "New content",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.WikiEditRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/types.WikiPage"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/kbs/{id}/wiki/pages/{slug}/revisions": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Wiki"
-                ],
-                "summary": "A wiki page's revision history",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Knowledge base id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Page slug",
-                        "name": "slug",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/postgres.WikiRevision"
-                            }
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     }
                 }
@@ -2293,7 +3167,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "mode=reasoning (default): an LLM picks documents, walks their table of contents and cites exact lines; mode=keyword: Postgres full-text + trigram; mode=metadata: list documents matching the metadata filter. No embeddings are used.",
+                "description": "Scope: case_ids, or kb_ids (every case of those KBs; API only). mode=reasoning (default): an LLM reads the case wiki index, then wiki pages, then walks file trees and cites exact source lines, every hit re-checked against the current lines; mode=keyword: Postgres full-text + trigram; mode=metadata: list documents matching the metadata filter. No embeddings are used.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2303,7 +3177,7 @@
                 "tags": [
                     "Search"
                 ],
-                "summary": "Search documents (reasoning over the document tree, keyword, or metadata only)",
+                "summary": "Search cases (reasoning over the case wiki and document trees, keyword, or metadata only)",
                 "parameters": [
                     {
                         "description": "Query, scope and filters",
@@ -2358,6 +3232,13 @@
                         "description": "Opaque cursor from a previous response's next_cursor",
                         "name": "cursor",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Only the sessions bound to this case",
+                        "name": "case_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -2381,6 +3262,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
+                "description": "case_id (or case {kb_id, code}) binds the session to one case for its whole life: the wiki_* and kb_* tools only see that case (§8.1).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2390,7 +3272,7 @@
                 "tags": [
                     "Sessions"
                 ],
-                "summary": "Create a session explicitly",
+                "summary": "Create a session explicitly, optionally bound to a case",
                 "parameters": [
                     {
                         "description": "Session fields",
@@ -2410,6 +3292,18 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -2594,7 +3488,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Files go into the session's temporary knowledge base, which is added to the session's kb_ids so the agent can search them while parsing continues.",
+                "description": "Files go into the case bound to the session (§8.2), so the agent can search them while parsing continues. A session without a case answers 409.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -2637,6 +3531,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -2821,12 +3721,217 @@
                     }
                 }
             }
+        },
+        "/v1/wiki/schemas": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki schemas"
+                ],
+                "summary": "List wiki schemas (latest version of each)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SchemaList"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Existing cases keep their pages until POST /v1/cases/{id}/wiki/rebuild.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki schemas"
+                ],
+                "summary": "Create a new wiki schema version (validated)",
+                "parameters": [
+                    {
+                        "description": "Schema",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiSchema"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.WikiSchema"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/wiki/schemas/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki schemas"
+                ],
+                "summary": "Every version of a wiki schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Schema name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SchemaList"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/wiki/schemas/{name}/test": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns the entities (with identity keys and the lines of each attribute) and relations an ingest would keep after checking them against the source lines, and the LLM calls used. Nothing is stored.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wiki schemas"
+                ],
+                "summary": "Dry-run the extraction of a schema on a text or a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Schema name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Text or document id",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SchemaTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/wiki.TestResult"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "cases.CreateRequest": {
+            "type": "object",
+            "properties": {
+                "case_type": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "cases.UpdateRequest": {
+            "type": "object",
+            "properties": {
+                "case_type": {
+                    "type": "string"
+                },
+                "code": {
+                    "description": "Code, CaseType and KBID are rejected: they never change.",
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "document.Accepted": {
             "type": "object",
             "properties": {
+                "callback_url": {
+                    "description": "CallbackURL echoes the completion callback, when one was given.",
+                    "type": "string"
+                },
                 "document_id": {
                     "type": "string"
                 },
@@ -2851,13 +3956,20 @@
                 "batch_id": {
                     "type": "string"
                 },
+                "callback_url": {
+                    "description": "CallbackURL, when set, receives a POST once the document reaches a\nterminal status (§4.7).",
+                    "type": "string"
+                },
+                "case_code": {
+                    "type": "string"
+                },
+                "case_id": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
                 "created_by": {
-                    "type": "string"
-                },
-                "doc_type": {
                     "type": "string"
                 },
                 "engine": {
@@ -2877,9 +3989,6 @@
                 },
                 "gen": {
                     "type": "integer"
-                },
-                "graph_status": {
-                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -2944,6 +4053,9 @@
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "wiki_status": {
                     "type": "string"
                 }
             }
@@ -3129,6 +4241,10 @@
         "document.ReparseRequest": {
             "type": "object",
             "properties": {
+                "callback_url": {
+                    "description": "CallbackURL replaces the document's completion callback URL; empty\nkeeps the current one. The callback fires again when the reparse ends.",
+                    "type": "string"
+                },
                 "engine": {
                     "type": "string"
                 },
@@ -3140,11 +4256,31 @@
                 }
             }
         },
+        "document.UploadCase": {
+            "type": "object",
+            "properties": {
+                "case_type": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "created": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
         "document.UploadResult": {
             "type": "object",
             "properties": {
                 "batch_id": {
                     "type": "string"
+                },
+                "case": {
+                    "$ref": "#/definitions/document.UploadCase"
                 },
                 "documents": {
                     "type": "array",
@@ -3210,6 +4346,14 @@
                         "$ref": "#/definitions/dto.AGUIMessage"
                     }
                 },
+                "metadata": {
+                    "description": "Metadata (bepaylot extension) binds the thread's session to a case with\ncase_id or case {kb_id, code}; forwardedProps may carry the same fields.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.Metadata"
+                        }
+                    ]
+                },
                 "runId": {
                     "type": "string"
                 },
@@ -3250,6 +4394,9 @@
                         "batch_id": {
                             "type": "string"
                         },
+                        "case_id": {
+                            "type": "string"
+                        },
                         "document_ids": {
                             "type": "array",
                             "items": {
@@ -3281,6 +4428,76 @@
                 }
             }
         },
+        "dto.CallbackList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.DocumentCallback"
+                    }
+                }
+            }
+        },
+        "dto.CaseConflict": {
+            "type": "object",
+            "properties": {
+                "case": {
+                    "$ref": "#/definitions/types.Case"
+                },
+                "error": {
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string"
+                        },
+                        "type": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "type": {
+                    "description": "\"error\"",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CaseList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Case"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CaseRef": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CaseTypeList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.CaseType"
+                    }
+                }
+            }
+        },
         "dto.CreateKBRequest": {
             "type": "object",
             "properties": {
@@ -3301,6 +4518,18 @@
         "dto.CreateSessionRequest": {
             "type": "object",
             "properties": {
+                "case": {
+                    "description": "Case names the case by knowledge base and code instead of CaseID.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.CaseRef"
+                        }
+                    ]
+                },
+                "case_id": {
+                    "description": "CaseID binds the new session to a case for its whole life (§8.1).",
+                    "type": "string"
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {}
@@ -3394,6 +4623,12 @@
                     "description": "keyword (default) | reasoning",
                     "type": "string"
                 },
+                "page_from": {
+                    "type": "integer"
+                },
+                "page_to": {
+                    "type": "integer"
+                },
                 "query": {
                     "type": "string"
                 }
@@ -3434,17 +4669,6 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/dto.EngineInfo"
-                    }
-                }
-            }
-        },
-        "dto.EntityList": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.Entity"
                     }
                 }
             }
@@ -3694,17 +4918,17 @@
         "dto.Metadata": {
             "type": "object",
             "properties": {
-                "kb_filter": {
-                    "description": "KBFilter pins a metadata filter for every knowledge search of the session.",
-                    "type": "object",
-                    "additionalProperties": {}
+                "case": {
+                    "description": "Case names the case by KB and code instead of CaseID.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/dto.CaseRef"
+                        }
+                    ]
                 },
-                "kb_ids": {
-                    "description": "KBIDs attaches knowledge bases to the session (enables the kb_* tools).",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "case_id": {
+                    "description": "CaseID binds the session to one case (§8.1): the wiki_* and kb_* tools\nthen see that case only. Binding is permanent: another case is 409.",
+                    "type": "string"
                 },
                 "session_id": {
                     "description": "bepaylot extension",
@@ -3882,11 +5106,12 @@
                 }
             }
         },
-        "dto.RebuildResponse": {
+        "dto.RetryCallbackRequest": {
             "type": "object",
             "properties": {
-                "queued": {
-                    "type": "integer"
+                "callback_id": {
+                    "description": "CallbackID selects a delivery; empty retries the latest one.",
+                    "type": "string"
                 }
             }
         },
@@ -3896,7 +5121,7 @@
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/types.GraphSchema"
+                        "$ref": "#/definitions/types.WikiSchema"
                     }
                 }
             }
@@ -3904,6 +5129,9 @@
         "dto.SchemaTestRequest": {
             "type": "object",
             "properties": {
+                "document_id": {
+                    "type": "string"
+                },
                 "text": {
                     "type": "string"
                 }
@@ -3912,6 +5140,9 @@
         "dto.SessionBrief": {
             "type": "object",
             "properties": {
+                "case_id": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -3942,6 +5173,9 @@
         "dto.SessionDetail": {
             "type": "object",
             "properties": {
+                "case_id": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -3995,6 +5229,9 @@
         "dto.SessionReport": {
             "type": "object",
             "properties": {
+                "case_id": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -4176,6 +5413,10 @@
         "dto.UpdateSessionRequest": {
             "type": "object",
             "properties": {
+                "case_id": {
+                    "description": "CaseID cannot change once set: a different case answers 409.",
+                    "type": "string"
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {}
@@ -4196,207 +5437,81 @@
                 }
             }
         },
-        "dto.WikiEditRequest": {
+        "dto.WikiIndexResponse": {
             "type": "object",
             "properties": {
                 "content": {
                     "type": "string"
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
                 }
             }
         },
-        "dto.WikiPageList": {
+        "dto.WikiLintList": {
             "type": "object",
             "properties": {
                 "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/types.WikiPage"
+                        "$ref": "#/definitions/types.WikiLintIssue"
                     }
                 }
             }
         },
-        "graph.EntityDetail": {
+        "dto.WikiLintPatch": {
             "type": "object",
             "properties": {
-                "aliases": {
+                "status": {
+                    "description": "fixed | dismissed | open",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.WikiLogList": {
+            "type": "object",
+            "properties": {
+                "data": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/types.WikiLogEntry"
                     }
-                },
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "conflict": {
-                    "type": "boolean"
-                },
-                "id": {
+                }
+            }
+        },
+        "dto.WikiProposalRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "accept | reject",
                     "type": "string"
-                },
-                "kb_id": {
-                    "type": "string"
-                },
-                "mentions": {
+                }
+            }
+        },
+        "dto.WikiSearchResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/types.Mention"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "relations": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/graph.RelationView"
-                    }
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "wiki_slug": {
-                    "type": "string"
-                }
-            }
-        },
-        "graph.EntityRef": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "graph.ExtractedEntity": {
-            "type": "object",
-            "properties": {
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "evidence": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "unit": {
-                    "type": "string"
-                }
-            }
-        },
-        "graph.ExtractedRelation": {
-            "type": "object",
-            "properties": {
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "evidence": {
-                    "type": "string"
-                },
-                "source": {
-                    "$ref": "#/definitions/graph.EntityRef"
-                },
-                "target": {
-                    "$ref": "#/definitions/graph.EntityRef"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "unit": {
-                    "type": "string"
-                }
-            }
-        },
-        "graph.Extraction": {
-            "type": "object",
-            "properties": {
-                "entities": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/graph.ExtractedEntity"
-                    }
-                },
-                "relations": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/graph.ExtractedRelation"
+                        "$ref": "#/definitions/interfaces.WikiSearchHit"
                     }
                 }
             }
         },
-        "graph.RelationView": {
+        "interfaces.WikiSearchHit": {
             "type": "object",
             "properties": {
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "direction": {
-                    "description": "out | in",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "other_name": {
-                    "type": "string"
-                },
-                "other_type": {
-                    "type": "string"
-                },
-                "source_id": {
-                    "type": "string"
-                },
-                "target_id": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "graph.TestResult": {
-            "type": "object",
-            "properties": {
-                "extraction": {
-                    "$ref": "#/definitions/graph.Extraction"
-                },
-                "warnings": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/graph.Warning"
-                    }
-                }
-            }
-        },
-        "graph.Warning": {
-            "type": "object",
-            "properties": {
-                "item": {
-                    "type": "string"
-                },
                 "kind": {
                     "type": "string"
                 },
-                "reason": {
+                "score": {
+                    "type": "number"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "snippet": {
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }
@@ -4441,6 +5556,10 @@
                     "type": "integer"
                 },
                 "text": {
+                    "type": "string"
+                },
+                "text_source": {
+                    "description": "TextSource is \"vlm\" when Text is a VLM transcription of the region that\nis rendered verbatim as the block's markdown; empty otherwise (Text is\nthen the block's lines joined).",
                     "type": "string"
                 },
                 "type": {
@@ -4537,29 +5656,6 @@
                 }
             }
         },
-        "postgres.WikiRevision": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "edit_source": {
-                    "type": "string"
-                },
-                "edited_at": {
-                    "type": "string"
-                },
-                "editor_id": {
-                    "type": "string"
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "integer"
-                }
-            }
-        },
         "types.AttributeDef": {
             "type": "object",
             "properties": {
@@ -4626,10 +5722,36 @@
                 "BlockUnknown"
             ]
         },
-        "types.Document": {
+        "types.CallbackAttempt": {
             "type": "object",
             "properties": {
-                "batch_id": {
+                "attempt": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "response": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.Case": {
+            "type": "object",
+            "properties": {
+                "case_type": {
+                    "type": "string"
+                },
+                "code": {
                     "type": "string"
                 },
                 "created_at": {
@@ -4638,7 +5760,131 @@
                 "created_by": {
                     "type": "string"
                 },
-                "doc_type": {
+                "deleted_at": {
+                    "type": "string"
+                },
+                "documents": {
+                    "description": "Documents counts the case's live documents by status (list/detail only).",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kb_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "wiki_built_at": {
+                    "type": "string"
+                },
+                "wiki_docs_covered": {
+                    "type": "integer"
+                },
+                "wiki_schema": {
+                    "type": "string"
+                },
+                "wiki_status": {
+                    "type": "string"
+                },
+                "wiki_version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.CaseCodeRule": {
+            "type": "object",
+            "properties": {
+                "normalize": {
+                    "description": "upper_trim | lower_trim | trim (default)",
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.CaseType": {
+            "type": "object",
+            "properties": {
+                "case_metadata_schema": {
+                    "description": "CaseMetadataSchema validates the metadata of the case itself.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.MetadataSchema"
+                        }
+                    ]
+                },
+                "code": {
+                    "$ref": "#/definitions/types.CaseCodeRule"
+                },
+                "metadata_schema": {
+                    "description": "MetadataSchema validates document metadata in cases of this type; it\nreplaces the KB's metadata_schema.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.MetadataSchema"
+                        }
+                    ]
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parser": {
+                    "type": "object",
+                    "properties": {
+                        "engine": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "wiki": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "description": "Enabled nil = wiki.enabled_by_default.",
+                            "type": "boolean"
+                        },
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "types.Document": {
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "string"
+                },
+                "callback_url": {
+                    "description": "CallbackURL, when set, receives a POST once the document reaches a\nterminal status (§4.7).",
+                    "type": "string"
+                },
+                "case_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
                     "type": "string"
                 },
                 "engine": {
@@ -4652,9 +5898,6 @@
                 },
                 "gen": {
                     "type": "integer"
-                },
-                "graph_status": {
-                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -4711,13 +5954,16 @@
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "wiki_status": {
+                    "type": "string"
                 }
             }
         },
         "types.DocumentBrief": {
             "type": "object",
             "properties": {
-                "doc_type": {
+                "case_id": {
                     "type": "string"
                 },
                 "file_name": {
@@ -4743,6 +5989,72 @@
                     "type": "string"
                 },
                 "title": {
+                    "type": "string"
+                },
+                "wiki_status": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.DocumentCallback": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "delivered_at": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "event": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.CallbackAttempt"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_attempt_at": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_status_code": {
+                    "type": "integer"
+                },
+                "max_attempts": {
+                    "type": "integer"
+                },
+                "next_attempt_at": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "run": {
+                    "type": "integer"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }
@@ -4821,138 +6133,9 @@
                 }
             }
         },
-        "types.Entity": {
-            "type": "object",
-            "properties": {
-                "aliases": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "conflict": {
-                    "type": "boolean"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "kb_id": {
-                    "type": "string"
-                },
-                "mentions": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "summary": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                },
-                "wiki_slug": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.EntityTypeDef": {
-            "type": "object",
-            "properties": {
-                "attributes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.AttributeDef"
-                    }
-                },
-                "description": {
-                    "type": "string"
-                },
-                "identity": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "resolve_scope": {
-                    "description": "ResolveScope lists document metadata keys that must match for two\nmentions to merge (e.g. ma_ho_so).",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "types.ExtractionSettings": {
-            "type": "object",
-            "properties": {
-                "examples": {
-                    "type": "array",
-                    "items": {}
-                },
-                "instructions": {
-                    "type": "string"
-                },
-                "unit": {
-                    "description": "section | page",
-                    "type": "string"
-                }
-            }
-        },
-        "types.GraphSchema": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "entity_types": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.EntityTypeDef"
-                    }
-                },
-                "extraction": {
-                    "$ref": "#/definitions/types.ExtractionSettings"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "model": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "relation_types": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.RelationTypeDef"
-                    }
-                },
-                "version": {
-                    "type": "integer"
-                }
-            }
-        },
         "types.KBConfig": {
             "type": "object",
             "properties": {
-                "graph_enabled": {
-                    "type": "boolean"
-                },
-                "graph_schema": {
-                    "type": "string"
-                },
                 "parser_engine": {
                     "type": "string"
                 }
@@ -4970,13 +6153,11 @@
                 "description": {
                     "type": "string"
                 },
-                "graph_schema_id": {
-                    "type": "string"
-                },
                 "id": {
                     "type": "string"
                 },
                 "is_temporary": {
+                    "description": "IsTemporary marks the chat-attachment KBs of spec 0.4; none are\ncreated since cases replaced them (§8.2).",
                     "type": "boolean"
                 },
                 "metadata_schema": {
@@ -5007,38 +6188,6 @@
                 },
                 "snippet": {
                     "type": "string"
-                }
-            }
-        },
-        "types.Mention": {
-            "type": "object",
-            "properties": {
-                "document_id": {
-                    "type": "string"
-                },
-                "entity_id": {
-                    "type": "string"
-                },
-                "evidence": {
-                    "type": "string"
-                },
-                "file_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "relation_id": {
-                    "type": "string"
-                },
-                "section_id": {
-                    "type": "string"
-                },
-                "source_spans": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.SourceSpan"
-                    }
                 }
             }
         },
@@ -5110,50 +6259,6 @@
                 }
             }
         },
-        "types.Relation": {
-            "type": "object",
-            "properties": {
-                "attributes": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "id": {
-                    "type": "string"
-                },
-                "source_id": {
-                    "type": "string"
-                },
-                "target_id": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "types.RelationTypeDef": {
-            "type": "object",
-            "properties": {
-                "attributes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.AttributeDef"
-                    }
-                },
-                "description": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "source": {
-                    "type": "string"
-                },
-                "target": {
-                    "type": "string"
-                }
-            }
-        },
         "types.SearchHit": {
             "type": "object",
             "properties": {
@@ -5162,6 +6267,12 @@
                     "items": {
                         "$ref": "#/definitions/types.BBox"
                     }
+                },
+                "case_code": {
+                    "type": "string"
+                },
+                "case_id": {
+                    "type": "string"
                 },
                 "citation_id": {
                     "type": "string"
@@ -5205,12 +6316,28 @@
                 },
                 "snippet": {
                     "type": "string"
+                },
+                "via": {
+                    "description": "Via is \"wiki\" when the hit came from a wiki footnote, \"raw\" when it was\nread from the source pages, \"keyword\" for full-text hits.",
+                    "type": "string"
+                },
+                "wiki_pages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
         "types.SearchRequest": {
             "type": "object",
             "properties": {
+                "case_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "document_ids": {
                     "type": "array",
                     "items": {
@@ -5272,6 +6399,12 @@
                 "candidate_docs": {
                     "type": "integer"
                 },
+                "cases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "dropped_hits": {
                     "type": "integer"
                 },
@@ -5286,6 +6419,12 @@
                 },
                 "mode": {
                     "type": "string"
+                },
+                "raw_refs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "selected_docs": {
                     "type": "array",
@@ -5302,47 +6441,22 @@
                         }
                     }
                 },
+                "stale_footnotes": {
+                    "type": "integer"
+                },
                 "truncated": {
                     "type": "boolean"
-                }
-            }
-        },
-        "types.SourceSpan": {
-            "type": "object",
-            "properties": {
-                "bbox": {
-                    "$ref": "#/definitions/types.BBox"
                 },
-                "block_nos": {
+                "wiki_pages": {
                     "type": "array",
                     "items": {
+                        "type": "string"
+                    }
+                },
+                "wiki_versions": {
+                    "type": "object",
+                    "additionalProperties": {
                         "type": "integer"
-                    }
-                },
-                "line_from": {
-                    "type": "integer"
-                },
-                "line_to": {
-                    "type": "integer"
-                },
-                "page": {
-                    "type": "integer"
-                }
-            }
-        },
-        "types.Subgraph": {
-            "type": "object",
-            "properties": {
-                "entities": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.Entity"
-                    }
-                },
-                "relations": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.Relation"
                     }
                 }
             }
@@ -5398,6 +6512,216 @@
                 }
             }
         },
+        "types.WikiAttrValue": {
+            "type": "object",
+            "properties": {
+                "citation_id": {
+                    "type": "string"
+                },
+                "footnotes": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "value": {}
+            }
+        },
+        "types.WikiAttribute": {
+            "type": "object",
+            "properties": {
+                "conflict": {
+                    "type": "boolean"
+                },
+                "footnotes": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiAttrValue"
+                    }
+                },
+                "value": {}
+            }
+        },
+        "types.WikiEntityType": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.AttributeDef"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "identity": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WikiFootnote": {
+            "type": "object",
+            "properties": {
+                "citation_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "gen": {
+                    "type": "integer"
+                },
+                "line_from": {
+                    "type": "integer"
+                },
+                "line_to": {
+                    "type": "integer"
+                },
+                "n": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "quote": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WikiLink": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "footnote_n": {
+                    "type": "integer"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "from_title": {
+                    "type": "string"
+                },
+                "relation": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                },
+                "to_title": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WikiLintIssue": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string"
+                },
+                "detail": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "found_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "page_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "pages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WikiLogEntry": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "type": "string"
+                },
+                "at": {
+                    "type": "string"
+                },
+                "case_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "llm_calls": {
+                    "type": "integer"
+                },
+                "op": {
+                    "type": "string"
+                },
+                "pages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ref": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "tokens_in": {
+                    "type": "integer"
+                },
+                "tokens_out": {
+                    "type": "integer"
+                }
+            }
+        },
         "types.WikiPage": {
             "type": "object",
             "properties": {
@@ -5407,44 +6731,72 @@
                         "type": "string"
                     }
                 },
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.WikiAttribute"
+                    }
+                },
+                "case_id": {
+                    "type": "string"
+                },
                 "content": {
                     "type": "string"
                 },
-                "entity_id": {
+                "created_at": {
                     "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "footnotes": {
+                    "description": "Filled on single-page reads.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiFootnote"
+                    }
                 },
                 "id": {
                     "type": "string"
                 },
-                "in_links": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                "identity_key": {
+                    "type": "string"
                 },
-                "kb_id": {
+                "kind": {
                     "type": "string"
                 },
                 "last_edit_source": {
                     "type": "string"
                 },
-                "out_links": {
+                "links_in": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/types.WikiLink"
                     }
                 },
-                "page_type": {
+                "links_out": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiLink"
+                    }
+                },
+                "ord": {
+                    "type": "integer"
+                },
+                "proposed_attributes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.WikiAttribute"
+                    }
+                },
+                "proposed_content": {
                     "type": "string"
                 },
                 "slug": {
                     "type": "string"
-                },
-                "source_refs": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "summary": {
                     "type": "string"
@@ -5457,6 +6809,272 @@
                 },
                 "version": {
                     "type": "integer"
+                }
+            }
+        },
+        "types.WikiPageRef": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "proposed": {
+                    "type": "boolean"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WikiPending": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "wiki_status": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WikiRelationType": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.AttributeDef"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "from": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "types.WikiSchema": {
+            "type": "object",
+            "properties": {
+                "conventions": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "entity_types": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiEntityType"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "limits": {
+                    "type": "object",
+                    "properties": {
+                        "max_pages": {
+                            "type": "integer"
+                        },
+                        "max_pages_touched": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiRelationType"
+                    }
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "types.WikiTOC": {
+            "type": "object",
+            "properties": {
+                "case": {
+                    "$ref": "#/definitions/types.Case"
+                },
+                "documents_total": {
+                    "type": "integer"
+                },
+                "open_lint_issues": {
+                    "type": "integer"
+                },
+                "pages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiPageRef"
+                    }
+                },
+                "pending": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiPending"
+                    }
+                }
+            }
+        },
+        "wiki.EditRequest": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.WikiAttribute"
+                    }
+                },
+                "content": {
+                    "type": "string"
+                },
+                "footnotes": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "wiki.EditResult": {
+            "type": "object",
+            "properties": {
+                "invalid_footnotes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "page": {
+                    "$ref": "#/definitions/types.WikiPage"
+                }
+            }
+        },
+        "wiki.GraphNode": {
+            "type": "object",
+            "properties": {
+                "entity_type": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "wiki.LinkGraph": {
+            "type": "object",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.WikiLink"
+                    }
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/wiki.GraphNode"
+                    }
+                }
+            }
+        },
+        "wiki.NoteRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "message_id": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "wiki.TestResult": {
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "llm_calls": {
+                    "type": "integer"
+                },
+                "relations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
                 }
             }
         }

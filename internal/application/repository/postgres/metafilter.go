@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/thanhenti/bepaylot/internal/types"
@@ -63,7 +64,16 @@ func metaFilterSQL(col string, f types.MetadataFilter, schema *types.MetadataSch
 				}
 				// Containment matches scalars and array members alike.
 				a.vals = a.vals[:len(a.vals)-1] // key not needed
-				parts = append(parts, fmt.Sprintf("%s @> %s::jsonb", col, a.add(string(b))))
+				expr := fmt.Sprintf("%s @> %s::jsonb", col, a.add(string(b)))
+				// A code sent as "123" also matches a stored 123 and vice versa.
+				if alt, ok := altScalar(arg); ok {
+					ab, err := json.Marshal(map[string]any{k: alt})
+					if err != nil {
+						return "", err
+					}
+					expr = fmt.Sprintf("(%s OR %s @> %s::jsonb)", expr, col, a.add(string(ab)))
+				}
+				parts = append(parts, expr)
 			case "ne":
 				parts = append(parts, fmt.Sprintf("%s IS DISTINCT FROM %s", text, a.add(scalarText(arg))))
 			case "in":
@@ -109,6 +119,22 @@ func metaFilterSQL(col string, f types.MetadataFilter, schema *types.MetadataSch
 		}
 	}
 	return strings.Join(parts, " AND "), nil
+}
+
+// altScalar returns the other JSON type of a number-like scalar: the number
+// for a string that round-trips ("123", not "0123"), the string for a number.
+func altScalar(v any) (any, bool) {
+	switch x := v.(type) {
+	case string:
+		n, err := strconv.ParseFloat(x, 64)
+		if err != nil || scalarText(n) != x {
+			return nil, false
+		}
+		return n, true
+	case float64, int, int64:
+		return scalarText(x), true
+	}
+	return nil, false
 }
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}`)

@@ -1,0 +1,46 @@
+# Wiki schema cho giấy chứng nhận đăng ký hộ kinh doanh, chuyển từ graph
+# schema ho_kinh_doanh của bản 0.4 (§6.7): entity là trang wiki, quan hệ là
+# liên kết có kiểu.
+name: ho_kinh_doanh
+version: 1
+language: vi
+description: Giấy chứng nhận đăng ký hộ kinh doanh
+entity_types:
+  - name: ho_kinh_doanh
+    title: Hộ kinh doanh
+    identity: [ma_so]
+    attributes:
+      - { name: ten, type: string, required: true }
+      - { name: ma_so, type: string, pattern: "^[0-9]{9,13}$" }
+      - { name: von_kinh_doanh, type: money }
+      - { name: dia_chi, type: string }
+  - name: ca_nhan
+    title: Cá nhân
+    identity: [so_dinh_danh]
+    attributes:
+      - { name: ho_ten, type: string, required: true }
+      - { name: so_dinh_danh, type: string }
+      - { name: ngay_sinh, type: date }
+      - { name: gioi_tinh, type: string }
+      - { name: noi_thuong_tru, type: string }
+  - name: nganh_nghe
+    title: Ngành nghề
+    identity: [ma_nganh]
+    attributes:
+      - { name: ten, type: string }
+      - { name: ma_nganh, type: string }
+  - name: co_quan
+    title: Cơ quan
+    attributes:
+      - { name: ten, type: string, required: true }
+relations:
+  - { name: chu_ho, from: ca_nhan, to: ho_kinh_doanh }
+  - { name: kinh_doanh, from: ho_kinh_doanh, to: nganh_nghe, attributes: [ { name: la_nganh_chinh, type: bool } ] }
+  - { name: cap_boi, from: ho_kinh_doanh, to: co_quan, attributes: [ { name: ngay_cap, type: date } ] }
+topics:
+  - Ngành nghề kinh doanh
+conventions: |
+  Viết tiếng Việt, câu ngắn, trung lập. Chỉ ghi thông tin có trong văn bản, không suy đoán.
+  Mã ngành nằm trong cột "Mã ngành"; "(Chính)" nghĩa là ngành chính.
+  Mọi con số, mã số, ngày tháng phải có chú thích về dòng gốc.
+limits: { max_pages_touched: 15, max_pages: 200 }

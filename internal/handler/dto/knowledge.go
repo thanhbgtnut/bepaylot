@@ -3,7 +3,10 @@ package dto
 import (
 	"encoding/json"
 
+	"github.com/google/uuid"
+
 	"github.com/thanhenti/bepaylot/internal/types"
+	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // CreateKBRequest is the body of POST /v1/kbs.
@@ -42,6 +45,7 @@ type MetadataUpdateRequest struct {
 // BulkMetadataRequest is the body of POST /v1/kbs/{id}/documents/metadata/bulk-update.
 type BulkMetadataRequest struct {
 	Filter struct {
+		CaseID      string               `json:"case_id,omitempty"`
 		Metadata    types.MetadataFilter `json:"metadata,omitempty"`
 		DocumentIDs []string             `json:"document_ids,omitempty"`
 		BatchID     string               `json:"batch_id,omitempty"`
@@ -84,8 +88,10 @@ type MarkdownResponse struct {
 
 // DocumentSearchRequest is the body of POST /v1/documents/{id}/search.
 type DocumentSearchRequest struct {
-	Query string `json:"query"`
-	Mode  string `json:"mode,omitempty"` // keyword (default) | reasoning
+	Query    string `json:"query"`
+	Mode     string `json:"mode,omitempty"` // keyword (default) | reasoning
+	PageFrom int    `json:"page_from,omitempty"`
+	PageTo   int    `json:"page_to,omitempty"`
 }
 
 // DocumentSearchResponse groups matches by page.
@@ -116,36 +122,68 @@ type EngineInfo struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// EntityList lists graph entities.
-type EntityList struct {
-	Data []types.Entity `json:"data"`
+// CaseList is the response of GET /v1/kbs/{id}/cases.
+type CaseList struct {
+	Data       []types.Case `json:"data"`
+	NextCursor string       `json:"next_cursor,omitempty"`
 }
 
-// WikiPageList lists wiki pages.
-type WikiPageList struct {
-	Data []types.WikiPage `json:"data"`
+// CaseConflict is the 409 body of POST /v1/kbs/{id}/cases for a code that
+// already exists.
+type CaseConflict struct {
+	ErrorResponse
+	Case types.Case `json:"case"`
 }
 
-// WikiEditRequest is the body of PUT /v1/kbs/{id}/wiki/pages/{slug}.
-type WikiEditRequest struct {
-	Title   string `json:"title,omitempty"`
-	Summary string `json:"summary,omitempty"`
+// CaseTypeList lists the loaded case types.
+type CaseTypeList struct {
+	Data []types.CaseType `json:"data"`
+}
+
+// WikiIndexResponse is the wiki index as given to the LLM.
+type WikiIndexResponse struct {
 	Content string `json:"content"`
 }
 
-// SchemaList lists graph schemas.
+// WikiRevisionList lists page revisions, newest first.
+type WikiRevisionList struct {
+	Data []types.WikiRevision `json:"data"`
+}
+
+// WikiProposalRequest accepts or rejects an ingest proposal.
+type WikiProposalRequest struct {
+	Action string `json:"action"` // accept | reject
+}
+
+// WikiSearchResponse lists full-text matches in a case wiki.
+type WikiSearchResponse struct {
+	Data []interfaces.WikiSearchHit `json:"data"`
+}
+
+// WikiLogList lists wiki log lines, newest first.
+type WikiLogList struct {
+	Data []types.WikiLogEntry `json:"data"`
+}
+
+// WikiLintList lists lint issues.
+type WikiLintList struct {
+	Data []types.WikiLintIssue `json:"data"`
+}
+
+// WikiLintPatch changes the status of a lint issue.
+type WikiLintPatch struct {
+	Status string `json:"status"` // fixed | dismissed | open
+}
+
+// SchemaList lists wiki schemas.
 type SchemaList struct {
-	Data []types.GraphSchema `json:"data"`
+	Data []types.WikiSchema `json:"data"`
 }
 
-// SchemaTestRequest is the body of POST /v1/graph/schemas/{name}/test.
+// SchemaTestRequest is the body of POST /v1/wiki/schemas/{name}/test.
 type SchemaTestRequest struct {
-	Text string `json:"text"`
-}
-
-// RebuildResponse reports how many documents were queued.
-type RebuildResponse struct {
-	Queued int `json:"queued"`
+	Text       string `json:"text,omitempty"`
+	DocumentID string `json:"document_id,omitempty"`
 }
 
 // QueueStat is one queue's depth.
@@ -188,4 +226,15 @@ type DeadLetterList struct {
 // OK is a generic success body.
 type OK struct {
 	OK bool `json:"ok"`
+}
+
+// CallbackList is the response of GET /v1/documents/{id}/callbacks.
+type CallbackList struct {
+	Data []types.DocumentCallback `json:"data"`
+}
+
+// RetryCallbackRequest is the optional body of POST /v1/documents/{id}/callbacks/retry.
+type RetryCallbackRequest struct {
+	// CallbackID selects a delivery; empty retries the latest one.
+	CallbackID uuid.UUID `json:"callback_id,omitempty"`
 }

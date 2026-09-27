@@ -1,0 +1,20 @@
+# Loại case "hồ sơ thanh toán" (§6.2). Chỉ chứa quy tắc dữ liệu: không có
+# workflow, prompt, danh sách trường cần bóc tách hay danh sách rule — những
+# thứ đó nằm trong tin nhắn người dùng gửi agent.
+name: thanh_toan
+title: Hồ sơ thanh toán
+code:
+  pattern: '^RT\d{6}$'          # mã không khớp → 422
+  normalize: upper_trim          # " rt112233" → "RT112233"
+case_metadata_schema:            # metadata của chính case
+  fields:
+    - { key: so_tien, type: number, description: "Số tiền đề nghị thanh toán" }
+    - { key: don_vi, type: string, description: "Đơn vị đề nghị" }
+metadata_schema:                 # metadata của file trong case; thay metadata_schema của KB
+  fields:
+    - { key: loai_giay_to, type: string, description: "Loại giấy tờ (tuỳ chọn, do người upload gán)" }
+parser:
+  engine: ""                     # rỗng = parser_engine của KB, rồi parser.default_engine; vd turboocr_vlm
+wiki:
+  enabled: true
+  schema: thanh_toan             # configs/wiki_schemas/thanh_toan.yaml

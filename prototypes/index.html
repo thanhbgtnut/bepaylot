@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BePaylot · Tài liệu</title>
+<link rel="stylesheet" href="assets/app.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="assets/api.js"></script>
+<style>
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type=search] { width: 260px; }
+  .fname { font-weight: 600; max-width: 340px; }
+  .doc-title { font-size: 12.5px; color: var(--muted); max-width: 340px; }
+
+  /* detail */
+  .detail { display: flex; flex-direction: column; height: 100%; gap: 14px; }
+  .dhead { padding: 14px 16px; display: flex; gap: 14px; align-items: flex-start; }
+  .dhead .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .dhead h1 { font-size: 17px; }
+  .dgrid { flex: 1; min-height: 0; display: grid; grid-template-columns: 210px minmax(0, 1fr) minmax(340px, 440px); gap: 14px; }
+  .dgrid > .card { min-height: 0; display: flex; flex-direction: column; }
+  .scroll { overflow: auto; min-height: 0; flex: 1; }
+  .plist a { display: block; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+  .plist a:hover { background: var(--surface-2); text-decoration: none; }
+  .plist a.active { background: var(--accent-soft); }
+  .plist .pn { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .plist .pv { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .viewer { padding: 12px; }
+  .lines .ln { display: grid; grid-template-columns: 38px 1fr; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .lines .ln:hover, .lines .ln.hl { background: var(--warn-soft); }
+  .lines .no { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 2px; }
+  .lines .tx { overflow-wrap: anywhere; }
+  .lines .ocr { font-size: 12px; color: var(--muted); }
+  .lines .low { text-decoration: underline wavy var(--warn); text-underline-offset: 3px; }
+  .blk { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .hitpage { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .hitline { display: block; padding: 4px 8px; border-radius: 6px; color: var(--text); font-size: 13px; }
+  .hitline:hover { background: var(--surface-2); text-decoration: none; }
+  .tree a { display: flex; gap: 8px; padding: 5px 12px; color: var(--text); }
+  .tree a:hover { background: var(--surface-2); text-decoration: none; }
+  .tree .pr { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+  .drop { border: 2px dashed var(--border); border-radius: 12px; padding: 26px; text-align: center; color: var(--muted); cursor: pointer; transition: .15s; }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .flist { display: flex; flex-direction: column; gap: 4px; }
+  .flist .f { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: var(--surface-2); border-radius: 8px; font-size: 13px; }
+  .metarow { display: grid; grid-template-columns: 1fr 1.4fr 34px; gap: 6px; }
+  .bar { height: 6px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+  @media (max-width: 1200px) { .dgrid { grid-template-columns: 180px minmax(0, 1fr); } .dgrid > .side { grid-column: 1 / -1; min-height: 420px; } }
+  @media (max-width: 760px) { .dgrid { grid-template-columns: 1fr; } .plist { max-height: 180px; } }
+</style>
+</head>
+<body>
+<div id="page"></div>
+
+<script>
+const { api, esc, $, $$, h, fmtDate, fmtSize, statusBadge, sourceBadge, metaChips, TERMINAL, toast, fail, renderMarkdown, pageView, dialog, Shell, upload, blobURL, debounce } = BP;
+const root = document.getElementById('page');
+let KB = null;
+let pollTimer = null;
+
+Shell.init({
+  page: 'docs', title: 'Tài liệu',
+  actions: `<button class="btn primary" id="btnUpload">${BP.ICONS.plus} Tải file lên</button>`,
+  onKB: (kb) => { KB = kb; route(); },
+});
+document.addEventListener('click', (e) => { if (e.target.closest('#btnUpload')) openUpload(); });
+window.addEventListener('hashchange', route);
+
+function params() { return new URLSearchParams(location.hash.slice(1)); }
+function route() {
+  clearTimeout(pollTimer);
+  const p = params();
+  if (p.get('doc')) showDetail(p.get('doc'), +p.get('page') || 1, (p.get('hl') || '').split(',').filter(Boolean).map(Number));
+  else showList();
+}
+
+// ================================================================ list
+const listState = { q: '', status: '', meta: '' };
+async function showList() {
+  if (!KB) {
+    root.innerHTML = `<div class="empty"><div class="big">📂</div>Chưa có knowledge base. Bấm <b>+</b> cạnh ô chọn KB để tạo mới.</div>`;
+    return;
+  }
+  if (!$('#docTable', root)) {
+    root.innerHTML = `
+      <div class="toolbar">
+        <input type="search" id="q" placeholder="Tìm theo tên file, tiêu đề, metadata…" value="${esc(listState.q)}">
+        <select id="status">
+          <option value="">Mọi trạng thái</option>
+          <option value="queued,splitting,parsing,assembling,indexing">Đang xử lý</option>
+          <option value="completed,enriching">Hoàn tất</option>
+          <option value="partial">Một phần</option>
+          <option value="failed">Lỗi</option>
+        </select>
+        <input type="text" id="meta" placeholder="Lọc metadata: group_code=G1, loai=GCN" style="width:280px" value="${esc(listState.meta)}">
+        <div style="flex:1"></div>
+        <span class="muted small" id="count"></span>
+        <button class="btn icon" id="refresh" title="Làm mới">⟳</button>
+      </div>
+      <div class="card" style="overflow:auto">
+        <table class="list" id="docTable">
+          <thead><tr><th>File</th><th>Trạng thái</th><th>Trang</th><th>Engine</th><th>Metadata</th><th>Tạo lúc</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div id="more" style="padding:10px;text-align:center"></div>
+      </div>`;
+    $('#status', root).value = listState.status;
+    const reload = debounce(() => loadDocs(), 250);
+    $('#q', root).oninput = (e) => { listState.q = e.target.value; reload(); };
+    $('#status', root).onchange = (e) => { listState.status = e.target.value; loadDocs(); };
+    $('#meta', root).onchange = (e) => { listState.meta = e.target.value; loadDocs(); };
+    $('#refresh', root).onclick = () => loadDocs();
+  }
+  loadDocs();
+}
+
+function parseMetaFilter(s) {
+  const out = {};
+  for (const part of s.split(',')) {
+    const [k, ...rest] = part.split('=');
+    if (!k.trim() || !rest.length) continue;
+    out[k.trim()] = rest.join('=').trim();
+  }
+  return out;
+}
+
+let docs = [];
+async function loadDocs(before) {
+  clearTimeout(pollTimer);
+  const tbody = $('#docTable tbody', root);
+  if (!tbody) return;
+  const qs = new URLSearchParams({ limit: 100 });
+  if (listState.q) qs.set('q', listState.q);
+  if (listState.status) qs.set('status', listState.status);
+  const mf = parseMetaFilter(listState.meta);
+  if (Object.keys(mf).length) qs.set('metadata', JSON.stringify(mf));
+  if (before) qs.set('before', before);
+  if (!before && !docs.length) tbody.innerHTML = `<tr><td colspan="6" class="empty"><span class="spinner"></span></td></tr>`;
+  try {
+    const res = await api(`/kbs/${KB.id}/documents?${qs}`);
+    docs = before ? docs.concat(res.data || []) : (res.data || []);
+    renderRows(tbody);
+    const more = $('#more', root);
+    more.innerHTML = res.next_cursor ? `<button class="btn sm">Tải thêm</button>` : '';
+    if (res.next_cursor) more.firstChild.onclick = () => loadDocs(res.next_cursor);
+    if (docs.some((d) => !TERMINAL.has(d.status))) pollTimer = setTimeout(() => loadDocs(), 3000);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderRows(tbody) {
+  $('#count', root).textContent = docs.length + ' file';
+  if (!docs.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="big">🗂️</div>Chưa có file nào khớp. <a href="#" onclick="openUpload();return false">Tải file lên</a></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = docs.map((d) => {
+    const pct = d.page_count ? Math.round(100 * (d.pages_done + d.pages_failed) / d.page_count) : 0;
+    const busy = !TERMINAL.has(d.status) && d.status !== 'enriching';
+    return `<tr class="click" data-id="${d.id}">
+      <td><div class="fname ellipsis" title="${esc(d.file_name)}">${esc(d.file_name)}</div>
+          ${d.title ? `<div class="doc-title ellipsis" title="${esc(d.title)}">${esc(d.title)}</div>` : ''}</td>
+      <td><div class="stack" style="gap:4px">${statusBadge(d.status)}
+          ${busy && d.page_count ? `<div class="progress" title="${pct}%"><i style="width:${pct}%"></i></div>` : ''}
+          ${d.error ? `<span class="small" style="color:var(--err)" title="${esc(d.error)}">${esc(d.error.slice(0, 40))}</span>` : ''}</div></td>
+      <td>${d.page_count || '—'}${d.pages_failed ? ` <span class="badge err">${d.pages_failed} lỗi</span>` : ''}</td>
+      <td>${d.engine ? `<span class="chip mono">${esc(d.engine)}</span>` : ''}</td>
+      <td><div class="row wrap" style="gap:4px">${metaChips(d.metadata)}</div></td>
+      <td class="muted small" style="white-space:nowrap">${fmtDate(d.created_at)}<br>${fmtSize(d.size_bytes)}</td>
+    </tr>`;
+  }).join('');
+  $$('tr[data-id]', tbody).forEach((tr) => tr.onclick = () => { location.hash = 'doc=' + tr.dataset.id; });
+}
+
+// ================================================================ detail
+const view = { doc: null, pages: [], page: null, pageNo: 1, hl: [], tab: 'lines', showBoxes: true };
+
+async function showDetail(id, pageNo, hl) {
+  const same = view.doc && view.doc.id === id && $('.detail', root);
+  view.pageNo = pageNo; view.hl = hl;
+  if (!same) {
+    view.doc = null; view.pages = []; view.tab = hl.length ? 'lines' : view.tab;
+    root.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  }
+  try {
+    const [doc, pages] = await Promise.all([api(`/documents/${id}`), api(`/documents/${id}/pages`)]);
+    view.doc = doc; view.pages = pages.data || [];
+  } catch (e) {
+    root.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}<br><br><a href="#">← Quay lại danh sách</a></div>`;
+    return;
+  }
+  if (!same) renderDetailFrame();
+  renderHeader();
+  renderPageList();
+  loadPage(view.pageNo);
+  if (!TERMINAL.has(view.doc.status)) pollTimer = setTimeout(() => refreshDetail(id), 3000);
+}
+
+async function refreshDetail(id) {
+  if (params().get('doc') !== id) return;
+  try {
+    const [doc, pages] = await Promise.all([api(`/documents/${id}`), api(`/documents/${id}/pages`)]);
+    const wasDone = view.page && view.page.status === 'done';
+    view.doc = doc; view.pages = pages.data || [];
+    renderHeader(); renderPageList();
+    const cur = view.pages.find((p) => p.page_no === view.pageNo);
+    if (cur && cur.status === 'done' && !wasDone) loadPage(view.pageNo);
+  } catch (e) { /* keep polling */ }
+  if (!TERMINAL.has(view.doc.status)) pollTimer = setTimeout(() => refreshDetail(id), 3000);
+}
+
+function renderDetailFrame() {
+  root.innerHTML = `
+    <div class="detail">
+      <div class="card dhead" id="dhead"></div>
+      <div class="dgrid">
+        <div class="card"><div class="card-h"><b>Trang</b><span class="muted small" id="pcount"></span></div><div class="scroll plist" id="plist"></div></div>
+        <div class="card">
+          <div class="card-h">
+            <button class="btn sm icon" id="prev" title="Trang trước">‹</button>
+            <b id="ptitle">Trang</b>
+            <button class="btn sm icon" id="next" title="Trang sau">›</button>
+            <span id="pmeta" class="row" style="gap:6px"></span>
+            <div style="flex:1"></div>
+            <label class="row small"><input type="checkbox" id="boxes" ${view.showBoxes ? 'checked' : ''}> Khung toạ độ</label>
+          </div>
+          <div class="scroll viewer" id="viewer"></div>
+        </div>
+        <div class="card side">
+          <div class="tabs" id="tabs">
+            <button data-tab="lines">Dòng OCR</button><button data-tab="md">Markdown</button>
+            <button data-tab="blocks">Blocks</button><button data-tab="find">Tìm</button><button data-tab="tree">Mục lục</button>
+          </div>
+          <div class="scroll" id="panel"></div>
+        </div>
+      </div>
+    </div>`;
+  $('#prev', root).onclick = () => goPage(view.pageNo - 1);
+  $('#next', root).onclick = () => goPage(view.pageNo + 1);
+  $('#boxes', root).onchange = (e) => { view.showBoxes = e.target.checked; const pv = $('.pageview', root); pv && pv.classList.toggle('nobox', !view.showBoxes); };
+  $$('#tabs button', root).forEach((b) => b.onclick = () => { view.tab = b.dataset.tab; renderPanel(); });
+}
+
+function goPage(n, hl = []) {
+  if (!view.doc || n < 1 || n > view.doc.page_count) return;
+  const qs = new URLSearchParams({ doc: view.doc.id, page: n });
+  if (hl.length) qs.set('hl', hl.join(','));
+  location.hash = qs.toString();
+}
+
+function renderHeader() {
+  const d = view.doc;
+  const pct = Math.round((d.progress || 0) * 100);
+  $('#dhead', root).innerHTML = `
+    <a class="btn icon" href="#" title="Quay lại">←</a>
+    <div class="info">
+      <div class="row wrap"><h1 class="ellipsis">${esc(d.file_name)}</h1>${statusBadge(d.status)}
+        ${!TERMINAL.has(d.status) ? `<span class="muted small">${pct}% · ${d.pages_done}/${d.page_count} trang</span>` : ''}</div>
+      ${d.title ? `<div><b>${esc(d.title)}</b>${d.doc_type ? ` <span class="badge">${esc(d.doc_type)}</span>` : ''}</div>` : ''}
+      ${d.summary ? `<div class="muted small">${esc(d.summary)}</div>` : ''}
+      <div class="row wrap" style="gap:6px">
+        <span class="chip">${d.page_count} trang</span><span class="chip">${fmtSize(d.size_bytes)}</span>
+        ${d.engine ? `<span class="chip mono">${esc(d.engine)}</span>` : ''}
+        <span class="chip">parse: <b>${esc(d.parse_status)}</b></span><span class="chip">index: <b>${esc(d.index_status)}</b></span>
+        <span class="chip">graph: <b>${esc(d.graph_status)}</b></span>
+        ${metaChips(d.metadata)}
+      </div>
+      ${d.error ? `<div class="small" style="color:var(--err)">${esc(d.error)}</div>` : ''}
+      ${(d.failed_pages || []).length ? `<div class="small" style="color:var(--err)">Trang lỗi: ${d.failed_pages.map((f) => `<a href="#" data-goto="${f.page_no}" title="${esc(f.error)}">${f.page_no}</a>`).join(', ')}</div>` : ''}
+    </div>
+    <div class="row">
+      <button class="btn sm" id="dl">Tải file gốc</button>
+      <button class="btn sm" id="fullmd">Markdown toàn văn</button>
+      <button class="btn sm" id="reparse">Parse lại</button>
+      <button class="btn sm danger" id="del">Xoá</button>
+    </div>`;
+  $$('[data-goto]', root).forEach((a) => a.onclick = (e) => { e.preventDefault(); goPage(+a.dataset.goto); });
+  $('#dl', root).onclick = downloadOriginal;
+  $('#fullmd', root).onclick = showFullMarkdown;
+  $('#reparse', root).onclick = async () => {
+    if (!confirm('Parse lại toàn bộ tài liệu này?')) return;
+    try { await api(`/documents/${d.id}/reparse`, { method: 'POST', body: {} }); toast('Đã đưa vào hàng đợi parse lại'); showDetail(d.id, view.pageNo, []); } catch (e) { fail(e); }
+  };
+  $('#del', root).onclick = async () => {
+    if (!confirm(`Xoá "${d.file_name}"? Không thể hoàn tác.`)) return;
+    try { await api(`/documents/${d.id}`, { method: 'DELETE' }); toast('Đã xoá'); location.hash = ''; } catch (e) { fail(e); }
+  };
+}
+
+async function downloadOriginal() {
+  try {
+    const res = await api(`/documents/${view.doc.id}/file`, { raw: true });
+    const url = URL.createObjectURL(await res.blob());
+    const a = h(`<a href="${url}" download="${esc(view.doc.file_name)}"></a>`);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (e) { fail(e); }
+}
+
+async function showFullMarkdown() {
+  const d = dialog(`<div class="dh"><h2>Markdown toàn văn</h2><button class="btn icon" data-close>✕</button></div><div class="db" id="mdbody"><span class="spinner"></span></div>`);
+  d.style.width = 'min(900px, calc(100vw - 32px))';
+  try {
+    const r = await api(`/documents/${view.doc.id}/markdown`);
+    const md = (r.markdown || '').replace(/<!-- page:(\d+) -->/g, '\n\n---\n\n**— Trang $1 —**\n\n');
+    const body = $('#mdbody', d); body.innerHTML = ''; body.appendChild(renderMarkdown(md));
+  } catch (e) { $('#mdbody', d).textContent = e.message; }
+}
+
+function renderPageList() {
+  $('#pcount', root).textContent = view.pages.length ? `(${view.pages.length})` : '';
+  const html = view.pages.map((p) => {
+    const st = p.status === 'done' ? (p.is_blank ? '<span class="badge">trắng</span>' : sourceBadge(p.text_source))
+      : p.status === 'failed' ? '<span class="badge err">lỗi</span>' : `<span class="badge info">${esc(p.status)}</span>`;
+    return `<a href="#" data-p="${p.page_no}" class="${p.page_no === view.pageNo ? 'active' : ''}">
+      <div class="pn">Trang ${p.page_no} ${st}</div>
+      <div class="pv">${esc((p.text_plain || '').slice(0, 120)) || '<i>—</i>'}</div></a>`;
+  }).join('');
+  const list = $('#plist', root);
+  list.innerHTML = html || '<div class="empty small">Chưa có trang</div>';
+  $$('a[data-p]', list).forEach((a) => a.onclick = (e) => { e.preventDefault(); goPage(+a.dataset.p); });
+  const act = $('a.active', list); act && act.scrollIntoView({ block: 'nearest' });
+}
+
+async function loadPage(n) {
+  view.pageNo = n;
+  $$('#plist a', root).forEach((a) => a.classList.toggle('active', +a.dataset.p === n));
+  $('#ptitle', root).textContent = `Trang ${n} / ${view.doc.page_count}`;
+  $('#prev', root).disabled = n <= 1; $('#next', root).disabled = n >= view.doc.page_count;
+  const viewer = $('#viewer', root);
+  viewer.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  try {
+    view.page = await api(`/documents/${view.doc.id}/pages/${n}`);
+  } catch (e) {
+    view.page = null;
+    viewer.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    $('#pmeta', root).innerHTML = '';
+    renderPanel();
+    return;
+  }
+  const p = view.page;
+  $('#pmeta', root).innerHTML = `${sourceBadge(p.text_source)}
+    ${p.engine ? `<span class="chip mono">${esc(p.engine)}</span>` : ''}
+    <span class="muted small">${p.width}×${p.height}px · ${Math.round(p.dpi)} dpi${p.ocr_ms ? ` · OCR ${p.ocr_ms} ms` : ''}</span>
+    ${p.error ? `<span class="badge err" title="${esc(p.error)}">lỗi</span>` : ''}`;
+  const hl = new Set(view.hl);
+  const boxes = (p.lines || []).filter((l) => l.text && l.text.trim()).map((l) => ({
+    bbox: l.bbox, key: l.line_no, title: `L${l.line_no}: ${l.text}`,
+    cls: [l.text_source === 'vlm' ? 'vlm' : '', l.low_confidence ? 'low' : '', hl.has(l.line_no) ? 'hl' : ''].join(' ').trim(),
+  }));
+  const pv = await pageView(view.doc.id, n, {
+    width: p.width, height: p.height, boxes, hideBoxes: !view.showBoxes,
+    onReady: (el, svg) => {
+      svg.addEventListener('click', (e) => { const r = e.target.closest('rect'); if (r) focusLine(+r.dataset.key, 'panel'); });
+      svg.addEventListener('mouseover', (e) => { const r = e.target.closest('rect'); if (r) markLine(+r.dataset.key); });
+      const first = svg.querySelector('rect.hl');
+      if (first) setTimeout(() => first.scrollIntoView({ block: 'center', behavior: 'smooth' }), 80);
+    },
+  });
+  viewer.innerHTML = '';
+  viewer.appendChild(pv);
+  if (p.is_blank) viewer.prepend(h(`<div class="badge" style="margin-bottom:8px">Trang trắng</div>`));
+  renderPanel();
+}
+
+function markLine(no) {
+  $$('.lines .ln', root).forEach((x) => x.classList.toggle('hl', +x.dataset.no === no));
+}
+function focusLine(no, scrollIn) {
+  $$('.pageview rect', root).forEach((r) => r.classList.toggle('hl', +r.dataset.key === no));
+  markLine(no);
+  if (scrollIn === 'panel') { const ln = $(`.lines .ln[data-no="${no}"]`, root); ln && ln.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  else { const r = $(`.pageview rect[data-key="${no}"]`, root); r && r.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+}
+
+function renderPanel() {
+  $$('#tabs button', root).forEach((b) => b.classList.toggle('active', b.dataset.tab === view.tab));
+  const panel = $('#panel', root);
+  const p = view.page;
+  if (view.tab === 'find') return renderFind(panel);
+  if (view.tab === 'tree') return renderTree(panel);
+  if (!p) { panel.innerHTML = `<div class="empty small">Trang chưa sẵn sàng</div>`; return; }
+  if (view.tab === 'lines') {
+    const hl = new Set(view.hl);
+    const lines = (p.lines || []).filter((l) => l.text && l.text.trim());
+    panel.innerHTML = `<div class="lines">${lines.map((l) => `
+      <div class="ln ${hl.has(l.line_no) ? 'hl' : ''}" data-no="${l.line_no}">
+        <div class="no">L${l.line_no}</div>
+        <div><div class="tx ${l.low_confidence ? 'low' : ''}">${esc(l.text)}</div>
+          <div class="row wrap small" style="gap:6px;margin-top:2px">
+            ${sourceBadge(l.text_source)}
+            <span class="muted mono" title="bbox (px)">[${[l.bbox.x0, l.bbox.y0, l.bbox.x1, l.bbox.y1].map((v) => Math.round(v)).join(', ')}]</span>
+            ${l.confidence && l.confidence < 1 ? `<span class="muted">conf ${(l.confidence * 100).toFixed(0)}%</span>` : ''}
+          </div>
+          ${l.text_ocr && l.text_ocr !== l.text ? `<div class="ocr">OCR gốc: ${esc(l.text_ocr)}</div>` : ''}
+        </div></div>`).join('') || '<div class="empty small">Trang không có dòng chữ</div>'}</div>`;
+    $$('.ln', panel).forEach((x) => {
+      x.onclick = () => focusLine(+x.dataset.no, 'image');
+      x.onmouseenter = () => $$('.pageview rect', root).forEach((r) => r.classList.toggle('hl', +r.dataset.key === +x.dataset.no || view.hl.includes(+r.dataset.key)));
+    });
+    const first = $('.ln.hl', panel); first && setTimeout(() => first.scrollIntoView({ block: 'center' }), 60);
+  } else if (view.tab === 'md') {
+    panel.innerHTML = '';
+    const wrap = h('<div style="padding:14px 16px"></div>');
+    wrap.appendChild(renderMarkdown(p.markdown || '_Trang trống_'));
+    panel.appendChild(wrap);
+  } else if (view.tab === 'blocks') {
+    panel.innerHTML = (p.blocks || []).map((b) => `
+      <div class="blk">
+        <div class="row wrap" style="gap:6px"><b class="small">#${b.block_no}</b><span class="chip">${esc(b.type)}</span>
+          ${b.raw_class ? `<span class="chip mono">${esc(b.raw_class)}</span>` : ''}${sourceBadge(b.text_source)}
+          ${b.is_furniture ? '<span class="badge warn">header/footer</span>' : ''}</div>
+        <div class="small" style="margin-top:4px;white-space:pre-wrap">${esc((b.text || '').slice(0, 600))}</div>
+      </div>`).join('') || '<div class="empty small">Không có block</div>';
+  }
+}
+
+// ---- search inside the document (page_from/page_to optional)
+const findState = { q: '', from: '', to: '', mode: 'keyword', result: null, docId: null };
+function renderFind(panel) {
+  if (findState.docId !== view.doc.id) Object.assign(findState, { q: '', from: '', to: '', result: null, docId: view.doc.id });
+  panel.innerHTML = `
+    <form class="stack" style="padding:12px;gap:8px" id="findForm">
+      <input type="search" name="q" placeholder="Từ khoá, số hiệu, số tiền…" value="${esc(findState.q)}" required>
+      <div class="row">
+        <input type="number" name="from" min="1" max="${view.doc.page_count}" placeholder="Từ trang" value="${esc(findState.from)}" style="width:100px">
+        <input type="number" name="to" min="1" max="${view.doc.page_count}" placeholder="Đến trang" value="${esc(findState.to)}" style="width:100px">
+        <select name="mode"><option value="keyword">Keyword</option><option value="reasoning">Reasoning (LLM)</option></select>
+        <button class="btn primary">Tìm</button>
+      </div>
+      <div class="muted small">Để trống trang = tìm cả file.</div>
+    </form>
+    <div id="findRes"></div>`;
+  const f = $('#findForm', panel);
+  f.mode.value = findState.mode;
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    Object.assign(findState, { q: f.q.value.trim(), from: f.from.value, to: f.to.value, mode: f.mode.value });
+    const out = $('#findRes', panel);
+    out.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+    try {
+      const body = { query: findState.q, mode: findState.mode };
+      if (findState.from) body.page_from = +findState.from;
+      if (findState.to) body.page_to = +findState.to;
+      findState.result = await api(`/documents/${view.doc.id}/search`, { body });
+      showFindResult(out);
+    } catch (err) { out.innerHTML = `<div class="empty small">${esc(err.message)}</div>`; }
+  };
+  if (findState.result) showFindResult($('#findRes', panel));
+}
+function showFindResult(out) {
+  const pages = findState.result.pages || [];
+  if (!pages.length) { out.innerHTML = `<div class="empty small">Không thấy "${esc(findState.q)}"</div>`; return; }
+  const total = pages.reduce((n, p) => n + p.hits.length, 0);
+  out.innerHTML = `<div class="muted small" style="padding:0 12px 6px">${total} kết quả trên ${pages.length} trang</div>` + pages.map((p) => `
+    <div class="hitpage"><div class="row"><b>Trang ${p.page_no}</b><span class="muted small">${p.hits.length} dòng</span></div>
+      ${p.hits.map((l) => `<a href="#" class="hitline" data-p="${p.page_no}" data-l="${l.line_no}"><span class="mono muted small">L${l.line_no}</span> ${hilite(l.snippet, findState.q)}</a>`).join('')}
+    </div>`).join('');
+  $$('a[data-p]', out).forEach((a) => a.onclick = (e) => { e.preventDefault(); view.tab = 'find'; goPage(+a.dataset.p, [+a.dataset.l]); });
+}
+function hilite(text, q) {
+  const s = esc(text);
+  if (!q) return s;
+  const fold = (x) => x.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
+  const ft = fold(s), fq = fold(esc(q));
+  const i = ft.indexOf(fq);
+  return i < 0 ? s : s.slice(0, i) + '<mark>' + s.slice(i, i + fq.length) + '</mark>' + s.slice(i + fq.length);
+}
+
+// ---- tree (table of contents)
+const treeCache = {};
+async function renderTree(panel) {
+  panel.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  try {
+    const nodes = treeCache[view.doc.id] || (treeCache[view.doc.id] = (await api(`/documents/${view.doc.id}/tree`)).nodes || []);
+    if (!nodes.length) { panel.innerHTML = `<div class="empty small">Chưa có mục lục (tài liệu đang lập chỉ mục?)</div>`; return; }
+    panel.innerHTML = `<div class="tree" style="padding:6px 0">${nodes.map((n) => `
+      <a href="#" data-p="${n.page_start}" style="padding-left:${12 + n.level * 14}px" title="${esc(n.summary || '')}">
+        <span class="${n.level === 0 ? '' : ''}" style="${n.level === 0 ? 'font-weight:600' : ''}">${esc(n.title || (n.level === 0 ? view.doc.file_name : n.short_id))}</span>
+        <span class="pr">${n.page_start === n.page_end ? 'tr.' + n.page_start : 'tr.' + n.page_start + '–' + n.page_end}</span>
+      </a>`).join('')}</div>`;
+    $$('a[data-p]', panel).forEach((a) => a.onclick = (e) => { e.preventDefault(); goPage(+a.dataset.p); });
+  } catch (e) { panel.innerHTML = `<div class="empty small">${esc(e.message)}</div>`; }
+}
+
+// ================================================================ upload
+function openUpload() {
+  if (!KB) return toast('Hãy chọn hoặc tạo knowledge base trước', 'err');
+  const schemaKeys = ((KB.metadata_schema && KB.metadata_schema.fields) || []).map((f) => f.key);
+  const d = dialog(`
+    <div class="dh"><h2>Tải file lên · ${esc(KB.name)}</h2><button class="btn icon" data-close>✕</button></div>
+    <div class="db">
+      <div class="drop" id="drop">Kéo thả file vào đây hoặc <b>bấm để chọn</b><br><span class="small">PDF, ảnh (JPG/PNG/TIFF)… có thể chọn nhiều file</span>
+        <input type="file" id="fileInput" multiple hidden accept=".pdf,image/*"></div>
+      <div class="flist" id="flist"></div>
+      <div class="stack" style="gap:6px">
+        <div class="row"><b style="flex:1">Metadata (áp dụng cho mọi file)</b><button class="btn sm" id="addMeta">+ Thêm</button></div>
+        <div id="metaRows" class="stack" style="gap:6px"></div>
+        <div class="muted small">VD: <code>group_code</code> = <code>HS-2024-0456</code> để sau này hỏi đáp chỉ trong nhóm hồ sơ này.</div>
+      </div>
+      <label class="field"><span>Callback URL (tuỳ chọn)</span><input type="url" id="cb" placeholder="https://… nhận POST khi xử lý xong"></label>
+      <div id="upProg" hidden><div class="bar"><i></i></div><div class="small muted" style="margin-top:4px" id="upText"></div></div>
+      <div id="upResult"></div>
+    </div>
+    <div class="df"><button class="btn" data-close>Đóng</button><button class="btn primary" id="doUpload" disabled>Tải lên</button></div>`);
+  const files = [];
+  const input = $('#fileInput', d), drop = $('#drop', d);
+  const renderFiles = () => {
+    $('#flist', d).innerHTML = files.map((f, i) => `<div class="f"><span class="ellipsis" style="flex:1">📄 ${esc(f.name)}</span><span class="muted">${fmtSize(f.size)}</span><button class="btn sm icon" data-rm="${i}">✕</button></div>`).join('');
+    $$('[data-rm]', d).forEach((b) => b.onclick = () => { files.splice(+b.dataset.rm, 1); renderFiles(); });
+    $('#doUpload', d).disabled = !files.length;
+  };
+  const add = (list) => { for (const f of list) files.push(f); renderFiles(); };
+  drop.onclick = () => input.click();
+  input.onchange = () => { add(input.files); input.value = ''; };
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); add(e.dataTransfer.files); };
+
+  const addRow = (k = '', v = '') => {
+    const r = h(`<div class="metarow"><input type="text" placeholder="key" value="${esc(k)}"><input type="text" placeholder="value" value="${esc(v)}"><button class="btn icon" title="Xoá">✕</button></div>`);
+    r.querySelector('button').onclick = () => r.remove();
+    $('#metaRows', d).appendChild(r);
+  };
+  (schemaKeys.length ? schemaKeys : ['group_code']).forEach((k) => addRow(k));
+  $('#addMeta', d).onclick = () => addRow();
+
+  $('#doUpload', d).onclick = async () => {
+    const metadata = {};
+    $$('.metarow', d).forEach((r) => {
+      const [k, v] = $$('input', r).map((i) => i.value.trim());
+      if (k && v) metadata[k] = /^-?\d+(\.\d+)?$/.test(v) && !/^0\d/.test(v) ? Number(v) : v;
+    });
+    const btn = $('#doUpload', d); btn.disabled = true;
+    $('#upProg', d).hidden = false;
+    const bar = $('#upProg i', d), txt = $('#upText', d);
+    try {
+      const res = await upload(KB.id, files, {
+        metadata, callbackUrl: $('#cb', d).value.trim(),
+        onProgress: (p) => { bar.style.width = (p * 100).toFixed(0) + '%'; txt.textContent = `Đang tải ${(p * 100).toFixed(0)}%…`; },
+      });
+      bar.style.width = '100%'; txt.textContent = 'Đã nhận, đang xử lý nền.';
+      const acc = res.documents || [], rej = res.rejected || [];
+      $('#upResult', d).innerHTML = `<div class="stack" style="gap:6px">
+        ${acc.map((a) => `<div class="row small"><span class="badge ${a.duplicate ? 'warn' : 'ok'}">${a.duplicate ? 'Trùng' : 'Nhận'}</span><span class="ellipsis" style="flex:1">${esc(a.file_name)}</span><a href="#doc=${a.document_id}" data-open>Xem →</a></div>`).join('')}
+        ${rej.map((r) => `<div class="row small"><span class="badge err">Từ chối</span><span class="ellipsis" style="flex:1">${esc(r.file_name)}</span><span class="muted">${esc((r.errors || []).join('; '))}</span></div>`).join('')}
+      </div>`;
+      $$('[data-open]', d).forEach((a) => a.onclick = () => d.close());
+      files.length = 0; renderFiles();
+      toast(`Đã tải ${acc.length} file lên`);
+      if (!params().get('doc')) loadDocs();
+    } catch (e) { fail(e); txt.textContent = e.message; btn.disabled = false; }
+  };
+}
+</script>
+</body>
+</html>

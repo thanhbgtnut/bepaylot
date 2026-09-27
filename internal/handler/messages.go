@@ -92,10 +92,10 @@ func (h *Handlers) Messages(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	if req.Metadata != nil && (len(req.Metadata.KBIDs) > 0 || req.Metadata.KBFilter != nil) {
-		updated, err := h.setSessionKnowledge(ctx, user.ID, sess, req.Metadata.KBIDs, req.Metadata.KBFilter)
+	if req.Metadata != nil {
+		updated, err := h.bindSessionCase(ctx, user.ID, sess, req.Metadata)
 		if err != nil {
-			c.JSON(consts.StatusUnprocessableEntity, dto.NewError("invalid_request_error", err.Error()))
+			h.caseBindError(c, err)
 			return
 		}
 		sess = updated

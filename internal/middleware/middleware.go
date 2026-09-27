@@ -98,7 +98,7 @@ func CORS(origins []string) app.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
 		}
-		c.Header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, x-api-key, anthropic-version, X-Request-Id")
 		if string(c.Method()) == consts.MethodOptions {
 			c.AbortWithStatus(consts.StatusNoContent)

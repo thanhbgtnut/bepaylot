@@ -23,15 +23,16 @@ type Config struct {
 	MCP    MCPCfg    `yaml:"mcp"`
 	Log    Log       `yaml:"log"`
 
-	Redis   Redis   `yaml:"redis"`
-	Storage Storage `yaml:"storage"`
-	Upload  Upload  `yaml:"upload"`
-	Workers Workers `yaml:"workers"`
-	Parser  Parser  `yaml:"parser"`
-	Index   Index   `yaml:"index"`
-	Search  Search  `yaml:"search"`
-	Graph   Graph   `yaml:"graph"`
-	Wiki    Wiki    `yaml:"wiki"`
+	Redis    Redis    `yaml:"redis"`
+	Storage  Storage  `yaml:"storage"`
+	Upload   Upload   `yaml:"upload"`
+	Callback Callback `yaml:"callback"`
+	Workers  Workers  `yaml:"workers"`
+	Parser   Parser   `yaml:"parser"`
+	Index    Index    `yaml:"index"`
+	Search   Search   `yaml:"search"`
+	Cases    Cases    `yaml:"cases"`
+	Wiki     Wiki     `yaml:"wiki"`
 }
 
 // ToolsCfg configures the built-in tool set.
@@ -304,7 +305,7 @@ func (c *Config) applyDefaults() {
 	setString(&c.Log.Format, "json")
 
 	c.applyPipelineDefaults()
-	c.applyGraphDefaults()
+	c.applyWikiDefaults()
 }
 
 func (c *Config) validate() error {

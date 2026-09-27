@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -29,6 +30,11 @@ func (c *JSONCompleter) Calls() int64 { return c.calls.Load() }
 
 // CompleteJSON implements interfaces.Completer.
 func (c *JSONCompleter) CompleteJSON(ctx context.Context, system, user string, out any) error {
+	// A tool (kb_search, graph extraction…) runs inside the agent's graph,
+	// whose ctx carries the agent's stream callbacks. Without this, the inner
+	// model's output would be streamed to the chat client as the agent's own
+	// text.
+	ctx = callbacks.InitCallbacks(ctx, &callbacks.RunInfo{Name: "JSONCompleter"})
 	p, err := c.Reg.Get(c.Provider)
 	if err != nil {
 		return err

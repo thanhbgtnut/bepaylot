@@ -19,13 +19,16 @@ import (
 
 // CreateSession handles POST /v1/sessions.
 //
-// @Summary   Create a session explicitly
+// @Summary   Create a session explicitly, optionally bound to a case
+// @Description case_id (or case {kb_id, code}) binds the session to one case for its whole life: the wiki_* and kb_* tools only see that case (§8.1).
 // @Tags      Sessions
 // @Accept    json
 // @Produce   json
 // @Param     request  body      dto.CreateSessionRequest  false  "Session fields"
 // @Success   201      {object}  dto.SessionBrief
 // @Failure   401      {object}  dto.ErrorResponse
+// @Failure   404      {object}  dto.ErrorResponse
+// @Failure   422      {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth
 // @Router    /v1/sessions [post]
 func (h *Handlers) CreateSession(ctx context.Context, c *app.RequestContext) {
@@ -43,6 +46,25 @@ func (h *Handlers) CreateSession(ctx context.Context, c *app.RequestContext) {
 	if model == "" {
 		model = h.LLM.DefaultModel
 	}
+	for _, k := range []string{"kb_ids", "kb_filter"} {
+		if _, ok := req.Metadata[k]; ok {
+			c.JSON(consts.StatusUnprocessableEntity, dto.NewError("invalid_request_error", errLegacyScope.Error()))
+			return
+		}
+	}
+	var caseID *uuid.UUID
+	if req.CaseID != "" || req.Case != nil {
+		ref := req.Case
+		if ref == nil {
+			ref = &dto.CaseRef{}
+		}
+		cs, err := h.resolveCaseRef(ctx, user.ID, req.CaseID, ref)
+		if err != nil {
+			h.caseBindError(c, err)
+			return
+		}
+		caseID = &cs.ID
+	}
 	sess, err := h.Store.Sessions.Create(ctx, postgres.CreateParams{
 		UserID:         user.ID,
 		Title:          req.Title,
@@ -50,6 +72,7 @@ func (h *Handlers) CreateSession(ctx context.Context, c *app.RequestContext) {
 		Model:          model,
 		SystemOverride: req.System,
 		Metadata:       req.Metadata,
+		CaseID:         caseID,
 	})
 	if err != nil {
 		h.serverError(c, err)
@@ -63,14 +86,33 @@ func (h *Handlers) CreateSession(ctx context.Context, c *app.RequestContext) {
 // @Summary   List the authenticated user's sessions
 // @Tags      Sessions
 // @Produce   json
-// @Param     limit   query     int     false  "Page size (1-100)"  default(30)
-// @Param     cursor  query     string  false  "Opaque cursor from a previous response's next_cursor"
-// @Success   200     {object}  dto.SessionList
-// @Failure   401     {object}  dto.ErrorResponse
+// @Param     limit    query     int     false  "Page size (1-100)"  default(30)
+// @Param     cursor   query     string  false  "Opaque cursor from a previous response's next_cursor"
+// @Param     case_id  query     string  false  "Only the sessions bound to this case"  format(uuid)
+// @Success   200      {object}  dto.SessionList
+// @Failure   401      {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth
 // @Router    /v1/sessions [get]
 func (h *Handlers) ListSessions(ctx context.Context, c *app.RequestContext) {
 	user, _ := middleware.UserFrom(c)
+	if raw := strings.TrimSpace(string(c.Query("case_id"))); raw != "" {
+		cid, err := uuid.Parse(raw)
+		if err != nil {
+			h.badRequest(c, "invalid case_id")
+			return
+		}
+		sessions, err := h.Store.Sessions.ListByCase(ctx, user.ID, cid, 100)
+		if err != nil {
+			h.serverError(c, err)
+			return
+		}
+		resp := dto.SessionList{Data: []dto.SessionBrief{}}
+		for _, s := range sessions {
+			resp.Data = append(resp.Data, dto.BriefFromDomain(s))
+		}
+		c.JSON(consts.StatusOK, resp)
+		return
+	}
 
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	if limit <= 0 || limit > 100 {
@@ -210,6 +252,22 @@ func (h *Handlers) UpdateSession(ctx context.Context, c *app.RequestContext) {
 	if err := c.BindJSON(&req); err != nil {
 		h.badRequest(c, "invalid JSON body: "+err.Error())
 		return
+	}
+	if req.CaseID != nil {
+		cur := ""
+		if sess.CaseID != nil {
+			cur = sess.CaseID.String()
+		}
+		if strings.TrimSpace(*req.CaseID) != cur {
+			c.JSON(consts.StatusConflict, dto.NewError("conflict_error", "case_id cannot change; bind a case with metadata.case_id on an unbound session, or open a new session"))
+			return
+		}
+	}
+	for _, k := range []string{"kb_ids", "kb_filter"} {
+		if _, ok := req.Metadata[k]; ok {
+			c.JSON(consts.StatusUnprocessableEntity, dto.NewError("invalid_request_error", errLegacyScope.Error()))
+			return
+		}
 	}
 	updated, err := h.Store.Sessions.Update(ctx, sess.ID, postgres.UpdateParams{Title: req.Title, Metadata: req.Metadata})
 	if err != nil {

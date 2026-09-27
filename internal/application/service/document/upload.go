@@ -21,29 +21,40 @@ import (
 	"github.com/thanhenti/bepaylot/internal/parser/pdf"
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/types"
+	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
-// Upload is one (possibly multi-file) upload request. Files are streamed to
-// S3 as they arrive; metadata may arrive before or after the files and is
-// validated in Finish, which also enqueues the pipeline.
+// Upload is one (possibly multi-file) upload request into one case. Files
+// are streamed to S3 as they arrive; the case, metadata and callback fields
+// may arrive before or after the files. Finish resolves the case, creates
+// the document rows (dedup per case), validates metadata and enqueues the
+// pipeline.
 type Upload struct {
 	s           *Service
 	owner       uuid.UUID
 	kb          types.KnowledgeBase
 	interactive bool
-	batch       types.UploadBatch
+	caseRef     interfaces.CaseRef
 
-	shared   map[string]any
-	perFile  map[string]map[string]any
-	accepted []pendingDoc
-	rejected []Rejected
-	index    int
+	shared  map[string]any
+	perFile map[string]map[string]any
+	// callbackURL is the optional completion callback for every file.
+	callbackURL string
+	callbackErr error
+	files       []pendingFile
+	rejected    []Rejected
+	index       int
 }
 
-type pendingDoc struct {
-	doc       types.Document
-	index     int
-	duplicate bool
+// pendingFile is a file already in S3, waiting for Finish.
+type pendingFile struct {
+	docID       uuid.UUID
+	index       int
+	name, mime  string
+	size        int64
+	sha, key    string
+	pdfaPart    int
+	pdfaConform string
 }
 
 // Rejected describes a file that was not accepted.
@@ -60,16 +71,28 @@ type Accepted struct {
 	Status     string         `json:"status"`
 	Duplicate  bool           `json:"duplicate,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+	// CallbackURL echoes the completion callback, when one was given.
+	CallbackURL string `json:"callback_url,omitempty"`
+}
+
+// UploadCase is the case the files went into.
+type UploadCase struct {
+	ID       uuid.UUID `json:"id"`
+	Code     string    `json:"code"`
+	CaseType string    `json:"case_type"`
+	Created  bool      `json:"created"`
 }
 
 // UploadResult is returned by Finish.
 type UploadResult struct {
 	BatchID   uuid.UUID  `json:"batch_id"`
+	Case      UploadCase `json:"case"`
 	Documents []Accepted `json:"documents"`
 	Rejected  []Rejected `json:"rejected"`
 }
 
-// BeginUpload starts an upload into a KB the owner owns.
+// BeginUpload starts an upload into a KB the owner owns. The case is set with
+// SetCase before Finish.
 func (s *Service) BeginUpload(ctx context.Context, owner, kbID uuid.UUID, interactive bool) (*Upload, error) {
 	kb, err := s.st.KBs.GetOwned(ctx, kbID, owner)
 	if errors.Is(err, postgres.ErrNotFound) {
@@ -81,8 +104,34 @@ func (s *Service) BeginUpload(ctx context.Context, owner, kbID uuid.UUID, intera
 	return &Upload{s: s, owner: owner, kb: kb, interactive: interactive, perFile: map[string]map[string]any{}}, nil
 }
 
+// SetCase names the case of every file: an id, or a code (created when
+// missing, with the given case type).
+func (u *Upload) SetCase(ref interfaces.CaseRef) {
+	if ref.ID != uuid.Nil {
+		u.caseRef.ID = ref.ID
+	}
+	if ref.Code != "" {
+		u.caseRef.Code = ref.Code
+	}
+	if ref.CaseType != "" {
+		u.caseRef.CaseType = ref.CaseType
+	}
+	u.caseRef.Create = u.caseRef.Create || ref.Create
+}
+
 // SetSharedMetadata sets metadata applied to every file of the batch.
 func (u *Upload) SetSharedMetadata(m map[string]any) { u.shared = m }
+
+// SetCallbackURL sets the optional completion callback URL of every file of
+// the upload. An invalid URL fails Finish (after removing the files), since
+// the form field may arrive after the files were streamed.
+func (u *Upload) SetCallbackURL(raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	u.callbackURL, u.callbackErr = raw, u.s.ValidateCallbackURL(raw)
+}
 
 // SetFilesMetadata sets per-file metadata keyed by file name or 0-based index.
 func (u *Upload) SetFilesMetadata(m map[string]map[string]any) {
@@ -91,8 +140,8 @@ func (u *Upload) SetFilesMetadata(m map[string]map[string]any) {
 	}
 }
 
-// AddFile streams one file to S3 and records its document row. Per-file
-// problems (type, size) are recorded as rejections, not returned.
+// AddFile streams one file to S3. Per-file problems (type, size) are
+// recorded as rejections, not returned.
 func (u *Upload) AddFile(ctx context.Context, name, declaredType string, body io.Reader) error {
 	idx := u.index
 	u.index++
@@ -130,72 +179,107 @@ func (u *Upload) AddFile(ctx context.Context, name, declaredType string, body io
 	if err != nil {
 		return fmt.Errorf("upload %s: %w", name, err)
 	}
-
-	if u.batch.ID == uuid.Nil {
-		b, err := u.s.st.KBs.CreateBatch(ctx, types.UploadBatch{KBID: u.kb.ID, CreatedBy: u.owner, Metadata: u.shared})
-		if err != nil {
-			return err
-		}
-		u.batch = b
-	}
-	d := types.Document{
-		ID: docID, KBID: u.kb.ID, BatchID: &u.batch.ID, CreatedBy: u.owner, FileName: name, MimeType: mime,
-		SizeBytes: limited.n, SHA256: hex.EncodeToString(hash.Sum(nil)), StorageKey: info.Key,
-		Engine: firstNonEmpty(u.kb.Config.ParserEngine, u.s.cfg.Parser.DefaultEngine),
-	}
+	f := pendingFile{docID: docID, index: idx, name: name, mime: mime, size: limited.n, sha: hex.EncodeToString(hash.Sum(nil)), key: info.Key}
 	if det.IsPDFA() {
-		part := det.Part
-		d.PDFAPart, d.PDFAConformance = &part, det.Conform
+		f.pdfaPart, f.pdfaConform = det.Part, det.Conform
 	}
-	created, err := u.s.st.Documents.Create(ctx, d, u.interactive)
-	if errors.Is(err, postgres.ErrDuplicate) {
-		_ = u.s.objects.Delete(context.WithoutCancel(ctx), key)
-		u.accepted = append(u.accepted, pendingDoc{doc: created, index: idx, duplicate: true})
-		return nil
-	}
-	if err != nil {
-		_ = u.s.objects.Delete(context.WithoutCancel(ctx), key)
-		return err
-	}
-	u.accepted = append(u.accepted, pendingDoc{doc: created, index: idx})
+	u.files = append(u.files, f)
 	return nil
 }
 
-// Finish validates metadata per file, stores it and enqueues the pipeline.
-// Files whose metadata is invalid are rejected and removed.
+// abort removes every streamed object (the request failed as a whole).
+func (u *Upload) abort(ctx context.Context) {
+	for _, f := range u.files {
+		_ = u.s.objects.Delete(context.WithoutCancel(ctx), f.key)
+	}
+}
+
+// Finish resolves the case, creates the documents, validates metadata per
+// file and enqueues the pipeline. Files whose metadata is invalid are
+// rejected and removed; a case or callback error fails the whole request.
 func (u *Upload) Finish(ctx context.Context) (*UploadResult, error) {
-	res := &UploadResult{BatchID: u.batch.ID, Rejected: append([]Rejected{}, u.rejected...), Documents: []Accepted{}}
-	for _, p := range u.accepted {
-		own := u.perFile[p.doc.FileName]
-		if own == nil {
-			own = u.perFile[strconv.Itoa(p.index)]
+	if u.callbackErr != nil {
+		u.abort(ctx)
+		return nil, u.callbackErr
+	}
+	c, created, err := u.s.cases.ResolveCase(ctx, u.owner, u.kb.ID, u.caseRef)
+	if err != nil {
+		u.abort(ctx)
+		return nil, err
+	}
+	ct := u.s.cases.CaseType(c.CaseType)
+	schema := ct.MetadataSchema
+	if schema == nil {
+		schema = u.kb.MetadataSchema
+	}
+	res := &UploadResult{Rejected: append([]Rejected{}, u.rejected...), Documents: []Accepted{},
+		Case: UploadCase{ID: c.ID, Code: c.Code, CaseType: c.CaseType, Created: created}}
+	if len(u.files) > 0 {
+		b, err := u.s.st.KBs.CreateBatch(ctx, types.UploadBatch{KBID: u.kb.ID, CreatedBy: u.owner, Metadata: u.shared, FileCount: u.index})
+		if err != nil {
+			u.abort(ctx)
+			return nil, err
 		}
-		if p.duplicate {
-			res.Documents = append(res.Documents, Accepted{DocumentID: p.doc.ID, FileName: p.doc.FileName, Status: p.doc.Status, Duplicate: true, Metadata: p.doc.Metadata})
+		res.BatchID = b.ID
+	}
+	engine := firstNonEmpty(ct.Parser.Engine, u.kb.Config.ParserEngine, u.s.cfg.Parser.DefaultEngine)
+	for i, f := range u.files {
+		own := u.perFile[f.name]
+		if own == nil {
+			own = u.perFile[strconv.Itoa(f.index)]
+		}
+		d := types.Document{
+			ID: f.docID, KBID: u.kb.ID, CaseID: c.ID, BatchID: &res.BatchID, CreatedBy: u.owner, FileName: f.name, MimeType: f.mime,
+			SizeBytes: f.size, SHA256: f.sha, StorageKey: f.key, Engine: engine, CallbackURL: u.callbackURL,
+		}
+		if f.pdfaPart > 0 {
+			part := f.pdfaPart
+			d.PDFAPart, d.PDFAConformance = &part, f.pdfaConform
+		}
+		doc, err := u.s.st.Documents.Create(ctx, d, u.interactive)
+		if errors.Is(err, postgres.ErrDuplicate) {
+			_ = u.s.objects.Delete(context.WithoutCancel(ctx), f.key)
+			if u.callbackURL != "" {
+				// The file is already known: the new URL replaces the old
+				// one, and a document that already finished is reported now.
+				if err := u.s.st.Documents.SetCallbackURL(ctx, doc.ID, u.callbackURL); err != nil {
+					return nil, err
+				}
+				if err := u.s.scheduleCallback(ctx, doc.ID); err != nil {
+					u.s.log.Warn("callback: schedule for duplicate failed", "doc", doc.ID, "err", err)
+				}
+			}
+			res.Documents = append(res.Documents, Accepted{DocumentID: doc.ID, FileName: doc.FileName, Status: doc.Status, Duplicate: true, Metadata: doc.Metadata, CallbackURL: u.callbackURL})
 			continue
 		}
-		meta, errs := metadata.Validate(u.kb.MetadataSchema, metadata.Merge(u.shared, own))
+		if err != nil {
+			for _, rest := range u.files[i:] {
+				_ = u.s.objects.Delete(context.WithoutCancel(ctx), rest.key)
+			}
+			return nil, err
+		}
+		meta, errs := metadata.Validate(schema, metadata.Merge(u.shared, own))
 		if len(errs) > 0 {
 			msgs := make([]string, len(errs))
 			for i, e := range errs {
 				msgs[i] = e.Error()
 			}
-			res.Rejected = append(res.Rejected, Rejected{FileName: p.doc.FileName, Index: p.index, Errors: msgs})
-			_ = u.s.objects.Delete(context.WithoutCancel(ctx), p.doc.StorageKey)
-			_ = u.s.st.Documents.Purge(context.WithoutCancel(ctx), p.doc.ID)
+			res.Rejected = append(res.Rejected, Rejected{FileName: f.name, Index: f.index, Errors: msgs})
+			_ = u.s.objects.Delete(context.WithoutCancel(ctx), f.key)
+			_ = u.s.st.Documents.Purge(context.WithoutCancel(ctx), doc.ID)
 			continue
 		}
-		doc, err := u.s.st.Documents.SetMetadata(ctx, p.doc.ID, meta)
+		doc, err = u.s.st.Documents.SetMetadata(ctx, doc.ID, meta)
 		if err != nil {
 			return nil, err
 		}
 		if err := u.s.enqueue(ctx, types.TaskDocumentSplit, doc, nil, fmt.Sprintf("split:%s:%d", doc.ID, doc.Gen)); err != nil {
 			return nil, err
 		}
-		res.Documents = append(res.Documents, Accepted{DocumentID: doc.ID, FileName: doc.FileName, Status: doc.Status, Metadata: doc.Metadata})
+		res.Documents = append(res.Documents, Accepted{DocumentID: doc.ID, FileName: doc.FileName, Status: doc.Status, Metadata: doc.Metadata, CallbackURL: u.callbackURL})
 	}
-	if u.batch.ID != uuid.Nil {
-		_ = u.s.st.KBs.FinishBatch(ctx, u.batch.ID, len(res.Documents), len(res.Rejected))
+	if res.BatchID != uuid.Nil {
+		_ = u.s.st.KBs.FinishBatch(ctx, res.BatchID, len(res.Documents), len(res.Rejected))
 	}
 	return res, nil
 }

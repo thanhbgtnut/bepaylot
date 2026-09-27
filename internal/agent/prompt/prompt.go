@@ -57,10 +57,8 @@ type TurnContext struct {
 	Context []ContextItem // client-supplied situational notes (AG-UI `context`)
 	State   string        // client-supplied state, pre-serialized JSON (AG-UI `state`)
 
-	// KnowledgeBases are the collections attached to the session (§8.1) and
-	// KnowledgeFilter the pinned metadata filter, pre-serialized.
-	KnowledgeBases  []KnowledgeBase
-	KnowledgeFilter string
+	// Case is the case bound to the session (§8.1); nil = no case.
+	Case *CaseInfo
 }
 
 // Section produces one block of the system prompt, or "" to omit it.
@@ -74,7 +72,7 @@ var DefaultSections = []Section{
 	sectionClientState,
 	sectionMemory,
 	sectionToolGuidance,
-	sectionKnowledge,
+	sectionCase,
 	sectionAccuracy,
 	sectionDeferredTools,
 	sectionSkillIndex,

@@ -67,6 +67,15 @@ func (h *Handlers) AGUIRunAgent(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	if md := aguiMetadata(req); md != nil {
+		updated, err := h.bindSessionCase(ctx, user.ID, sess, md)
+		if err != nil {
+			h.caseBindError(c, err)
+			return
+		}
+		sess = updated
+	}
+
 	runID := strings.TrimSpace(req.RunID)
 	if runID == "" {
 		runID = "run_" + strings.ReplaceAll(uuid.NewString(), "-", "")

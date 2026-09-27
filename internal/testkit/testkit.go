@@ -19,8 +19,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
-	"github.com/thanhenti/bepaylot/internal/application/service/graph"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
 	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/config"
@@ -32,6 +32,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/storage"
 	"github.com/thanhenti/bepaylot/internal/textutil"
 	"github.com/thanhenti/bepaylot/internal/types"
+	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // Harness bundles wired services for a test.
@@ -43,8 +44,8 @@ type Harness struct {
 	Queue   *queue.Inline
 	Objects *storage.Memory
 	Docs    *document.Service
+	Cases   *cases.Service
 	Index   *index.Service
-	Graph   *graph.Service
 	Wiki    *wiki.Service
 	LLM     *ScriptLLM
 	Owner   types.User
@@ -58,6 +59,12 @@ var (
 
 // New builds a harness or skips the test when TEST_DATABASE_URL is unset.
 func New(t *testing.T, tweak ...func(*config.Config)) *Harness {
+	t.Helper()
+	return NewWithEngines(t, nil, tweak...)
+}
+
+// NewWithEngines is New with extra OCR engines registered next to "echo".
+func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.Config)) *Harness {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" || testing.Short() {
@@ -78,9 +85,8 @@ func New(t *testing.T, tweak ...func(*config.Config)) *Harness {
 	cfg := config.Defaults()
 	cfg.Parser.DefaultEngine = "echo"
 	cfg.Parser.Render.DPI = 72
-	cfg.Graph.SchemaDir = findSchemaDir()
-	cfg.Wiki.MinMentions = 1
-	cfg.Wiki.IngestDelay = time.Millisecond
+	cfg.Wiki.SchemasDir = findDir("configs/wiki_schemas")
+	cfg.Cases.TypesDir = findDir("configs/case_types")
 	for _, f := range tweak {
 		f(cfg)
 	}
@@ -97,18 +103,32 @@ func New(t *testing.T, tweak ...func(*config.Config)) *Harness {
 	}
 	engines := parser.NewRegistry("echo")
 	engines.Register(echoOCR{})
+	for _, e := range extra {
+		engines.Register(e)
+	}
 	q := queue.NewInline()
 	ai := NewScriptLLM()
+	for _, f := range scriptTweaks {
+		f(ai)
+	}
 
-	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: renderer, Engines: engines, Config: cfg})
-	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: q, TreeLLM: ai, SearchLLM: ai, Config: cfg})
-	gr := graph.New(graph.Deps{Store: st, Docs: docs, Sections: idx, Queue: q, LLM: ai, Config: cfg})
-	wk := wiki.New(st, q, nil, cfg, nil)
-	if err := gr.EnsureSchemas(ctx); err != nil {
+	cs, err := cases.New(st, q, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: renderer, Engines: engines, Cases: cs, Config: cfg})
+	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: q, TreeLLM: ai, SearchLLM: ai, Cases: cs, Config: cfg})
+	var wikiLLM interfaces.Completer = ai
+	if ai.NoWikiLLM {
+		wikiLLM = nil
+	}
+	wk := wiki.New(wiki.Deps{Store: st, Docs: docs, Sections: idx, Cases: cs, Queue: q, LLM: wikiLLM, Config: cfg})
+	idx.SetWiki(wk)
+	if err := wk.EnsureSchemas(ctx); err != nil {
 		t.Fatal(err)
 	}
 	handlers := map[string]queue.Handler{}
-	for _, m := range []map[string]queue.Handler{docs.Handlers(), idx.Handlers(), gr.Handlers(), wk.Handlers()} {
+	for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers(), wk.Handlers()} {
 		for k, v := range m {
 			handlers[k] = v
 		}
@@ -116,13 +136,26 @@ func New(t *testing.T, tweak ...func(*config.Config)) *Harness {
 	q.Register(handlers, func(ctx context.Context, taskType, queueName string, payload []byte, err error, attempts int) {
 		_ = st.Tasks.InsertDeadLetter(ctx, postgres.DeadLetter{TaskType: taskType, Queue: queueName, Scope: "test", ScopeID: "test", Payload: payload, LastError: err.Error(), FailCount: attempts})
 	})
-	return &Harness{T: t, Ctx: ctx, Store: st, Config: cfg, Queue: q, Objects: objects, Docs: docs, Index: idx, Graph: gr, Wiki: wk, LLM: ai, Owner: user}
+	return &Harness{T: t, Ctx: ctx, Store: st, Config: cfg, Queue: q, Objects: objects, Docs: docs, Cases: cs, Index: idx, Wiki: wk, LLM: ai, Owner: user}
 }
 
-func findSchemaDir() string {
-	for _, p := range []string{"configs/graph_schemas", "../configs/graph_schemas", "../../configs/graph_schemas", "../../../configs/graph_schemas", "../../../../configs/graph_schemas"} {
-		if st, err := os.Stat(p); err == nil && st.IsDir() {
-			return p
+// scriptTweaks apply to the ScriptLLM of every harness built by New*; set
+// with WithScript.
+var scriptTweaks []func(*ScriptLLM)
+
+// NewWithScript is New with the script LLM prepared before services are
+// wired (e.g. NoWikiLLM).
+func NewWithScript(t *testing.T, script func(*ScriptLLM), tweak ...func(*config.Config)) *Harness {
+	t.Helper()
+	scriptTweaks = []func(*ScriptLLM){script}
+	defer func() { scriptTweaks = nil }()
+	return NewWithEngines(t, nil, tweak...)
+}
+
+func findDir(rel string) string {
+	for _, up := range []string{"", "../", "../../", "../../../", "../../../../"} {
+		if st, err := os.Stat(up + rel); err == nil && st.IsDir() {
+			return up + rel
 		}
 	}
 	return ""
@@ -138,15 +171,49 @@ func (h *Harness) KB(cfg types.KBConfig, schema *types.MetadataSchema) types.Kno
 	return kb
 }
 
-// Upload uploads a generated PDF and returns its document id.
+// DefaultCase is the case code Upload uses.
+const DefaultCase = "HS-TEST"
+
+// Upload uploads a generated PDF into case DefaultCase and returns its
+// document id.
 func (h *Harness) Upload(kb uuid.UUID, name string, meta map[string]any, pages []pdftest.Page) uuid.UUID {
+	h.T.Helper()
+	return h.UploadTo(kb, DefaultCase, name, meta, pages)
+}
+
+// UploadTo uploads a generated PDF into the case with this code.
+func (h *Harness) UploadTo(kb uuid.UUID, code, name string, meta map[string]any, pages []pdftest.Page) uuid.UUID {
+	h.T.Helper()
+	return h.UploadPDFTo(kb, code, name, meta, pdftest.Build(pages, pdftest.Options{Outline: true}))
+}
+
+// UploadPDF uploads the given PDF bytes into case DefaultCase.
+func (h *Harness) UploadPDF(kb uuid.UUID, name string, meta map[string]any, pdf []byte) uuid.UUID {
+	h.T.Helper()
+	return h.UploadPDFTo(kb, DefaultCase, name, meta, pdf)
+}
+
+// Case returns the case with this code in the KB.
+func (h *Harness) Case(kb uuid.UUID, code string) types.Case {
+	h.T.Helper()
+	c, err := h.Cases.ByCode(h.Ctx, h.Owner.ID, kb, code)
+	if err != nil {
+		h.T.Fatalf("case %s: %v", code, err)
+	}
+	return c
+}
+
+// UploadPDFTo uploads the given PDF bytes into the case with this code
+// (created on demand) and returns its document id.
+func (h *Harness) UploadPDFTo(kb uuid.UUID, code, name string, meta map[string]any, pdf []byte) uuid.UUID {
 	h.T.Helper()
 	up, err := h.Docs.BeginUpload(h.Ctx, h.Owner.ID, kb, false)
 	if err != nil {
 		h.T.Fatal(err)
 	}
+	up.SetCase(interfaces.CaseRef{Code: code, Create: true})
 	up.SetSharedMetadata(meta)
-	if err := up.AddFile(h.Ctx, name, "", bytes.NewReader(pdftest.Build(pages, pdftest.Options{Outline: true}))); err != nil {
+	if err := up.AddFile(h.Ctx, name, "", bytes.NewReader(pdf)); err != nil {
 		h.T.Fatal(err)
 	}
 	res, err := up.Finish(h.Ctx)
@@ -176,12 +243,28 @@ func (echoOCR) ParsePage(_ context.Context, in parser.PageImage, _ parser.PageOp
 	return &parser.RawPage{Width: in.Width, Height: in.Height, Raw: []byte("{}")}, nil
 }
 
-// ScriptLLM answers the index/search prompts deterministically; tests set
-// Extract to script graph extraction. It counts calls per prompt kind.
+// ScriptLLM answers the index, search and wiki prompts deterministically.
+// Hooks let a test script one prompt kind; it counts calls per kind.
 type ScriptLLM struct {
-	mu      sync.Mutex
-	Calls   map[string]int
-	Extract func(user string) any
+	mu    sync.Mutex
+	Calls map[string]int
+	// NoWikiLLM builds the wiki without an LLM (template pages only).
+	NoWikiLLM bool
+	// FailWiki makes every wiki extraction fail (a model returning no JSON).
+	FailWiki bool
+	// Extract scripts the wiki extraction ({"entities": [...], "relations":
+	// [...]}; user = the prompt with the [p<page>:L<line>] lines); nil = no
+	// entities.
+	Extract func(user string) map[string]any
+	// WikiIndex scripts step 2 of search (the wiki index); nil = read every
+	// file listed in the index from source.
+	WikiIndex func(user string) map[string]any
+	// WikiRead scripts step 3 of search (the wiki pages); nil = answer with
+	// the footnotes whose quote contains the first word of the question.
+	WikiRead func(user string) map[string]any
+	// Locate scripts step 4b (hits on numbered pages); nil = the lines
+	// containing the first word of the question.
+	Locate func(user string) map[string]any
 }
 
 // NewScriptLLM returns a script with default behaviour.
@@ -193,7 +276,18 @@ var (
 	nodeRe     = regexp.MustCompile(`\[(n\d+)\] `)
 	partRe     = regexp.MustCompile(`<part id="(n\d+)"`)
 	questionRe = regexp.MustCompile(`Question: (.*)`)
+	indexRefRe = regexp.MustCompile(`\[(w\d+)\] [^\n]*\(\d+ tr\.\)`) // file lines of the wiki index
+	wikiPageRe = regexp.MustCompile(`<wiki_page id="(w\d+)"`)
+	footRe     = regexp.MustCompile(`^\[\^(\d+)\] .*?: "(.*)"`)
 )
+
+func question(user string) []string {
+	m := questionRe.FindStringSubmatch(user)
+	if m == nil {
+		return nil
+	}
+	return strings.Fields(textutil.Normalize(m[1]))
+}
 
 // CompleteJSON implements interfaces.Completer.
 func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any) error {
@@ -210,13 +304,44 @@ func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any
 		reply = map[string]any{"summaries": m}
 	case strings.Contains(system, "catalogue card"):
 		kind = "card"
-		reply = map[string]any{"title": "Tài liệu kiểm thử", "doc_type": "Kiểm thử", "summary": "Tài liệu dùng cho kiểm thử"}
+		reply = map[string]any{"title": "Tài liệu kiểm thử", "summary": "Tài liệu dùng cho kiểm thử"}
 	case strings.Contains(system, "table of contents for a document"):
 		kind = "toc"
 		reply = map[string]any{"toc": []any{}}
-	case strings.Contains(system, "pick which documents"):
-		kind = "select_docs"
-		reply = map[string]any{"select": []map[string]string{{"doc": "d1"}}}
+	case strings.Contains(system, "pick which cases"):
+		kind = "select_cases"
+		reply = map[string]any{"select": []map[string]string{{"case": "c1"}}}
+	case strings.Contains(system, "search a case wiki index"):
+		kind = "wiki_index"
+		if s.WikiIndex != nil {
+			reply = s.WikiIndex(user)
+		} else {
+			var raw []map[string]string
+			for _, m := range indexRefRe.FindAllStringSubmatch(user, -1) {
+				raw = append(raw, map[string]string{"ref": m[1]})
+			}
+			reply = map[string]any{"wiki": []string{}, "raw": raw}
+		}
+	case strings.Contains(system, "answer a question from the wiki pages"):
+		kind = "wiki_read"
+		if s.WikiRead != nil {
+			reply = s.WikiRead(user)
+		} else {
+			q := question(user)
+			var hits []map[string]any
+			page := ""
+			for _, ln := range strings.Split(user, "\n") {
+				if m := wikiPageRe.FindStringSubmatch(ln); m != nil {
+					page = m[1]
+				}
+				if m := footRe.FindStringSubmatch(ln); m != nil && len(q) > 0 && strings.Contains(textutil.Normalize(m[2]), q[0]) {
+					var n int
+					fmt.Sscan(m[1], &n)
+					hits = append(hits, map[string]any{"page": page, "footnotes": []int{n}, "relevance": 0.9})
+				}
+			}
+			reply = map[string]any{"hits": hits, "raw": []any{}}
+		}
 	case strings.Contains(system, "navigate"):
 		kind = "select_nodes"
 		var sel []map[string]string
@@ -226,7 +351,11 @@ func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any
 		reply = map[string]any{"select": sel, "answerable": true}
 	case strings.Contains(system, "exact lines"):
 		kind = "locate"
-		q := strings.Fields(textutil.Normalize(questionRe.FindStringSubmatch(user)[1]))
+		if s.Locate != nil {
+			reply = s.Locate(user)
+			break
+		}
+		q := question(user)
 		var hits []map[string]any
 		page, doc := 0, ""
 		for _, ln := range strings.Split(user, "\n") {
@@ -242,8 +371,11 @@ func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any
 			}
 		}
 		reply = map[string]any{"hits": hits}
-	case strings.Contains(system, "extract a knowledge graph"):
-		kind = "extract"
+	case s.FailWiki && strings.Contains(system, "extract entities"):
+		s.mu.Unlock()
+		return fmt.Errorf("no JSON value in reply")
+	case strings.Contains(system, "extract entities"):
+		kind = "wiki_extract"
 		if s.Extract != nil {
 			reply = s.Extract(user)
 		} else {

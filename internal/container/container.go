@@ -18,8 +18,8 @@ import (
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/agent/prompt"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
-	"github.com/thanhenti/bepaylot/internal/application/service/graph"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
 	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/config"
@@ -30,6 +30,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/parser"
 	"github.com/thanhenti/bepaylot/internal/parser/pdf"
 	"github.com/thanhenti/bepaylot/internal/parser/turboocr"
+	"github.com/thanhenti/bepaylot/internal/parser/vlm"
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/retrieval"
 	"github.com/thanhenti/bepaylot/internal/router"
@@ -159,6 +160,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		}
 		log.Warn("redis.addr is empty: tasks run in-process (single instance only, queued work is lost on restart)")
 		app.inline = queue.NewInline()
+		app.inline.HonorDelays = true // callback backoff, wiki debounce
 		app.enqueuer = app.inline
 		h.Inspector = inlineInspector{app.inline}
 	}
@@ -166,7 +168,25 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	// OCR engines.
 	engines := parser.NewRegistry(cfg.Parser.DefaultEngine)
 	oc := cfg.Parser.Engines.TurboOCR
-	engines.Register(turboocr.New(turboocr.Config{BaseURL: oc.BaseURL, Timeout: oc.Timeout, BreakerFailures: oc.Breaker.Failures, BreakerOpenFor: oc.Breaker.OpenFor}))
+	layout := turboocr.New(turboocr.Config{BaseURL: oc.BaseURL, Timeout: oc.Timeout, BreakerFailures: oc.Breaker.Failures, BreakerOpenFor: oc.Breaker.OpenFor})
+	engines.Register(layout)
+	if vc := cfg.Parser.Engines.VLM; vc.BaseURL != "" {
+		e, err := vlm.New(vlm.Config{
+			Layout: layout,
+			Client: vlm.NewClient(vlm.ClientConfig{BaseURL: vc.BaseURL, APIKey: vc.APIKey, Model: vc.Model, Prompt: vc.Prompt,
+				MaxTokens: vc.MaxTokens, Temperature: vc.Temperature, Timeout: vc.Timeout}),
+			MaxConcurrency: vc.MaxConcurrency, Classes: vc.Classes, Padding: vc.Padding, MaxSide: vc.MaxSide, MinSide: vc.MinSide,
+			JPEGQuality: vc.JPEGQuality, Retries: vc.Retries, OnError: vc.OnError, FullPage: vc.FullPageEnabled(), Log: log,
+		})
+		if err != nil {
+			return fmt.Errorf("vlm engine: %w", err)
+		}
+		engines.Register(e)
+		log.Info("ocr engine registered", "engine", vlm.Name, "model", vc.Model, "base_url", vc.BaseURL)
+	}
+	if _, err := engines.Get(""); err != nil {
+		return fmt.Errorf("parser.default_engine: %w (engine %s needs parser.engines.vlm.base_url)", err, vlm.Name)
+	}
 
 	// PDF renderer: workers only.
 	var renderer document.Renderer
@@ -190,29 +210,37 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	}
 	treeLLM := completer(cfg.Index.Tree.Provider, cfg.Index.Tree.Model, 4096)
 	searchLLM := completer(cfg.Search.Provider, cfg.Search.Model, 4096)
-	graphLLM := completer(cfg.Graph.Provider, cfg.Graph.Model, 8192)
+	wikiLLM := completer(cfg.Wiki.Provider, cfg.Wiki.Model, 8192)
 
-	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: app.enqueuer, Renderer: renderer, Engines: engines, Config: cfg, Log: log})
-	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: app.enqueuer, TreeLLM: treeLLM, SearchLLM: searchLLM, Config: cfg, Log: log})
-	gr := graph.New(graph.Deps{Store: st, Docs: docs, Sections: idx, Queue: app.enqueuer, LLM: graphLLM, Config: cfg, Log: log})
-	wk := wiki.New(st, app.enqueuer, graphLLM, cfg, log)
-	if err := gr.EnsureSchemas(ctx); err != nil {
-		log.Warn("graph schemas not loaded", "err", err)
+	cs, err := cases.New(st, app.enqueuer, cfg, log)
+	if err != nil {
+		return err
+	}
+	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: app.enqueuer, Renderer: renderer, Engines: engines, Cases: cs, Config: cfg, Log: log})
+	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: app.enqueuer, TreeLLM: treeLLM, SearchLLM: searchLLM, Cases: cs, Config: cfg, Log: log})
+	wk := wiki.New(wiki.Deps{Store: st, Docs: docs, Sections: idx, Cases: cs, Queue: app.enqueuer, LLM: wikiLLM, Config: cfg, Log: log})
+	idx.SetWiki(wk)
+	if err := wk.EnsureSchemas(ctx); err != nil {
+		log.Warn("wiki schemas not loaded", "err", err)
 	}
 	app.docs = docs
 
-	h.Docs, h.Searcher, h.Graph, h.Wiki, h.Engines, h.Queue = docs, idx, gr, wk, engines, app.enqueuer
-	if err := toolReg.SetKnowledgeTools(idx, gr); err != nil {
+	h.Docs, h.Cases, h.Searcher, h.Wiki, h.Engines, h.Queue = docs, cs, idx, wk, engines, app.enqueuer
+	if err := toolReg.SetKnowledgeTools(idx, wk); err != nil {
 		return err
 	}
-	ag.SetKnowledge(describer{st: st, docs: docs})
+	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs})
 
 	if cfg.Workers.RunsWorkers() {
 		handlers := map[string]queue.Handler{}
-		for _, m := range []map[string]queue.Handler{docs.Handlers(), idx.Handlers(), gr.Handlers(), wk.Handlers()} {
+		for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers(), wk.Handlers()} {
 			for k, v := range m {
 				handlers[k] = v
 			}
+		}
+		// One sweep re-drives every module (§4.3).
+		handlers[types.TaskHousekeeping] = func(ctx context.Context, _ []byte) error {
+			return errors.Join(docs.Housekeeping(ctx), cs.Housekeeping(ctx), wk.Housekeeping(ctx))
 		}
 		sink := deadLetterSink(st, log)
 		if app.inline != nil {
@@ -288,6 +316,7 @@ func deadLetterSink(st *postgres.Store, log *slog.Logger) queue.DeadLetterSink {
 		dl := postgres.DeadLetter{TaskType: taskType, Queue: queueName, Scope: types.ScopeUnknown, Payload: payload, LastError: err.Error(), FailCount: attempts}
 		var p struct {
 			DocumentID uuid.UUID `json:"document_id"`
+			CaseID     uuid.UUID `json:"case_id"`
 			KBID       uuid.UUID `json:"kb_id"`
 			Pages      []int     `json:"pages"`
 		}
@@ -298,6 +327,8 @@ func deadLetterSink(st *postgres.Store, log *slog.Logger) queue.DeadLetterSink {
 				if len(p.Pages) > 0 {
 					dl.RelatedID = fmt.Sprint(p.Pages)
 				}
+			case p.CaseID != uuid.Nil:
+				dl.Scope, dl.ScopeID = types.ScopeCase, p.CaseID.String()
 			case p.KBID != uuid.Nil:
 				dl.Scope, dl.ScopeID = types.ScopeKnowledgeBase, p.KBID.String()
 			}
@@ -308,27 +339,25 @@ func deadLetterSink(st *postgres.Store, log *slog.Logger) queue.DeadLetterSink {
 	}
 }
 
-// describer implements agent.KnowledgeDescriber.
+// describer implements agent.KnowledgeDescriber: it describes the case
+// bound to a session for the <case> prompt section (§8.1).
 type describer struct {
-	st   *postgres.Store
-	docs *document.Service
+	st    *postgres.Store
+	docs  *document.Service
+	cases *cases.Service
 }
 
-func (d describer) DescribeKnowledgeBases(ctx context.Context, owner uuid.UUID, ids []uuid.UUID) []prompt.KnowledgeBase {
-	var out []prompt.KnowledgeBase
-	for _, id := range ids {
-		kb, err := d.st.KBs.GetOwned(ctx, id, owner)
-		if err != nil {
-			continue
-		}
-		n, _ := d.st.Documents.CountByKB(ctx, id)
-		ref := prompt.KnowledgeBase{ID: kb.ID.String(), Name: kb.Name, Description: kb.Description, Documents: n}
-		for _, f := range d.docs.MetadataKeys(ctx, kb) {
-			ref.Fields = append(ref.Fields, prompt.MetadataField{Key: f.Key, Type: f.Type, Description: f.Description, Values: f.Values})
-		}
-		out = append(out, ref)
+func (d describer) DescribeCase(ctx context.Context, owner, caseID uuid.UUID) *prompt.CaseInfo {
+	c, err := d.cases.Detail(ctx, owner, caseID)
+	if err != nil {
+		return nil
 	}
-	return out
+	info := &prompt.CaseInfo{ID: c.ID.String(), Code: c.Code, TypeTitle: d.cases.CaseType(c.CaseType).Title, Title: c.Title, Status: c.Status,
+		Metadata: c.Metadata, Documents: c.Documents, WikiStatus: c.WikiStatus, WikiDocs: c.WikiDocsCovered}
+	for _, f := range d.docs.MetadataKeys(ctx, c) {
+		info.Fields = append(info.Fields, prompt.MetadataField{Key: f.Key, Type: f.Type, Description: f.Description, Values: f.Values})
+	}
+	return info
 }
 
 func fakeSkillSlug() string {

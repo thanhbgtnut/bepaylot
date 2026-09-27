@@ -37,16 +37,16 @@ type Agent struct {
 	log      *slog.Logger
 	runs     *runRegistry // the turn running on each session, if any
 
-	knowledge KnowledgeDescriber // nil = knowledge tools off
+	knowledge KnowledgeDescriber // nil = case tools off
 }
 
-// KnowledgeDescriber describes a user's knowledge bases for the prompt.
+// KnowledgeDescriber describes the case bound to a session for the prompt;
+// nil means the case no longer exists.
 type KnowledgeDescriber interface {
-	DescribeKnowledgeBases(ctx context.Context, owner uuid.UUID, ids []uuid.UUID) []prompt.KnowledgeBase
+	DescribeCase(ctx context.Context, owner, caseID uuid.UUID) *prompt.CaseInfo
 }
 
-// SetKnowledge enables the knowledge-base tools for sessions whose metadata
-// lists kb_ids (§8.1).
+// SetKnowledge enables the case tools for sessions bound to a case (§8.1).
 func (a *Agent) SetKnowledge(d KnowledgeDescriber) { a.knowledge = d }
 
 // New builds an Agent.
@@ -296,23 +296,20 @@ func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink ev
 			toolDesc[info.Name] = info.Desc
 		}
 	}
-	kbScope := sessionKBScope(sess, in.User.ID)
-	var kbRefs []prompt.KnowledgeBase
-	kbFilter := ""
-	if a.knowledge != nil && len(kbScope.KBIDs) > 0 {
-		kbRefs = a.knowledge.DescribeKnowledgeBases(ctx, in.User.ID, kbScope.KBIDs)
-		if len(kbRefs) > 0 {
-			toolSess.EnableKnowledge()
-			ctx = tools.WithKBScope(ctx, kbScope)
-			toolDesc = toolSess.VisibleDescriptions()
-			for _, t := range clientTools {
-				if info, err := t.Info(ctx); err == nil {
-					toolDesc[info.Name] = info.Desc
-				}
-			}
-			if len(kbScope.Filter) > 0 {
-				b, _ := json.Marshal(kbScope.Filter)
-				kbFilter = string(b)
+	var caseInfo *prompt.CaseInfo
+	if scope, ok := sessionCaseScope(sess, in.User.ID); ok && a.knowledge != nil {
+		// The case tools are bound even when the case was deleted meanwhile:
+		// they then answer that the case no longer exists (§8.1).
+		caseInfo = a.knowledge.DescribeCase(ctx, in.User.ID, scope.CaseID)
+		if caseInfo == nil {
+			caseInfo = &prompt.CaseInfo{ID: scope.CaseID.String(), Deleted: true}
+		}
+		toolSess.EnableKnowledge()
+		ctx = tools.WithCaseScope(ctx, scope)
+		toolDesc = toolSess.VisibleDescriptions()
+		for _, t := range clientTools {
+			if info, err := t.Info(ctx); err == nil {
+				toolDesc[info.Name] = info.Desc
 			}
 		}
 	}
@@ -339,8 +336,7 @@ func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink ev
 		Context:        in.Context,
 		State:          strings.TrimSpace(string(in.State)),
 
-		KnowledgeBases:  kbRefs,
-		KnowledgeFilter: kbFilter,
+		Case: caseInfo,
 	}
 	systemPrompt := prompt.Build(tc)
 

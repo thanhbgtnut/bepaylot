@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,14 +32,14 @@ var (
 	errNoTree     = errors.New("document has no tree yet")
 )
 
-// Search implements interfaces.Searcher (§6.5).
+// Search implements interfaces.Searcher (§6.10).
 func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	start := time.Now()
 	if req.OwnerID == uuid.Nil {
 		return nil, fmt.Errorf("%w: owner required", ErrBadRequest)
 	}
-	if len(req.KBIDs) == 0 && len(req.DocumentIDs) == 0 {
-		return nil, fmt.Errorf("%w: kb_ids or document_ids is required", ErrBadRequest)
+	if len(req.CaseIDs) == 0 && len(req.KBIDs) == 0 {
+		return nil, fmt.Errorf("%w: case_ids or kb_ids is required", ErrBadRequest)
 	}
 	mode := req.Mode
 	if mode == "" {
@@ -63,6 +62,7 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 		defer cancel()
 	}
 
+	// Step 1: scope by SQL — case, metadata, status (§6.10).
 	filter, err := s.scope(ctx, req)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,8 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 		resp.Trace.ElapsedMs = time.Since(start).Milliseconds()
 		return resp, nil
 	}
-	key := cacheKey(mode, req, cands)
+	codes := s.caseCodes(ctx, cands)
+	key := s.cacheKey(ctx, mode, req, cands)
 	if v, ok := s.cache.get(key); ok {
 		out := *(v.(*types.SearchResponse))
 		out.Trace.Cached = true
@@ -102,7 +103,7 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 		mode, resp.Trace.Fallback = types.SearchKeyword, "no_llm_configured"
 	}
 	if mode == types.SearchReasoning {
-		err = s.reasoning(ctx, req, filter, cands, resp)
+		err = s.reasoning(ctx, req, cands, resp)
 		if err != nil {
 			s.log.Warn("reasoning search failed, falling back to keyword", "err", err)
 			resp.Hits = nil
@@ -120,35 +121,69 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 	if resp.Hits == nil {
 		resp.Hits = []types.SearchHit{}
 	}
+	for i := range resp.Hits {
+		resp.Hits[i].CaseCode = codes[resp.Hits[i].CaseID]
+	}
 	resp.Trace.ElapsedMs = time.Since(start).Milliseconds()
 	s.cache.put(key, resp)
 	return resp, nil
 }
 
 // scope turns the request into a document filter restricted to searchable
-// documents the caller owns, with metadata normalized by the KB schema.
+// documents of cases (or KBs) the caller owns, with metadata normalized by
+// the schema of the case type (single case) or the KB (single KB). Document
+// ids and metadata only narrow the scope, never widen it.
 func (s *Service) scope(ctx context.Context, req types.SearchRequest) (postgres.DocumentFilter, error) {
 	f := postgres.DocumentFilter{
-		OwnerID: req.OwnerID, KBIDs: req.KBIDs, DocumentIDs: req.DocumentIDs,
+		OwnerID: req.OwnerID, KBIDs: req.KBIDs, CaseIDs: req.CaseIDs, DocumentIDs: req.DocumentIDs,
 		Statuses: []string{types.DocCompleted, types.DocPartial, types.DocEnriching},
 	}
-	if len(req.KBIDs) == 1 {
-		kb, err := s.st.KBs.GetOwned(ctx, req.KBIDs[0], req.OwnerID)
+	for _, id := range req.CaseIDs {
+		c, err := s.cases.GetCaseOwned(ctx, req.OwnerID, id)
 		if err != nil {
 			return f, ErrNotFound
 		}
-		f.Schema = kb.MetadataSchema
+		if len(req.CaseIDs) == 1 {
+			f.Schema = s.caseSchema(ctx, c)
+		}
+	}
+	for _, id := range req.KBIDs {
+		kb, err := s.st.KBs.GetOwned(ctx, id, req.OwnerID)
+		if err != nil {
+			return f, ErrNotFound
+		}
+		if len(req.KBIDs) == 1 && len(req.CaseIDs) == 0 {
+			f.Schema = kb.MetadataSchema
+		}
 	}
 	f.Metadata = metadata.NormalizeFilter(f.Schema, req.Metadata)
-	// Validate the filter early so bad keys/operators are a 400.
-	if _, err := s.st.Documents.List(ctx, postgres.DocumentFilter{OwnerID: req.OwnerID, KBIDs: []uuid.UUID{uuid.Nil}, Metadata: f.Metadata, Limit: 1}); err != nil &&
+	// Validate the filter early so bad keys/operators are a 422.
+	if _, err := s.st.Documents.List(ctx, postgres.DocumentFilter{OwnerID: req.OwnerID, KBIDs: []uuid.UUID{uuid.Nil}, Metadata: f.Metadata, Schema: f.Schema, Limit: 1}); err != nil &&
 		strings.Contains(err.Error(), "metadata filter") {
 		return f, fmt.Errorf("%w: %v", ErrBadRequest, err)
 	}
 	return f, nil
 }
 
-func cacheKey(mode string, req types.SearchRequest, docs []types.Document) string {
+// caseCodes maps the cases of docs to their codes.
+func (s *Service) caseCodes(ctx context.Context, docs []types.Document) map[uuid.UUID]string {
+	out := map[uuid.UUID]string{}
+	for _, d := range docs {
+		if _, ok := out[d.CaseID]; ok {
+			continue
+		}
+		out[d.CaseID] = ""
+		if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil {
+			out[d.CaseID] = c.Code
+		}
+	}
+	return out
+}
+
+// cacheKey covers the request, the owner, the generation of every document in
+// scope and the wiki version of every case: scopes always name their cases,
+// so two cases never share a cached result (§6.10).
+func (s *Service) cacheKey(ctx context.Context, mode string, req types.SearchRequest, docs []types.Document) string {
 	h := sha1.New()
 	b, _ := json.Marshal(struct {
 		M string
@@ -156,8 +191,15 @@ func cacheKey(mode string, req types.SearchRequest, docs []types.Document) strin
 		O uuid.UUID
 	}{mode, req, req.OwnerID})
 	h.Write(b)
+	seen := map[uuid.UUID]bool{}
 	for _, d := range docs {
 		fmt.Fprintf(h, "%s:%d;", d.ID, d.Gen)
+		if !seen[d.CaseID] {
+			seen[d.CaseID] = true
+			if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil {
+				fmt.Fprintf(h, "case:%s:%d;", c.ID, c.WikiVersion)
+			}
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -165,8 +207,8 @@ func cacheKey(mode string, req types.SearchRequest, docs []types.Document) strin
 func briefs(docs []types.Document) []types.DocumentBrief {
 	out := make([]types.DocumentBrief, len(docs))
 	for i, d := range docs {
-		out[i] = types.DocumentBrief{ID: d.ID, KBID: d.KBID, FileName: d.FileName, Status: d.Status, PageCount: d.PageCount,
-			Title: d.Title, DocType: d.DocType, Summary: d.Summary, Metadata: d.Metadata}
+		out[i] = types.DocumentBrief{ID: d.ID, KBID: d.KBID, CaseID: d.CaseID, FileName: d.FileName, Status: d.Status, WikiStatus: d.WikiStatus,
+			PageCount: d.PageCount, Title: d.Title, Summary: d.Summary, Metadata: d.Metadata}
 	}
 	return out
 }
@@ -193,17 +235,32 @@ func (s *Service) keyword(ctx context.Context, req types.SearchRequest, docs []t
 		seen[k] = true
 		out = append(out, h)
 	}
+	inRange := func(p int) bool {
+		return (req.PageFrom <= 0 || p >= req.PageFrom) && (req.PageTo <= 0 || p <= req.PageTo)
+	}
 	for _, sh := range secHits {
 		d := byID[sh.DocumentID]
-		lines, _ := s.st.Pages.SearchLines(ctx, d.ID, d.Gen, req.Query, sh.PageStart, sh.PageEnd, 3)
+		// A section may span pages outside the requested range.
+		from, to := sh.PageStart, sh.PageEnd
+		if req.PageFrom > 0 {
+			from = max(from, req.PageFrom)
+		}
+		if req.PageTo > 0 {
+			to = min(to, req.PageTo)
+		}
+		lines, _ := s.st.Pages.SearchLines(ctx, d.ID, d.Gen, req.Query, from, to, 3)
 		if len(lines) > 0 {
 			for _, l := range lines {
 				add(hitFromLine(d, l.PageNo, []int{l.LineNo}, l.Text, []types.BBox{l.BBox}, l.Score, sh.Snippet, sh.HeadingPath))
 			}
 			continue
 		}
-		sp := sh.SourceSpans[0]
-		add(hitFromLine(d, sp.Page, []int{max(sp.LineFrom, 0)}, textutil.Truncate(stripMD(sh.Content), 200), []types.BBox{sp.BBox}, sh.Score, sh.Snippet, sh.HeadingPath))
+		for _, sp := range sh.SourceSpans {
+			if inRange(sp.Page) {
+				add(hitFromLine(d, sp.Page, []int{max(sp.LineFrom, 0)}, textutil.Truncate(stripMD(sh.Content), 200), []types.BBox{sp.BBox}, sh.Score, sh.Snippet, sh.HeadingPath))
+				break
+			}
+		}
 	}
 	if len(out) == 0 {
 		// Sections may miss short codes; fall back to line trigram search.
@@ -228,7 +285,7 @@ func (s *Service) keyword(ctx context.Context, req types.SearchRequest, docs []t
 
 func hitFromLine(d types.Document, page int, lines []int, quote string, boxes []types.BBox, score float64, snippet string, path []string) types.SearchHit {
 	return types.SearchHit{
-		DocumentID: d.ID, FileName: d.FileName, Metadata: d.Metadata, PageNo: page, Lines: lines,
+		DocumentID: d.ID, FileName: d.FileName, CaseID: d.CaseID, Metadata: d.Metadata, PageNo: page, Lines: lines, Via: "keyword",
 		Quote: quote, Snippet: snippet, Relevance: score, NodePath: path,
 		CitationID: CitationID(d.ID, page, lines), BBoxes: boxes,
 	}
@@ -246,7 +303,9 @@ func CitationID(doc uuid.UUID, page int, lines []int) string {
 	return fmt.Sprintf("doc:%s:p%d:l%d-%d", doc, page, lo, hi)
 }
 
-var citationRe = regexp.MustCompile(`^doc:([0-9a-fA-F-]{36}):p(\d+)(?::l(\d+)-(\d+))?$`)
+// The line range may be written as one line ("l9" = "l9-9") or with the "l"
+// repeated ("l8-l10"): models often do either when citing.
+var citationRe = regexp.MustCompile(`^doc:([0-9a-fA-F-]{36}):p(\d+)(?::l(\d+)(?:-l?(\d+))?)?$`)
 
 // ParseCitation is the inverse of CitationID.
 func ParseCitation(c string) (uuid.UUID, int, int, int, error) {
@@ -262,7 +321,10 @@ func ParseCitation(c string) (uuid.UUID, int, int, int, error) {
 	lo, hi := -1, -1
 	if m[3] != "" {
 		lo, _ = strconv.Atoi(m[3])
-		hi, _ = strconv.Atoi(m[4])
+		hi = lo
+		if m[4] != "" {
+			hi, _ = strconv.Atoi(m[4])
+		}
 	}
 	return id, page, lo, hi, nil
 }
@@ -286,140 +348,13 @@ type docSel struct {
 	pages []int
 	nodes []string
 	paths map[int][]string // page → node path
+	wiki  []string         // wiki pages that led here
 }
 
-func (s *Service) reasoning(ctx context.Context, req types.SearchRequest, filter postgres.DocumentFilter, cands []types.Document, resp *types.SearchResponse) error {
-	cfg := s.cfg.Search
-	b := &budget{}
-	b.max.Store(int64(cfg.MaxLLMCalls))
-	defer func() { resp.Trace.LLMCalls = int(min(b.used.Load(), b.max.Load())) }()
-
-	// Step 2: choose documents.
-	selected := cands
-	if len(cands) > cfg.MaxDocsDirect {
-		ranked, err := s.st.Documents.RankByText(ctx, filter, req.Query, cfg.DocCandidates)
-		if err != nil {
-			return err
-		}
-		byID := map[uuid.UUID]types.Document{}
-		for _, d := range cands {
-			byID[d.ID] = d
-		}
-		var pool []types.Document
-		for _, id := range ranked {
-			if d, ok := byID[id]; ok {
-				pool = append(pool, d)
-			}
-		}
-		selected, err = s.selectDocs(ctx, b, req.Query, pool, cfg.MaxDocsSelected)
-		if err != nil {
-			return err
-		}
-		if len(selected) == 0 {
-			resp.Trace.Fallback = "no_document_selected"
-			hits, err := s.keyword(ctx, req, pool[:min(len(pool), 10)], req.TopK)
-			resp.Hits = hits
-			return err
-		}
-	}
-	for _, d := range selected {
-		resp.Trace.SelectedDocs = append(resp.Trace.SelectedDocs, d.ID)
-	}
-
-	// Step 3: navigate each document's tree.
-	sels := make([]*docSel, len(selected))
-	var mu sync.Mutex
-	var kwDocs []types.Document
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(max(1, cfg.ParallelDocs))
-	for i, d := range selected {
-		i, d := i, d
-		g.Go(func() error {
-			sel, err := s.selectPages(gctx, b, req, d)
-			if errors.Is(err, errNoTree) {
-				mu.Lock()
-				kwDocs = append(kwDocs, d)
-				mu.Unlock()
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			sel.short = fmt.Sprintf("d%d", i+1)
-			sels[i] = sel
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return err
-	}
-	resp.Trace.SelectedNodes = map[string][]string{}
-	var withPages []*docSel
-	for _, sel := range sels {
-		if sel != nil && len(sel.pages) > 0 {
-			withPages = append(withPages, sel)
-			resp.Trace.SelectedNodes[sel.doc.ID.String()] = sel.nodes
-		}
-	}
-
-	// Steps 4–5: read pages, locate lines, verify quotes.
-	hits, dropped, truncated, err := s.locate(ctx, b, req, withPages)
-	if err != nil {
-		return err
-	}
-	resp.Trace.DroppedHits = dropped
-	resp.Trace.Truncated = truncated
-	if len(kwDocs) > 0 {
-		kw, err := s.keyword(ctx, req, kwDocs, req.TopK)
-		if err != nil {
-			return err
-		}
-		hits = append(hits, kw...)
-	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Relevance > hits[j].Relevance })
-	if len(hits) > req.TopK {
-		hits = hits[:req.TopK]
-	}
-	resp.Hits = hits
-	return nil
-}
-
-func (s *Service) selectDocs(ctx context.Context, b *budget, query string, pool []types.Document, maxSel int) ([]types.Document, error) {
-	if len(pool) == 0 {
-		return nil, nil
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Question: %s\n\nDocuments:\n", query)
-	short := map[string]types.Document{}
-	for i, d := range pool {
-		id := fmt.Sprintf("d%d", i+1)
-		short[id] = d
-		meta, _ := json.Marshal(d.Metadata)
-		fmt.Fprintf(&sb, "- id=%s file=%q pages=%d metadata=%s\n  title: %s\n  type: %s\n  summary: %s\n",
-			id, d.FileName, d.PageCount, meta, d.Title, d.DocType, textutil.Truncate(d.Summary, 600))
-	}
-	var out struct {
-		Select []struct {
-			Doc string `json:"doc"`
-		} `json:"select"`
-	}
-	if err := s.call(ctx, b, fmt.Sprintf(promptSelectDocs, maxSel), sb.String(), &out); err != nil {
-		return nil, err
-	}
-	var sel []types.Document
-	seen := map[string]bool{}
-	for _, x := range out.Select {
-		if d, ok := short[strings.TrimSpace(x.Doc)]; ok && !seen[x.Doc] && len(sel) < maxSel {
-			seen[x.Doc] = true
-			sel = append(sel, d)
-		}
-	}
-	return sel, nil
-}
-
-// selectPages walks the tree with the LLM (§6.5 step 3). Small documents skip
-// the walk and read every page.
-func (s *Service) selectPages(ctx context.Context, b *budget, req types.SearchRequest, d types.Document) (*docSel, error) {
+// selectPages walks the tree with the LLM from node start ("" = the root,
+// §6.10 step 4a). A branch within the read budget (a whole file within
+// full_doc_token_budget) is read without walking.
+func (s *Service) selectPages(ctx context.Context, b *budget, req types.SearchRequest, d types.Document, start string) (*docSel, error) {
 	cfg := s.cfg.Search
 	nodes, err := s.st.Index.Tree(ctx, d.ID, d.Gen)
 	if err != nil {
@@ -429,27 +364,31 @@ func (s *Service) selectPages(ctx context.Context, b *budget, req types.SearchRe
 		return nil, errNoTree
 	}
 	t := newTreeView(nodes)
+	top, direct := t.root, cfg.FullDocTokenBudget
+	if n, ok := t.byShort[start]; ok && start != "" && n.ParentID != nil {
+		top, direct = n, max(cfg.NodeReadBudget, 1)
+	}
 	sel := &docSel{doc: d, paths: map[int][]string{}}
 	inRange := func(p int) bool {
 		return (req.PageFrom <= 0 || p >= req.PageFrom) && (req.PageTo <= 0 || p <= req.PageTo)
 	}
-	if t.root.TokenCount <= cfg.FullDocTokenBudget {
-		for p := 1; p <= d.PageCount; p++ {
+	if top.TokenCount <= direct || len(t.children[top.ID]) == 0 {
+		for p := top.PageStart; p <= top.PageEnd; p++ {
 			if inRange(p) {
 				sel.pages = append(sel.pages, p)
 				sel.paths[p] = t.pathForPage(p)
 			}
 		}
-		sel.nodes = []string{t.root.ShortID}
+		sel.nodes = []string{top.ShortID}
 		return sel, nil
 	}
 
-	shown := t.initialView(cfg.TreeTokenBudget)
+	shown := t.initialView(top.ID, cfg.TreeTokenBudget)
 	var picked []string
 	for hop := 0; hop <= cfg.MaxHops; hop++ {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Question: %s\n\nDocument: %s — %s\n%s\n\nTable of contents:\n", req.Query, d.FileName, t.root.Title, textutil.Truncate(t.root.Summary, 600))
-		t.render(&sb, shown)
+		t.render(&sb, top.ID, shown)
 		var out struct {
 			Select []struct {
 				NodeID string `json:"node_id"`
@@ -630,7 +569,7 @@ func (s *Service) locate(ctx context.Context, b *budget, req types.SearchRequest
 				continue
 			}
 			hit := hitFromLine(pt.sel.doc, pt.page, lines, h.Quote, boxes, clamp01(h.Relevance), "", pt.sel.paths[pt.page])
-			hit.Reason = h.Reason
+			hit.Reason, hit.Via, hit.WikiPages = h.Reason, "raw", pt.sel.wiki
 			if seen[hit.CitationID] {
 				continue
 			}
@@ -725,10 +664,11 @@ func newTreeView(nodes []types.TreeNode) *treeView {
 	return t
 }
 
-// initialView shows levels breadth-first while the rendering fits the budget.
-func (t *treeView) initialView(budget int) map[string]bool {
+// initialView shows the levels under top breadth-first while the rendering
+// fits the budget.
+func (t *treeView) initialView(top uuid.UUID, budget int) map[string]bool {
 	shown := map[string]bool{}
-	level := t.children[t.root.ID]
+	level := t.children[top]
 	used := 0
 	for len(level) > 0 {
 		cost := 0
@@ -749,7 +689,7 @@ func (t *treeView) initialView(budget int) map[string]bool {
 	return shown
 }
 
-func (t *treeView) render(sb *strings.Builder, shown map[string]bool) {
+func (t *treeView) render(sb *strings.Builder, top uuid.UUID, shown map[string]bool) {
 	var walk func(parent uuid.UUID, depth int)
 	walk = func(parent uuid.UUID, depth int) {
 		for _, n := range t.children[parent] {
@@ -764,7 +704,7 @@ func (t *treeView) render(sb *strings.Builder, shown map[string]bool) {
 			walk(n.ID, depth+1)
 		}
 	}
-	walk(t.root.ID, 0)
+	walk(top, 0)
 }
 
 func anyShown(ns []types.TreeNode, shown map[string]bool) bool {
@@ -806,8 +746,9 @@ func (t *treeView) pathForPage(page int) []string {
 
 // ---- other Searcher methods ----
 
-// FindInDocument searches one document, grouped by page (§6.7).
-func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, query, mode string) ([]types.PageSearchHit, error) {
+// FindInDocument searches one document, grouped by page, optionally within
+// pages from..to (§6.7).
+func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, query, mode string, from, to int) ([]types.PageSearchHit, error) {
 	d, err := s.st.Documents.GetOwned(ctx, docID, owner)
 	if err != nil {
 		return nil, ErrNotFound
@@ -826,7 +767,9 @@ func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, qu
 		ph.Score = max(ph.Score, score)
 	}
 	if mode == types.SearchReasoning && s.searchLLM != nil {
-		resp, err := s.Search(ctx, types.SearchRequest{Query: query, DocumentIDs: []uuid.UUID{d.ID}, Mode: mode, OwnerID: owner, TopK: 20})
+		// Steps 3–5 on this file only: the wiki index is filtered to it.
+		resp, err := s.Search(ctx, types.SearchRequest{Query: query, CaseIDs: []uuid.UUID{d.CaseID}, DocumentIDs: []uuid.UUID{d.ID}, Mode: mode,
+			PageFrom: from, PageTo: to, OwnerID: owner, TopK: 20})
 		if err != nil {
 			return nil, err
 		}
@@ -840,7 +783,7 @@ func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, qu
 			}
 		}
 	} else {
-		lines, err := s.st.Pages.SearchLines(ctx, d.ID, d.Gen, query, 0, 0, 500)
+		lines, err := s.st.Pages.SearchLines(ctx, d.ID, d.Gen, query, from, to, 500)
 		if err != nil {
 			return nil, err
 		}
@@ -857,6 +800,69 @@ func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, qu
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PageNo < out[j].PageNo })
 	return out, nil
+}
+
+// PageOverview describes pages from..to of a document (every page when they
+// are 0): layout title, the start of the text and the tree section holding
+// the page. Previews get shorter as the range grows, to keep long files
+// readable in one call.
+func (s *Service) PageOverview(ctx context.Context, owner, docID uuid.UUID, from, to int) ([]types.PageOverview, error) {
+	d, err := s.st.Documents.GetOwned(ctx, docID, owner)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	from = max(from, 1)
+	if to <= 0 || to > d.PageCount {
+		to = d.PageCount
+	}
+	if to < from {
+		return []types.PageOverview{}, nil
+	}
+	pages, err := s.docs.LoadPages(ctx, d.ID, d.Gen, from, to)
+	if err != nil {
+		return nil, err
+	}
+	var tree *treeView
+	if nodes, err := s.st.Index.Tree(ctx, d.ID, d.Gen); err == nil && len(nodes) > 0 {
+		tree = newTreeView(nodes)
+	}
+	preview := 240
+	switch n := to - from + 1; {
+	case n > 200:
+		preview = 60
+	case n > 50:
+		preview = 120
+	}
+	out := make([]types.PageOverview, 0, len(pages))
+	for _, p := range sortedPages(pages) {
+		o := types.PageOverview{PageNo: p.PageNo, Lines: len(p.Lines), Blank: p.IsBlank,
+			Title: pageTitleText(p), Preview: textutil.Truncate(textutil.CollapseSpace(stripMD(p.Markdown)), preview)}
+		if tree != nil {
+			if path := tree.pathForPage(p.PageNo); len(path) > 1 {
+				o.Section = strings.Join(path[1:], " › ") // without the document title
+			}
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+// pageTitleText returns the first title or heading block of a page.
+func pageTitleText(p *types.ParsedPage) string {
+	for _, b := range p.Blocks {
+		if (b.Type == types.BlockTitle || b.Type == types.BlockHeading) && !b.IsFurniture {
+			if t := textutil.CollapseSpace(strings.TrimLeft(strings.TrimSpace(b.Text), "# ")); t != "" {
+				return textutil.Truncate(t, 160)
+			}
+		}
+	}
+	return ""
+}
+
+func sortedPages(pages []*types.ParsedPage) []*types.ParsedPage {
+	out := append([]*types.ParsedPage(nil), pages...)
+	sort.Slice(out, func(i, j int) bool { return out[i].PageNo < out[j].PageNo })
+	return out
 }
 
 // DocumentTree returns the stored tree (root first).
@@ -908,14 +914,15 @@ func (s *Service) ReadPages(ctx context.Context, owner, docID uuid.UUID, from, t
 	return sb.String(), nil
 }
 
-// ListDocuments lists documents of a KB by metadata filter.
-func (s *Service) ListDocuments(ctx context.Context, owner, kb uuid.UUID, filter types.MetadataFilter, limit int) ([]types.DocumentBrief, error) {
-	k, err := s.st.KBs.GetOwned(ctx, kb, owner)
+// ListDocuments lists the documents of one case by metadata filter.
+func (s *Service) ListDocuments(ctx context.Context, owner, caseID uuid.UUID, filter types.MetadataFilter, statuses []string, limit int) ([]types.DocumentBrief, error) {
+	c, err := s.cases.GetCaseOwned(ctx, owner, caseID)
 	if err != nil {
 		return nil, ErrNotFound
 	}
+	schema := s.caseSchema(ctx, c)
 	docs, err := s.st.Documents.List(ctx, postgres.DocumentFilter{
-		OwnerID: owner, KBIDs: []uuid.UUID{kb}, Metadata: metadata.NormalizeFilter(k.MetadataSchema, filter), Schema: k.MetadataSchema, Limit: limit,
+		OwnerID: owner, CaseIDs: []uuid.UUID{c.ID}, Metadata: metadata.NormalizeFilter(schema, filter), Schema: schema, Statuses: statuses, Limit: limit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadRequest, err)
@@ -923,12 +930,24 @@ func (s *Service) ListDocuments(ctx context.Context, owner, kb uuid.UUID, filter
 	return briefs(docs), nil
 }
 
-// MetadataValues lists distinct values of a metadata key.
-func (s *Service) MetadataValues(ctx context.Context, owner, kb uuid.UUID, key string) ([]interfaces.MetadataValue, error) {
-	if _, err := s.st.KBs.GetOwned(ctx, kb, owner); err != nil {
+func (s *Service) caseSchema(ctx context.Context, c types.Case) *types.MetadataSchema {
+	if sc := s.cases.CaseType(c.CaseType).MetadataSchema; sc != nil {
+		return sc
+	}
+	if kb, err := s.st.KBs.Get(ctx, c.KBID); err == nil {
+		return kb.MetadataSchema
+	}
+	return nil
+}
+
+// MetadataValues lists distinct values of a metadata key over the documents
+// of one case.
+func (s *Service) MetadataValues(ctx context.Context, owner, caseID uuid.UUID, key string) ([]interfaces.MetadataValue, error) {
+	c, err := s.cases.GetCaseOwned(ctx, owner, caseID)
+	if err != nil {
 		return nil, ErrNotFound
 	}
-	vals, err := s.st.Documents.MetadataValues(ctx, kb, key, "", 200)
+	vals, err := s.st.Documents.MetadataValues(ctx, c.KBID, &c.ID, key, "", 200)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadRequest, err)
 	}
@@ -937,6 +956,22 @@ func (s *Service) MetadataValues(ctx context.Context, owner, kb uuid.UUID, key s
 		out[i] = interfaces.MetadataValue{Value: v.Value, Count: v.Count}
 	}
 	return out, nil
+}
+
+// DocumentInCase reports whether a live document the owner can see belongs
+// to the case (the agent's per-document tools check it, §8.1).
+func (s *Service) DocumentInCase(ctx context.Context, owner, docID, caseID uuid.UUID) (bool, error) {
+	_, err := s.st.Documents.GetInCase(ctx, docID, caseID, owner)
+	if errors.Is(err, postgres.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// CaseAlive implements interfaces.Searcher.
+func (s *Service) CaseAlive(ctx context.Context, owner, caseID uuid.UUID) bool {
+	_, err := s.cases.GetCaseOwned(ctx, owner, caseID)
+	return err == nil
 }
 
 // Locate resolves a citation id to lines and boxes.

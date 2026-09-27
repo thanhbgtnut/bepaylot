@@ -28,6 +28,10 @@ type PageImage struct {
 // PageOptions toggles optional engine features.
 type PageOptions struct {
 	Layout, ReadingOrder, Tables, Formulas bool
+	// Refine lets a refining engine (turboocr_vlm) transcribe layout regions
+	// with a VLM. The pipeline turns it off for pages whose PDF text layer is
+	// already good enough.
+	Refine bool
 }
 
 // RawLine is one OCR text line.
@@ -48,6 +52,9 @@ type RawRegion struct {
 	Quad       types.Quad
 	HTML       string // tables
 	LaTeX      string // formulas
+	// Text is a refined transcription of the region (markdown, set by a
+	// refining engine); empty when the region was not refined.
+	Text string
 }
 
 // RawPage is an engine's normalized, not-yet-assembled output.

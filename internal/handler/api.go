@@ -11,8 +11,8 @@ import (
 
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
-	"github.com/thanhenti/bepaylot/internal/application/service/graph"
 	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
@@ -38,8 +38,8 @@ type Handlers struct {
 	// Document modules (§10). Nil fields make their routes answer 503.
 	Config    *config.Config
 	Docs      *document.Service
+	Cases     *cases.Service
 	Searcher  interfaces.Searcher
-	Graph     *graph.Service
 	Wiki      *wiki.Service
 	Engines   *parser.Registry
 	Queue     queue.Enqueuer

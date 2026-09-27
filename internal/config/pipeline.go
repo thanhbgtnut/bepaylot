@@ -47,6 +47,20 @@ type Upload struct {
 	AllowedTypes []string `yaml:"allowed_types"`
 }
 
+// Callback configures the optional document completion callback (§4.7).
+type Callback struct {
+	Timeout     time.Duration `yaml:"timeout"`      // per HTTP attempt
+	MaxAttempts int           `yaml:"max_attempts"` // attempts before the delivery is marked failed
+	// Backoff is the wait before attempt 2, 3, …; the last value repeats.
+	Backoff []time.Duration `yaml:"backoff"`
+	// SigningSecret, when set, signs each body with HMAC-SHA256
+	// (X-Bepaylot-Signature: sha256=hex(hmac(secret, timestamp + "." + body))).
+	SigningSecret string `yaml:"signing_secret"`
+	// AllowPrivateNetworks permits callback hosts that resolve to loopback,
+	// private or link-local addresses. Off in production (SSRF).
+	AllowPrivateNetworks bool `yaml:"allow_private_networks"`
+}
+
 // Workers configures the asynq worker pools and per-document fairness windows.
 type Workers struct {
 	// Role selects which parts of the process run: api | worker | all.
@@ -108,6 +122,43 @@ type TextLayer struct {
 // ParserEngines holds per-engine settings.
 type ParserEngines struct {
 	TurboOCR TurboOCR `yaml:"turboocr"`
+	VLM      VLM      `yaml:"vlm"`
+}
+
+// VLM configures engine turboocr_vlm (§5.9): TurboOCR finds the layout, each
+// region is cropped and transcribed concurrently by an OpenAI-compatible
+// vision model. The engine is registered only when base_url is set.
+type VLM struct {
+	BaseURL     string        `yaml:"base_url"` // up to and including /v1
+	APIKey      string        `yaml:"api_key"`
+	Model       string        `yaml:"model"`
+	Prompt      string        `yaml:"prompt"` // "" = olmOCR's page prompt
+	MaxTokens   int           `yaml:"max_tokens"`
+	Temperature float64       `yaml:"temperature"`
+	Timeout     time.Duration `yaml:"timeout"` // per request
+	// MaxConcurrency bounds in-flight VLM requests per worker process.
+	MaxConcurrency int      `yaml:"max_concurrency"`
+	Classes        []string `yaml:"classes"`  // layout classes sent to the VLM; empty = text-like classes
+	Padding        int      `yaml:"padding"`  // px around each region
+	MaxSide        int      `yaml:"max_side"` // downscale crops above this long side
+	MinSide        int      `yaml:"min_side"`
+	JPEGQuality    int      `yaml:"jpeg_quality"`
+	Retries        int      `yaml:"retries"`
+	OnError        string   `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
+	FullPage       *bool    `yaml:"full_page"` // no region → send the whole page
+	// MinCoverage is the share of a block's OCR words that must agree with
+	// the transcription before it replaces the OCR text.
+	MinCoverage float64 `yaml:"min_coverage"`
+	// SkipWithTextLayer skips the VLM on pages whose PDF text layer is usable.
+	SkipWithTextLayer *bool `yaml:"skip_with_text_layer"`
+}
+
+// FullPageEnabled reports whether full_page is on (default true).
+func (v VLM) FullPageEnabled() bool { return v.FullPage == nil || *v.FullPage }
+
+// SkipWithTextLayerEnabled reports whether skip_with_text_layer is on (default true).
+func (v VLM) SkipWithTextLayerEnabled() bool {
+	return v.SkipWithTextLayer == nil || *v.SkipWithTextLayer
 }
 
 // TurboOCR is the built-in default OCR engine (POST /ocr/raw).
@@ -144,13 +195,18 @@ type Index struct {
 // TreeLLMEnabled defaults to true.
 func (i Index) TreeLLMEnabled() bool { return i.Tree.LLM == nil || *i.Tree.LLM }
 
-// Search configures reasoning (LLM-over-tree) search.
+// Search configures reasoning search: wiki index → wiki pages → source pages
+// (§6.10).
 type Search struct {
-	Provider           string        `yaml:"provider"`
-	Model              string        `yaml:"model"`
-	DefaultMode        string        `yaml:"default_mode"`
-	MaxDocsDirect      int           `yaml:"max_docs_direct"`
-	DocCandidates      int           `yaml:"doc_candidates"`
+	Provider    string `yaml:"provider"`
+	Model       string `yaml:"model"`
+	DefaultMode string `yaml:"default_mode"`
+	// MapTokenBudget: a multi-case (kb_ids) index above it first picks cases.
+	MapTokenBudget int `yaml:"map_token_budget"`
+	// MaxWikiPages wiki pages are read at step 3.
+	MaxWikiPages int `yaml:"max_wiki_pages"`
+	// NodeReadBudget: smaller branches are read without walking the tree.
+	NodeReadBudget     int           `yaml:"node_read_budget"`
 	MaxDocsSelected    int           `yaml:"max_docs_selected"`
 	ParallelDocs       int           `yaml:"parallel_docs"`
 	TreeTokenBudget    int           `yaml:"tree_token_budget"`
@@ -176,6 +232,12 @@ func (c *Config) applyPipelineDefaults() {
 		c.Upload.MaxBytes = 500 << 20
 	}
 	setInt(&c.Upload.MaxFiles, 100)
+	setDuration(&c.Callback.Timeout, 10*time.Second)
+	setInt(&c.Callback.MaxAttempts, 8)
+	if len(c.Callback.Backoff) == 0 {
+		c.Callback.Backoff = []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute,
+			15 * time.Minute, 30 * time.Minute, time.Hour}
+	}
 	if len(c.Upload.AllowedTypes) == 0 {
 		c.Upload.AllowedTypes = []string{"application/pdf", "image/jpeg", "image/png", "image/tiff"}
 	}
@@ -184,7 +246,7 @@ func (c *Config) applyPipelineDefaults() {
 	if c.Workers.Concurrency == nil {
 		c.Workers.Concurrency = map[string]int{}
 	}
-	for pool, n := range map[string]int{"core": 4, "ocr": 8, "index": 6, "enrichment": 8, "wiki": 4, "maintenance": 2} {
+	for pool, n := range map[string]int{"core": 4, "ocr": 8, "index": 6, "wiki": 8, "maintenance": 2} {
 		if c.Workers.Concurrency[pool] <= 0 {
 			c.Workers.Concurrency[pool] = n
 		}
@@ -231,6 +293,23 @@ func (c *Config) applyPipelineDefaults() {
 	setDuration(&p.Engines.TurboOCR.Timeout, 120*time.Second)
 	setInt(&p.Engines.TurboOCR.Breaker.Failures, 5)
 	setDuration(&p.Engines.TurboOCR.Breaker.OpenFor, 30*time.Second)
+	v := &p.Engines.VLM
+	setString(&v.Model, "allenai/olmocr-2-7b")
+	setInt(&v.MaxTokens, 4096)
+	if v.Temperature == 0 {
+		v.Temperature = 0.1
+	}
+	setDuration(&v.Timeout, 180*time.Second)
+	setInt(&v.MaxConcurrency, 4)
+	setInt(&v.Padding, 12)
+	setInt(&v.MaxSide, 1288)
+	setInt(&v.MinSide, 8)
+	setInt(&v.JPEGQuality, 90)
+	setInt(&v.Retries, 1)
+	setString(&v.OnError, "fallback")
+	if v.MinCoverage == 0 {
+		v.MinCoverage = 0.3
+	}
 
 	setInt(&c.Index.Section.MaxTokens, 1500)
 	setInt(&c.Index.Tree.FlatMaxPages, 5)
@@ -239,8 +318,9 @@ func (c *Config) applyPipelineDefaults() {
 
 	s := &c.Search
 	setString(&s.DefaultMode, "reasoning")
-	setInt(&s.MaxDocsDirect, 5)
-	setInt(&s.DocCandidates, 30)
+	setInt(&s.MapTokenBudget, 12000)
+	setInt(&s.MaxWikiPages, 4)
+	setInt(&s.NodeReadBudget, 6000)
 	setInt(&s.MaxDocsSelected, 5)
 	setInt(&s.ParallelDocs, 4)
 	setInt(&s.TreeTokenBudget, 8000)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -49,7 +50,11 @@ type Client struct {
 func New(cfg Config) *Client {
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: cfg.Timeout}
+		// A short dial timeout: an unreachable service must fail fast (and
+		// open the breaker) instead of holding every page for Timeout.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+		hc = &http.Client{Timeout: cfg.Timeout, Transport: tr}
 	}
 	if cfg.BreakerFailures <= 0 {
 		cfg.BreakerFailures = 5

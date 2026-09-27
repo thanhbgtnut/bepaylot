@@ -15,15 +15,18 @@ import (
 
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler"
 	"github.com/thanhenti/bepaylot/internal/llm"
 	"github.com/thanhenti/bepaylot/internal/llm/fakeprovider"
 	"github.com/thanhenti/bepaylot/internal/logging"
+	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/retrieval"
 	"github.com/thanhenti/bepaylot/internal/router"
 	"github.com/thanhenti/bepaylot/internal/skills"
 	"github.com/thanhenti/bepaylot/internal/tools"
+	"github.com/thanhenti/bepaylot/internal/types"
 )
 
 // These tests need a Postgres with pgvector. Set:
@@ -42,6 +45,8 @@ type testEnv struct {
 	apiKey string
 	store  *postgres.Store
 	cancel context.CancelFunc
+	user   types.User
+	cases  *cases.Service
 }
 
 func setup(t *testing.T) *testEnv {
@@ -90,7 +95,13 @@ func setup(t *testing.T) *testEnv {
 	lcfg := config.LLM{DefaultProvider: "fake", DefaultModel: "bepaylot-fake-1", MaxTokens: 1024}
 	ag := agent.New(st, reg, toolReg, skillSvc, acfg, lcfg, log)
 
-	h := &handler.Handlers{Store: st, Agent: ag, Registry: reg, Skills: skillSvc, LLM: lcfg, Agentcfg: acfg, Log: log}
+	ccfg := config.Defaults()
+	ccfg.Cases.TypesDir = "../../configs/case_types"
+	caseSvc, err := cases.New(st, queue.NewInline(), ccfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &handler.Handlers{Store: st, Agent: ag, Registry: reg, Skills: skillSvc, LLM: lcfg, Agentcfg: acfg, Log: log, Cases: caseSvc}
 
 	// pick a free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -115,7 +126,7 @@ func setup(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	return &testEnv{addr: addr, apiKey: plaintext, store: st, cancel: cancel}
+	return &testEnv{addr: addr, apiKey: plaintext, store: st, cancel: cancel, user: user, cases: caseSvc}
 }
 
 // truncate removes only this test's user (cascading to its keys, sessions and

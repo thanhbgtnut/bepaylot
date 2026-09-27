@@ -29,14 +29,32 @@ type MessagesRequest struct {
 	HistoryTokenBudget int `json:"history_token_budget,omitempty" example:"24000"`
 }
 
-// Metadata carries the optional user and session identifiers.
+// Metadata carries the optional user and session identifiers and the case
+// the session works on (bepaylot extensions).
 type Metadata struct {
 	UserID    string `json:"user_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"` // bepaylot extension
-	// KBIDs attaches knowledge bases to the session (enables the kb_* tools).
-	KBIDs []string `json:"kb_ids,omitempty"`
-	// KBFilter pins a metadata filter for every knowledge search of the session.
-	KBFilter map[string]any `json:"kb_filter,omitempty"`
+	// CaseID binds the session to one case (§8.1): the wiki_* and kb_* tools
+	// then see that case only. Binding is permanent: another case is 409.
+	CaseID string `json:"case_id,omitempty"`
+	// Case names the case by KB and code instead of CaseID.
+	Case *CaseRef `json:"case,omitempty"`
+	// KBIDs and KBFilter were removed in spec 0.5; sending them is a 422 so
+	// old clients do not believe their scope is applied.
+	KBIDs    json.RawMessage `json:"kb_ids,omitempty" swaggerignore:"true"`
+	KBFilter json.RawMessage `json:"kb_filter,omitempty" swaggerignore:"true"`
+}
+
+// CaseRef names a case by knowledge base and code (normalized by its type).
+type CaseRef struct {
+	KBID string `json:"kb_id"`
+	Code string `json:"code"`
+}
+
+// HasLegacyScope reports whether the removed kb_ids / kb_filter were sent.
+func (m *Metadata) HasLegacyScope() bool {
+	nonEmpty := func(r json.RawMessage) bool { s := string(r); return s != "" && s != "null" }
+	return m != nil && (nonEmpty(m.KBIDs) || nonEmpty(m.KBFilter))
 }
 
 // InputMessage is one entry of the request messages array.

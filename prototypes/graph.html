@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BePaylot · Graph</title>
+<link rel="stylesheet" href="assets/app.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<script src="assets/api.js"></script>
+<style>
+  .gwrap { display: grid; grid-template-columns: 270px minmax(0, 1fr) 330px; height: 100%; }
+  .gleft, .gright { background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .gleft { border-right: 1px solid var(--border); }
+  .gright { border-left: 1px solid var(--border); overflow: auto; }
+  .gleft .head { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+  .elist { flex: 1; overflow: auto; }
+  .ent { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .ent:hover { background: var(--surface-2); }
+  .ent.in { background: var(--accent-soft); }
+  .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .canvas { position: relative; min-width: 0; min-height: 0; background:
+      radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 22px 22px, var(--bg); }
+  #cy { position: absolute; inset: 0; }
+  .gtools { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; gap: 6px; flex-wrap: wrap; z-index: 2; pointer-events: none; }
+  .gtools > * { pointer-events: auto; box-shadow: var(--shadow); }
+  .legend { position: absolute; left: 12px; bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: 70%; z-index: 2; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .stats { position: absolute; right: 12px; bottom: 12px; font-size: 12px; color: var(--muted); z-index: 2; }
+  .pathbar { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); background: var(--warn-soft); color: var(--warn); border-radius: 999px; padding: 5px 14px; font-size: 13px; z-index: 3; box-shadow: var(--shadow); }
+  .sec { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .sec h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 8px; }
+  .attrs { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .attrs td { padding: 4px 0; vertical-align: top; border-bottom: 1px dashed var(--border); }
+  .attrs td:first-child { color: var(--muted); width: 40%; padding-right: 8px; }
+  .rel { display: flex; gap: 6px; align-items: baseline; padding: 4px 0; font-size: 13px; cursor: pointer; }
+  .rel:hover .o { text-decoration: underline; }
+  .rel .t { font-family: var(--mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .mention { padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .mention:last-child { border-bottom: 0; }
+  @media (max-width: 1150px) { .gwrap { grid-template-columns: 230px minmax(0, 1fr); } .gright { position: fixed; right: 0; top: 56px; bottom: 0; width: 330px; z-index: 50; box-shadow: var(--shadow); } .gright.hidden { display: none; } }
+  @media (max-width: 760px) { .gwrap { grid-template-columns: 1fr; } .gleft { display: none; } .gright { width: 100%; } }
+</style>
+</head>
+<body>
+<div id="page"></div>
+
+<script>
+const { api, esc, $, $$, h, toast, fail, linkCitations, Shell, debounce } = BP;
+const root = document.getElementById('page');
+root.classList.add('flush');
+let KB = null, cy = null, entities = [], selected = null, pathFrom = null;
+
+Shell.init({ page: 'graph', title: 'Knowledge graph', onKB: (kb) => { KB = kb; boot(); },
+  actions: `<button class="btn" id="rebuild">⟳ Xây dựng lại</button>` });
+document.addEventListener('click', (e) => { if (e.target.closest('#rebuild')) rebuild(); });
+
+root.innerHTML = `
+  <div class="gwrap">
+    <aside class="gleft">
+      <div class="head">
+        <input type="search" id="eq" placeholder="Tìm thực thể (tên, bí danh, thuộc tính)…">
+        <div class="row"><select id="etype" style="flex:1"><option value="">Mọi loại</option></select>
+          <select id="depth" title="Số bước khi mở rộng"><option value="1">1 bước</option><option value="2" selected>2 bước</option><option value="3">3 bước</option></select></div>
+      </div>
+      <div class="elist" id="elist"></div>
+    </aside>
+    <section class="canvas">
+      <div class="gtools">
+        <button class="btn sm" id="fit">⤢ Vừa khung</button>
+        <select id="layout" class="btn sm" style="height:28px"><option value="cose">Bố cục lực</option><option value="concentric">Đồng tâm</option><option value="breadthfirst">Phân cấp</option><option value="circle">Vòng tròn</option></select>
+        <button class="btn sm" id="path">⇢ Tìm đường đi</button>
+        <button class="btn sm" id="overview">◎ Tổng quan</button>
+        <button class="btn sm danger" id="clear">Xoá canvas</button>
+      </div>
+      <div id="cy"></div>
+      <div class="legend" id="legend" hidden></div>
+      <div class="stats" id="stats"></div>
+      <div class="pathbar" id="pathbar" hidden></div>
+    </section>
+    <aside class="gright" id="detail"></aside>
+  </div>`;
+
+// ---------------------------------------------------------------- colors
+const PALETTE = ['#2f6fed', '#e5484d', '#1f9d62', '#e0a800', '#7c4dff', '#0ea5a4', '#f76b15', '#d6409f', '#5b6b7f', '#8a6d3b', '#3e63dd', '#29a383'];
+const typeColor = {};
+function colorOf(t) {
+  if (!typeColor[t]) typeColor[t] = PALETTE[Object.keys(typeColor).length % PALETTE.length];
+  return typeColor[t];
+}
+function renderLegend() {
+  const types = [...new Set(cy.nodes().map((n) => n.data('type')))];
+  const lg = $('#legend');
+  lg.hidden = !types.length;
+  lg.innerHTML = types.map((t) => `<span><i class="sw" style="background:${colorOf(t)}"></i>${esc(t)}</span>`).join('');
+  $('#stats').textContent = cy.nodes().length ? `${cy.nodes().length} nút · ${cy.edges().length} cạnh` : '';
+  $$('.ent').forEach((el) => el.classList.toggle('in', cy.getElementById(el.dataset.id).nonempty()));
+}
+
+// ---------------------------------------------------------------- cytoscape
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function initCy() {
+  if (cy) cy.destroy();
+  cy = cytoscape({
+    container: $('#cy'),
+    wheelSensitivity: 0.25,
+    minZoom: 0.15, maxZoom: 3,
+    style: [
+      { selector: 'node', style: {
+        'background-color': 'data(color)', label: 'data(label)', color: css('--text'), 'font-size': 11,
+        'text-valign': 'bottom', 'text-margin-y': 5, 'text-wrap': 'ellipsis', 'text-max-width': 130,
+        width: 'mapData(weight, 0, 20, 22, 54)', height: 'mapData(weight, 0, 20, 22, 54)',
+        'border-width': 2, 'border-color': css('--surface'), 'text-outline-color': css('--bg'), 'text-outline-width': 2,
+      } },
+      { selector: 'node:selected', style: { 'border-color': css('--text'), 'border-width': 3 } },
+      { selector: 'node.path', style: { 'border-color': '#e0a800', 'border-width': 4 } },
+      { selector: 'node.faded, edge.faded', style: { opacity: 0.18 } },
+      { selector: 'edge', style: {
+        width: 1.6, 'line-color': css('--border'), 'target-arrow-color': css('--muted'), 'target-arrow-shape': 'triangle',
+        'arrow-scale': 0.8, 'curve-style': 'bezier', label: 'data(label)', 'font-size': 9, color: css('--muted'),
+        'text-rotation': 'autorotate', 'text-background-color': css('--bg'), 'text-background-opacity': 1, 'text-background-padding': 2,
+      } },
+      { selector: 'edge.path', style: { 'line-color': '#e0a800', 'target-arrow-color': '#e0a800', width: 3 } },
+      { selector: 'edge:selected', style: { 'line-color': css('--accent'), 'target-arrow-color': css('--accent'), width: 2.5 } },
+    ],
+  });
+  cy.on('tap', 'node', (e) => onNodeTap(e.target));
+  cy.on('dbltap', 'node', (e) => expand(e.target.id()));
+  cy.on('tap', (e) => { if (e.target === cy) { cy.elements().removeClass('faded'); } });
+  cy.on('mouseover', 'node', (e) => {
+    const n = e.target;
+    cy.elements().addClass('faded');
+    n.closedNeighborhood().removeClass('faded');
+  });
+  cy.on('mouseout', 'node', () => cy.elements().removeClass('faded'));
+}
+
+function addSubgraph(sg) {
+  const add = [];
+  for (const e of sg.entities || []) {
+    if (cy.getElementById(e.id).nonempty()) continue;
+    add.push({ group: 'nodes', data: { id: e.id, label: e.name, type: e.type, color: colorOf(e.type), weight: Math.min(20, e.mentions || 1), entity: e } });
+  }
+  const ids = new Set(add.map((x) => x.data.id).concat(cy.nodes().map((n) => n.id())));
+  for (const r of sg.relations || []) {
+    if (cy.getElementById(r.id).nonempty() || !ids.has(r.source_id) || !ids.has(r.target_id)) continue;
+    add.push({ group: 'edges', data: { id: r.id, source: r.source_id, target: r.target_id, label: r.type, relation: r } });
+  }
+  cy.add(add);
+  return add.length;
+}
+
+let layoutRun = null;
+function relayout(opts = {}) {
+  if (!cy.nodes().length) return;
+  layoutRun && layoutRun.stop();
+  const name = $('#layout').value;
+  const base = { name, animate: cy.nodes().length < 250, animationDuration: 450, fit: opts.fit !== false, padding: 50 };
+  if (name === 'cose') Object.assign(base, { nodeRepulsion: () => 9000, idealEdgeLength: () => 110, gravity: 0.25, numIter: 1200, randomize: false });
+  if (name === 'concentric') Object.assign(base, { concentric: (n) => n.degree(), levelWidth: () => 2, minNodeSpacing: 30 });
+  if (name === 'breadthfirst') Object.assign(base, { directed: true, spacingFactor: 1.1, roots: selected ? [selected] : undefined });
+  layoutRun = cy.layout(base);
+  layoutRun.run();
+  renderLegend();
+}
+
+// ---------------------------------------------------------------- data
+async function boot() {
+  initCy();
+  $('#detail').innerHTML = `<div class="empty small" style="margin-top:30px">Chọn một nút để xem chi tiết.<br>Nhấp đúp để mở rộng hàng xóm.</div>`;
+  $('#elist').innerHTML = '';
+  if (!KB) return;
+  await searchEntities();
+  if (!entities.length) return renderEmptyKB();
+  const want = new URLSearchParams(location.hash.slice(1)).get('entity');
+  if (want) { await expand(want, true); selectNode(want); } else await overview();
+}
+
+async function searchEntities() {
+  const q = $('#eq').value.trim(), type = $('#etype').value;
+  $('#elist').innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  try {
+    const qs = new URLSearchParams({ limit: 200 });
+    if (q) qs.set('q', q); if (type) qs.set('type', type);
+    const list = (await api(`/kbs/${KB.id}/graph/entities?${qs}`)).data || [];
+    if (!q && !type) {
+      entities = list;
+      const types = [...new Set(list.map((e) => e.type))].sort();
+      $('#etype').innerHTML = `<option value="">Mọi loại (${list.length})</option>` + types.map((t) => `<option value="${esc(t)}">${esc(t)} (${list.filter((e) => e.type === t).length})</option>`).join('');
+    }
+    renderEntityList(list);
+  } catch (e) { $('#elist').innerHTML = `<div class="empty small">${esc(e.message)}</div>`; }
+}
+const reSearch = debounce(searchEntities, 250);
+$('#eq').oninput = reSearch;
+$('#etype').onchange = searchEntities;
+
+function renderEntityList(list) {
+  $('#elist').innerHTML = list.map((e) => `
+    <div class="ent" data-id="${e.id}"><i class="sw" style="background:${colorOf(e.type)}"></i>
+      <div style="flex:1;min-width:0"><div class="ellipsis">${esc(e.name)}</div><div class="small muted">${esc(e.type)}</div></div>
+      <span class="badge" title="Số lần được nhắc">${e.mentions}</span></div>`).join('') || '<div class="empty small">Không có thực thể</div>';
+  $$('.ent').forEach((el) => el.onclick = async () => { await expand(el.dataset.id, true); selectNode(el.dataset.id); });
+  cy && renderLegend();
+}
+
+function renderEmptyKB() {
+  const on = KB.config && KB.config.graph_enabled;
+  $('#elist').innerHTML = '';
+  $('#detail').innerHTML = `<div class="empty" style="margin-top:30px">
+    <div class="big">🕸️</div><b>Chưa có dữ liệu graph</b>
+    <p class="small">Graph gồm các thực thể (nút) và quan hệ (cạnh) được LLM trích xuất từ tài liệu, mỗi quan hệ có bằng chứng trỏ về đúng trang.</p>
+    ${on ? '<p class="small">Graph đang bật. Bấm <b>Xây dựng lại</b> nếu tài liệu đã xử lý xong.</p>'
+         : '<p class="small">Graph đang <b>tắt</b> cho KB này.</p><button class="btn primary" id="enableGraph">Bật graph &amp; xây dựng</button>'}</div>`;
+  const b = $('#enableGraph');
+  if (b) b.onclick = async () => {
+    try {
+      const kb = await api(`/kbs/${KB.id}`, { method: 'PATCH', body: { config: Object.assign({}, KB.config, { graph_enabled: true }) } });
+      Object.assign(KB, kb);
+      await rebuild(true);
+      renderEmptyKB();
+    } catch (e) { fail(e); }
+  };
+}
+
+async function rebuild(silent) {
+  if (!KB) return;
+  if (!silent && !confirm('Trích xuất lại graph cho toàn bộ KB? Việc này gọi LLM cho mọi tài liệu.')) return;
+  try { const r = await api(`/kbs/${KB.id}/graph/rebuild`, { method: 'POST', body: {} }); toast(`Đã đưa ${r.queued ?? ''} tài liệu vào hàng đợi trích xuất`); } catch (e) { fail(e); }
+}
+
+// Overview: the most mentioned entities and their direct neighbours.
+async function overview() {
+  cy.elements().remove();
+  const top = [...entities].sort((a, b) => b.mentions - a.mentions).slice(0, 12);
+  addSubgraph({ entities: top });
+  const subs = await Promise.all(top.map((e) => api(`/graph/entities/${e.id}/neighbors?depth=1`).catch(() => null)));
+  subs.forEach((s) => s && addSubgraph(s));
+  relayout();
+}
+
+async function expand(id, center) {
+  try {
+    const sg = await api(`/graph/entities/${id}/neighbors?depth=${$('#depth').value}`);
+    const before = cy.nodes().length;
+    const n = addSubgraph(sg);
+    if (n || !before) relayout({ fit: !before });
+    if (center) setTimeout(() => { const node = cy.getElementById(id); node.nonempty() && cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 0.9) }, { duration: 350 }); }, n ? 500 : 0);
+    if (!n && before) toast('Không có hàng xóm mới');
+  } catch (e) { fail(e); }
+}
+
+function selectNode(id) {
+  const n = cy.getElementById(id);
+  if (n.empty()) return;
+  cy.elements().unselect();
+  n.select();
+  showDetail(id);
+}
+
+function onNodeTap(node) {
+  if (pathFrom) return finishPath(node);
+  selected = node;
+  showDetail(node.id());
+}
+
+// ---------------------------------------------------------------- detail
+async function showDetail(id) {
+  const box = $('#detail');
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  history.replaceState(null, '', '#entity=' + id);
+  try {
+    const e = await api(`/graph/entities/${id}`);
+    const attrs = Object.entries(e.attributes || {});
+    const rels = e.relations || [];
+    const mentions = e.mentions || [];
+    box.innerHTML = `
+      <div class="sec">
+        <div class="row" style="align-items:flex-start"><i class="sw" style="background:${colorOf(e.type)};margin-top:6px"></i>
+          <div style="flex:1;min-width:0"><h2 style="overflow-wrap:anywhere">${esc(e.name)}</h2><div class="row wrap" style="gap:4px;margin-top:4px"><span class="badge">${esc(e.type)}</span>
+            <span class="badge info">${e.mentions} lần nhắc</span>${e.conflict ? '<span class="badge warn" title="Các nguồn mâu thuẫn">mâu thuẫn</span>' : ''}</div></div>
+          <button class="btn sm icon" id="closeD" title="Đóng">✕</button></div>
+        ${e.summary ? `<p class="small" style="margin:10px 0 0">${esc(e.summary)}</p>` : ''}
+        <div class="row wrap" style="margin-top:10px;gap:6px">
+          <button class="btn sm" id="exp">Mở rộng hàng xóm</button>
+          ${e.wiki_slug ? `<a class="btn sm" href="wiki.html#${encodeURIComponent(e.wiki_slug)}">Trang wiki →</a>` : ''}
+        </div>
+      </div>
+      ${(e.aliases || []).length ? `<div class="sec"><h3>Tên khác</h3><div class="row wrap" style="gap:4px">${e.aliases.map((a) => `<span class="chip">${esc(a)}</span>`).join('')}</div></div>` : ''}
+      ${attrs.length ? `<div class="sec"><h3>Thuộc tính</h3><table class="attrs">${attrs.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</table></div>` : ''}
+      <div class="sec"><h3>Quan hệ (${rels.length})</h3>${rels.map((r) => `
+        <div class="rel" data-other="${r.direction === 'out' ? r.target_id : r.source_id}">
+          <span>${r.direction === 'out' ? '→' : '←'}</span><span class="t">${esc(r.type)}</span>
+          <span class="o">${esc(r.other_name)}</span><span class="muted small">(${esc(r.other_type)})</span></div>`).join('') || '<span class="muted small">—</span>'}</div>
+      <div class="sec"><h3>Bằng chứng (${mentions.length})</h3><div id="ments">${mentions.slice(0, 50).map((m) => {
+        const sp = (m.source_spans || [])[0];
+        const cite = sp ? `doc:${m.document_id}:p${sp.page}:l${sp.line_from}-${sp.line_to}` : `doc:${m.document_id}`;
+        return `<div class="mention"><div class="row" style="gap:6px"><span class="ellipsis small" style="flex:1" title="${esc(m.file_name)}">📄 ${esc(m.file_name || '')}</span><span>${cite}</span></div>
+          ${m.evidence ? `<div class="small muted" style="margin-top:4px">“${esc(m.evidence)}”</div>` : ''}</div>`;
+      }).join('') || '<span class="muted small">—</span>'}</div></div>`;
+    linkCitations($('#ments', box));
+    $('#closeD', box).onclick = () => { box.classList.add('hidden'); box.innerHTML = ''; cy.elements().unselect(); };
+    $('#exp', box).onclick = () => expand(id, true);
+    $$('.rel', box).forEach((el) => el.onclick = async () => {
+      const other = el.dataset.other;
+      if (cy.getElementById(other).empty()) await expand(id);
+      selectNode(other);
+    });
+  } catch (err) { box.innerHTML = `<div class="empty small">${esc(err.message)}</div>`; }
+}
+
+// ---------------------------------------------------------------- path finding
+$('#path').onclick = () => {
+  const sel = cy.nodes(':selected');
+  pathFrom = sel.nonempty() ? sel[0] : null;
+  const bar = $('#pathbar');
+  bar.hidden = false;
+  bar.innerHTML = pathFrom ? `Từ <b>${esc(pathFrom.data('label'))}</b> — chọn nút đích… <a href="#" id="cancelPath">huỷ</a>` : `Chọn nút xuất phát… <a href="#" id="cancelPath">huỷ</a>`;
+  if (!pathFrom) pathFrom = 'pick';
+  $('#cancelPath').onclick = (e) => { e.preventDefault(); endPath(); };
+};
+function endPath() { pathFrom = null; $('#pathbar').hidden = true; }
+async function finishPath(node) {
+  if (pathFrom === 'pick') { pathFrom = null; node.select(); return $('#path').onclick(); }
+  const from = pathFrom;
+  endPath();
+  if (from.id() === node.id()) return;
+  try {
+    const sg = await api(`/kbs/${KB.id}/graph/path?from=${from.id()}&to=${node.id()}&max_depth=4`);
+    if (!(sg.relations || []).length) return toast('Không tìm thấy đường đi (tối đa 4 bước)', 'err');
+    addSubgraph(sg);
+    cy.elements().removeClass('path');
+    (sg.entities || []).forEach((e) => cy.getElementById(e.id).addClass('path'));
+    (sg.relations || []).forEach((r) => cy.getElementById(r.id).addClass('path'));
+    relayout({ fit: false });
+    cy.animate({ fit: { eles: cy.elements('.path'), padding: 80 } }, { duration: 400 });
+    toast(`Đường đi: ${(sg.relations || []).length} bước`);
+  } catch (e) { fail(e); }
+}
+
+$('#fit').onclick = () => cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 300 });
+$('#layout').onchange = () => relayout();
+$('#overview').onclick = () => entities.length && overview();
+$('#clear').onclick = () => { cy.elements().remove(); renderLegend(); };
+</script>
+</body>
+</html>

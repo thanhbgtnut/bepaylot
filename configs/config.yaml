@@ -135,16 +135,26 @@ upload:
   max_files: 100                    # per request
   allowed_types: [application/pdf, image/jpeg, image/png, image/tiff]
 
+# Optional completion callback: POST /v1/kbs/{id}/documents with form field
+# callback_url; when a document reaches completed | partial | failed |
+# cancelled, a JSON POST is sent there (spec §4.7).
+callback:
+  timeout: 10s                      # per attempt
+  max_attempts: 8
+  backoff: [10s, 30s, 1m, 5m, 15m, 30m, 1h]   # wait before attempt 2, 3, …; last repeats
+  signing_secret: ${BEPAYLOT_CALLBACK_SECRET} # empty = unsigned
+  allow_private_networks: ${BEPAYLOT_CALLBACK_ALLOW_PRIVATE}   # true only in dev (localhost callbacks)
+
 workers:
   role: ${BEPAYLOT_ROLE}             # api | worker | all (default all)
-  concurrency: { core: 4, ocr: 8, index: 6, enrichment: 8, wiki: 4, maintenance: 2 }   # render = parser.render.workers
+  concurrency: { core: 4, ocr: 8, index: 6, wiki: 8, maintenance: 2 }   # render = parser.render.workers
   render_inflight_batches: 1        # per document
   render_ahead_pages: 32            # rendered pages waiting for OCR, per document
   ocr_inflight_pages: 8             # per document
   housekeeping_interval: 5m
 
 parser:
-  default_engine: turboocr
+  default_engine: ${BEPAYLOT_OCR_ENGINE}   # turboocr (default) | turboocr_vlm
   pdf_mode: ocr_all                 # ocr_all | auto
   render:
     mode: ${BEPAYLOT_RENDER_MODE}    # multi_threaded (prod, needs libpdfium) | webassembly (default)
@@ -175,6 +185,27 @@ parser:
       timeout: 120s
       options: { layout: true, reading_order: true, tables: true, formulas: false }
       breaker: { failures: 5, open_for: 30s }
+    # turboocr_vlm: TurboOCR layout → crop each region → VLM transcribes the
+    # crops concurrently → text aligned back to OCR lines per page (§5.9).
+    # Registered when base_url is set; pick it with default_engine or the
+    # per-upload `engine` field.
+    vlm:
+      base_url: ${VLM_BASE_URL}     # e.g. http://localhost:1234/v1 (LM Studio), http://vllm:8000/v1
+      api_key: ${VLM_API_KEY}
+      model: allenai/olmocr-2-7b
+      max_tokens: 4096
+      temperature: 0.1
+      timeout: 180s
+      max_concurrency: 4            # in-flight VLM requests per worker process
+      classes: []                   # [] = text-like classes (text, titles, table, formula, header/footer…)
+      padding: 12
+      max_side: 1288                # olmOCR is trained on 1288 px pages
+      jpeg_quality: 90
+      retries: 1
+      on_error: fallback            # fallback = keep OCR text for that region | fail = retry the page
+      full_page: true               # no layout region → send the whole page
+      min_coverage: 0.3             # share of OCR words that must agree with the VLM text
+      skip_with_text_layer: true    # PDF/A pages with a good text layer skip the VLM
 
 index:
   section: { max_tokens: 1500 }
@@ -190,9 +221,10 @@ search:
   provider: ""
   model: ""                         # a fast model is recommended
   default_mode: reasoning           # reasoning | keyword | metadata
-  max_docs_direct: 5
-  doc_candidates: 30
-  max_docs_selected: 5
+  map_token_budget: 12000           # multi-case (kb_ids) index above this → pick cases first
+  max_wiki_pages: 4                 # wiki pages read at step 3 (§6.10)
+  node_read_budget: 6000            # smaller tree branches are read without walking
+  max_docs_selected: 5              # files read from source per request
   parallel_docs: 4
   tree_token_budget: 8000
   full_doc_token_budget: 12000
@@ -203,16 +235,29 @@ search:
   cache_ttl: 10m
   timeout: 60s
 
-graph:
-  enabled_by_default: false         # per KB: config.graph_enabled
-  default_schema: generic
-  schema_dir: configs/graph_schemas
-  batch_size: 8
-  provider: ""
-  model: ""
-  resolve: { name_similarity: 0.85, llm_confirm: false }
+# Cases (§6.2): one YAML file per case type (code pattern/normalization,
+# metadata schemas, parser engine, wiki on/off and schema).
+cases:
+  types_dir: configs/case_types
+  default_type: default             # used when upload/create names no case_type
+  auto_create_on_upload: true       # false = create cases first (POST /kbs/:id/cases)
 
+# LLM Wiki of each case (§6.6–6.9), stored in Postgres.
 wiki:
-  min_mentions: 2
-  page_types: []
-  ingest_delay: 30s
+  enabled_by_default: true          # case types can turn it off with wiki.enabled: false
+  schemas_dir: configs/wiki_schemas
+  default_schema: generic
+  provider: ""                      # "" = llm.default_provider
+  model: ""                         # "" = llm.default_model; extracts entities and relations (JSON only)
+  strict_citations: false           # true = refuse hand edits with invalid footnotes (422)
+  index: { max_tokens: 6000 }
+  # Ingest: the LLM only extracts (1 call per file, 1 per part of a big file);
+  # every page is written by code from the index tree and the extraction.
+  ingest:
+    extract: true                   # false = source pages + overview only, 0 LLM calls
+    doc_token_budget: 24000         # bigger files are extracted part by part (top branches of the tree)
+    parallel: 2                     # parts extracted at the same time
+    max_llm_calls: 8                # per file; above it the file is "partial"
+    max_entities: 40                # per file
+    name_similarity: 0.85           # trigram threshold for entity names without identity
+  lint: { interval: 24h, llm: false }

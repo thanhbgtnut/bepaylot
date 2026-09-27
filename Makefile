@@ -52,7 +52,7 @@ pdfium-worker: ## Build the cgo PDFium worker (needs libpdfium + pkg-config pdfi
 up: ## Start Postgres (pgvector), Redis and MinIO
 	$(COMPOSE) up -d
 	@echo "waiting for postgres..." && until $(COMPOSE) exec -T postgres pg_isready -U bepaylot -d bepaylot >/dev/null 2>&1; do sleep 1; done
-	@echo "postgres ready on localhost:5432"
+	@echo "postgres ready on localhost:$${BEPAYLOT_PG_PORT:-5433}"
 
 .PHONY: down
 down: ## Stop the dev services

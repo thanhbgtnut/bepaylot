@@ -33,7 +33,9 @@ type Store struct {
 	Pages     *PagesRepo
 	Index     *IndexRepo
 	Tasks     *TasksRepo
-	Graph     *GraphRepo
+	Cases     *CasesRepo
+	Wiki      *WikiRepo
+	Callbacks *CallbacksRepo
 }
 
 // Open creates the pool and, when cfg.DB.AutoMigrate is set, runs migrations.
@@ -82,7 +84,9 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		Pages:     &PagesRepo{pool},
 		Index:     &IndexRepo{pool},
 		Tasks:     &TasksRepo{pool},
-		Graph:     &GraphRepo{pool},
+		Cases:     &CasesRepo{pool},
+		Wiki:      &WikiRepo{pool: pool, db: pool},
+		Callbacks: &CallbacksRepo{pool},
 	}, nil
 }
 

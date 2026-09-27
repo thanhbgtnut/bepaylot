@@ -17,18 +17,18 @@ import (
 )
 
 // ErrDuplicate is returned when a document with the same content already
-// exists in the knowledge base.
+// exists in the case.
 var ErrDuplicate = errors.New("duplicate")
 
 // KBRepo persists knowledge bases.
 type KBRepo struct{ pool *pgxpool.Pool }
 
-const kbCols = `id, owner_id, name, description, config, metadata_schema, graph_schema_id, is_temporary, created_at, updated_at`
+const kbCols = `id, owner_id, name, description, config, metadata_schema, is_temporary, created_at, updated_at`
 
 func scanKB(row pgx.Row) (types.KnowledgeBase, error) {
 	var kb types.KnowledgeBase
 	var cfg, schema []byte
-	err := row.Scan(&kb.ID, &kb.OwnerID, &kb.Name, &kb.Description, &cfg, &schema, &kb.GraphSchemaID, &kb.IsTemporary, &kb.CreatedAt, &kb.UpdatedAt)
+	err := row.Scan(&kb.ID, &kb.OwnerID, &kb.Name, &kb.Description, &cfg, &schema, &kb.IsTemporary, &kb.CreatedAt, &kb.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return kb, ErrNotFound
 	}
@@ -94,7 +94,6 @@ type KBPatch struct {
 	Description    *string
 	Config         *types.KBConfig
 	MetadataSchema **types.MetadataSchema
-	GraphSchemaID  **uuid.UUID
 }
 
 // Update applies a patch for the owner.
@@ -120,9 +119,6 @@ func (r *KBRepo) Update(ctx context.Context, id, owner uuid.UUID, p KBPatch) (ty
 			v = b
 		}
 		sets = append(sets, "metadata_schema = "+a.add(v))
-	}
-	if p.GraphSchemaID != nil {
-		sets = append(sets, "graph_schema_id = "+a.add(*p.GraphSchemaID))
 	}
 	return scanKB(r.pool.QueryRow(ctx, `UPDATE knowledge_bases SET `+strings.Join(sets, ", ")+`
 		WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL RETURNING `+kbCols, a.vals...))
@@ -158,25 +154,26 @@ func (r *KBRepo) FinishBatch(ctx context.Context, id uuid.UUID, accepted, reject
 // DocumentsRepo persists documents.
 type DocumentsRepo struct{ pool *pgxpool.Pool }
 
-const docCols = `d.id, d.kb_id, d.batch_id, coalesce(d.created_by, '00000000-0000-0000-0000-000000000000'::uuid), d.file_name, d.mime_type, d.size_bytes, d.sha256, d.storage_key,
-	d.page_count, d.gen, d.status, d.parse_status, d.index_status, d.graph_status, d.pages_done, d.pages_failed, d.pages_text_layer,
-	d.pdfa_part, d.pdfa_conformance, d.pdf_info, d.engine, d.markdown_key, d.error, d.metadata, d.title, d.doc_type, d.summary,
-	d.interactive, d.created_at, d.updated_at`
+const docCols = `d.id, d.kb_id, d.case_id, d.batch_id, coalesce(d.created_by, '00000000-0000-0000-0000-000000000000'::uuid), d.file_name, d.mime_type, d.size_bytes, d.sha256, d.storage_key,
+	d.page_count, d.gen, d.status, d.parse_status, d.index_status, d.wiki_status, d.pages_done, d.pages_failed, d.pages_text_layer,
+	d.pdfa_part, d.pdfa_conformance, d.pdf_info, d.engine, d.markdown_key, d.error, d.metadata, d.title, d.summary,
+	d.interactive, d.callback_url, d.callback_run, d.created_at, d.updated_at`
 
 func scanDoc(row pgx.Row) (types.Document, error) {
 	var d types.Document
-	err := row.Scan(&d.ID, &d.KBID, &d.BatchID, &d.CreatedBy, &d.FileName, &d.MimeType, &d.SizeBytes, &d.SHA256, &d.StorageKey,
-		&d.PageCount, &d.Gen, &d.Status, &d.ParseStatus, &d.IndexStatus, &d.GraphStatus, &d.PagesDone, &d.PagesFailed, &d.PagesTextLayer,
+	err := row.Scan(&d.ID, &d.KBID, &d.CaseID, &d.BatchID, &d.CreatedBy, &d.FileName, &d.MimeType, &d.SizeBytes, &d.SHA256, &d.StorageKey,
+		&d.PageCount, &d.Gen, &d.Status, &d.ParseStatus, &d.IndexStatus, &d.WikiStatus, &d.PagesDone, &d.PagesFailed, &d.PagesTextLayer,
 		&d.PDFAPart, &d.PDFAConformance, &metaScanner{&d.PDFInfo}, &d.Engine, &d.MarkdownKey, &d.Error, &metaScanner{&d.Metadata},
-		&d.Title, &d.DocType, &d.Summary, &d.Interactive, &d.CreatedAt, &d.UpdatedAt)
+		&d.Title, &d.Summary, &d.Interactive, &d.CallbackURL, &d.CallbackRun, &d.CreatedAt, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d, ErrNotFound
 	}
 	return d, err
 }
 
-// Create inserts a document. On a (kb_id, sha256) conflict it returns the
-// existing document and ErrDuplicate.
+// Create inserts a document. On a (case_id, sha256) conflict it returns the
+// existing document of the same case and ErrDuplicate (§6.2): the same file
+// may live in two cases, and a duplicate never resolves to another case.
 func (r *DocumentsRepo) Create(ctx context.Context, d types.Document, interactive bool) (types.Document, error) {
 	meta, err := cleanJSON(nonNilMap(d.Metadata))
 	if err != nil {
@@ -190,15 +187,15 @@ func (r *DocumentsRepo) Create(ctx context.Context, d types.Document, interactiv
 		d.ID = uuid.New()
 	}
 	out, err := scanDoc(r.pool.QueryRow(ctx, `
-		INSERT INTO documents AS d (id, kb_id, batch_id, created_by, file_name, mime_type, size_bytes, sha256, storage_key,
-			status, parse_status, pdfa_part, pdfa_conformance, engine, metadata, interactive)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', 'pending', $10, $11, $12, $13, $14)
+		INSERT INTO documents AS d (id, kb_id, case_id, batch_id, created_by, file_name, mime_type, size_bytes, sha256, storage_key,
+			status, parse_status, pdfa_part, pdfa_conformance, engine, metadata, interactive, callback_url)
+		VALUES ($1, $2, $16, $3, $4, $5, $6, $7, $8, $9, 'queued', 'pending', $10, $11, $12, $13, $14, $15)
 		RETURNING `+docCols,
 		d.ID, d.KBID, d.BatchID, createdBy, cleanText(d.FileName), d.MimeType, d.SizeBytes, d.SHA256, d.StorageKey,
-		d.PDFAPart, d.PDFAConformance, d.Engine, meta, interactive))
+		d.PDFAPart, d.PDFAConformance, d.Engine, meta, interactive, d.CallbackURL, d.CaseID))
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "23505" {
-		existing, gerr := r.FindBySHA(ctx, d.KBID, d.SHA256)
+		existing, gerr := r.FindBySHA(ctx, d.CaseID, d.SHA256)
 		if gerr != nil {
 			return d, gerr
 		}
@@ -214,9 +211,9 @@ func (r *DocumentsRepo) CountByKB(ctx context.Context, kb uuid.UUID) (int, error
 	return n, err
 }
 
-// FindBySHA returns the live document with this content in the KB.
-func (r *DocumentsRepo) FindBySHA(ctx context.Context, kb uuid.UUID, sha string) (types.Document, error) {
-	return scanDoc(r.pool.QueryRow(ctx, `SELECT `+docCols+` FROM documents d WHERE d.kb_id = $1 AND d.sha256 = $2 AND d.deleted_at IS NULL`, kb, sha))
+// FindBySHA returns the live document with this content in the case.
+func (r *DocumentsRepo) FindBySHA(ctx context.Context, caseID uuid.UUID, sha string) (types.Document, error) {
+	return scanDoc(r.pool.QueryRow(ctx, `SELECT `+docCols+` FROM documents d WHERE d.case_id = $1 AND d.sha256 = $2 AND d.deleted_at IS NULL`, caseID, sha))
 }
 
 // Get returns a live document (no owner check).
@@ -229,16 +226,26 @@ func (r *DocumentsRepo) GetAny(ctx context.Context, id uuid.UUID) (types.Documen
 	return scanDoc(r.pool.QueryRow(ctx, `SELECT `+docCols+` FROM documents d WHERE d.id = $1`, id))
 }
 
-// GetOwned returns a live document whose KB the owner owns.
+// GetOwned returns a live document of a live case whose KB the owner owns.
 func (r *DocumentsRepo) GetOwned(ctx context.Context, id, owner uuid.UUID) (types.Document, error) {
 	return scanDoc(r.pool.QueryRow(ctx, `SELECT `+docCols+` FROM documents d JOIN knowledge_bases kb ON kb.id = d.kb_id
+		JOIN cases c ON c.id = d.case_id AND c.deleted_at IS NULL
 		WHERE d.id = $1 AND kb.owner_id = $2 AND d.deleted_at IS NULL AND kb.deleted_at IS NULL`, id, owner))
+}
+
+// GetInCase returns a live document only when it belongs to caseID (and the
+// owner owns the KB): the per-document agent tools use it (§8.1).
+func (r *DocumentsRepo) GetInCase(ctx context.Context, id, caseID, owner uuid.UUID) (types.Document, error) {
+	return scanDoc(r.pool.QueryRow(ctx, `SELECT `+docCols+` FROM documents d JOIN knowledge_bases kb ON kb.id = d.kb_id
+		JOIN cases c ON c.id = d.case_id AND c.deleted_at IS NULL
+		WHERE d.id = $1 AND d.case_id = $2 AND kb.owner_id = $3 AND d.deleted_at IS NULL AND kb.deleted_at IS NULL`, id, caseID, owner))
 }
 
 // DocumentFilter selects documents for listing and search scoping.
 type DocumentFilter struct {
 	OwnerID     uuid.UUID
 	KBIDs       []uuid.UUID
+	CaseIDs     []uuid.UUID
 	DocumentIDs []uuid.UUID
 	Statuses    []string
 	BatchID     *uuid.UUID
@@ -250,12 +257,16 @@ type DocumentFilter struct {
 }
 
 func (f DocumentFilter) where(a *sqlArgs) (string, error) {
-	conds := []string{"d.deleted_at IS NULL", "kb.deleted_at IS NULL"}
+	conds := []string{"d.deleted_at IS NULL", "kb.deleted_at IS NULL",
+		"EXISTS (SELECT 1 FROM cases c WHERE c.id = d.case_id AND c.deleted_at IS NULL)"}
 	if f.OwnerID != uuid.Nil {
 		conds = append(conds, "kb.owner_id = "+a.add(f.OwnerID))
 	}
 	if len(f.KBIDs) > 0 {
 		conds = append(conds, "d.kb_id = ANY("+a.add(f.KBIDs)+")")
+	}
+	if len(f.CaseIDs) > 0 {
+		conds = append(conds, "d.case_id = ANY("+a.add(f.CaseIDs)+")")
 	}
 	if len(f.DocumentIDs) > 0 {
 		conds = append(conds, "d.id = ANY("+a.add(f.DocumentIDs)+")")
@@ -349,13 +360,13 @@ func (r *DocumentsRepo) RankByText(ctx context.Context, f DocumentFilter, query 
 
 // DocUpdate is a partial document update used by the pipeline.
 type DocUpdate struct {
-	Status, ParseStatus, IndexStatus, GraphStatus *string
-	Error                                         *string
-	PageCount                                     *int
-	PDFInfo                                       map[string]any
-	MarkdownKey                                   *string
-	PagesTextLayer                                *int
-	Title, DocType, Summary                       *string
+	Status, ParseStatus, IndexStatus, WikiStatus *string
+	Error                                        *string
+	PageCount                                    *int
+	PDFInfo                                      map[string]any
+	MarkdownKey                                  *string
+	PagesTextLayer                               *int
+	Title, Summary                               *string
 }
 
 // Update applies u when the document is still at generation gen and not
@@ -373,11 +384,10 @@ func (r *DocumentsRepo) Update(ctx context.Context, id uuid.UUID, gen int, u Doc
 	str("status", u.Status)
 	str("parse_status", u.ParseStatus)
 	str("index_status", u.IndexStatus)
-	str("graph_status", u.GraphStatus)
+	str("wiki_status", u.WikiStatus)
 	str("error", u.Error)
 	str("markdown_key", u.MarkdownKey)
 	str("title", u.Title)
-	str("doc_type", u.DocType)
 	str("summary", u.Summary)
 	if u.PageCount != nil {
 		sets = append(sets, "page_count = "+a.add(*u.PageCount))
@@ -460,6 +470,18 @@ func (r *DocumentsRepo) BumpGen(ctx context.Context, id uuid.UUID) (int, error) 
 	return gen, err
 }
 
+// SetCallbackURL sets (or clears, with "") the completion callback URL.
+func (r *DocumentsRepo) SetCallbackURL(ctx context.Context, id uuid.UUID, url string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE documents SET callback_url = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id, url)
+	return err
+}
+
+// BumpCallbackRun starts a new callback run of the current generation.
+func (r *DocumentsRepo) BumpCallbackRun(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE documents SET callback_run = callback_run + 1 WHERE id = $1`, id)
+	return err
+}
+
 // SetEngine changes the parser engine used for (re)parsing.
 func (r *DocumentsRepo) SetEngine(ctx context.Context, id uuid.UUID, engine string) error {
 	_, err := r.pool.Exec(ctx, `UPDATE documents SET engine = $2, updated_at = now() WHERE id = $1`, id, engine)
@@ -522,17 +544,24 @@ type MetadataValue struct {
 	Count int    `json:"count"`
 }
 
-// MetadataValues lists distinct values of key in a KB.
-func (r *DocumentsRepo) MetadataValues(ctx context.Context, kb uuid.UUID, key, prefix string, limit int) ([]MetadataValue, error) {
+// MetadataValues lists distinct values of key over the live documents of a
+// KB, or of one case when caseID is set (the agent only counts its case).
+func (r *DocumentsRepo) MetadataValues(ctx context.Context, kb uuid.UUID, caseID *uuid.UUID, key, prefix string, limit int) ([]MetadataValue, error) {
 	if !metaKeyRe.MatchString(key) {
 		return nil, fmt.Errorf("invalid metadata key %q", key)
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := r.pool.Query(ctx, fmt.Sprintf(`SELECT metadata->>$2 AS v, count(*) FROM documents
-		WHERE kb_id = $1 AND deleted_at IS NULL AND metadata ? $2 AND ($3 = '' OR unaccent_vi(metadata->>$2) LIKE unaccent_vi($3) || '%%')
-		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT %d`, limit), kb, key, prefix)
+	var caseArg any
+	if caseID != nil {
+		caseArg = *caseID
+	}
+	rows, err := r.pool.Query(ctx, fmt.Sprintf(`SELECT d.metadata->>$2 AS v, count(*) FROM documents d
+		JOIN cases c ON c.id = d.case_id AND c.deleted_at IS NULL
+		WHERE d.kb_id = $1 AND ($4::uuid IS NULL OR d.case_id = $4) AND d.deleted_at IS NULL AND d.metadata ? $2
+		  AND ($3 = '' OR unaccent_vi(d.metadata->>$2) LIKE unaccent_vi($3) || '%%')
+		GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT %d`, limit), kb, key, prefix, caseArg)
 	if err != nil {
 		return nil, err
 	}
@@ -548,9 +577,9 @@ func (r *DocumentsRepo) MetadataValues(ctx context.Context, kb uuid.UUID, key, p
 	return out, rows.Err()
 }
 
-// MetadataKeys lists metadata keys in use in a KB (for KBs without schema).
-func (r *DocumentsRepo) MetadataKeys(ctx context.Context, kb uuid.UUID) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `SELECT DISTINCT jsonb_object_keys(metadata) FROM documents WHERE kb_id = $1 AND deleted_at IS NULL LIMIT 200`, kb)
+// MetadataKeys lists metadata keys in use in a case (for cases without schema).
+func (r *DocumentsRepo) MetadataKeys(ctx context.Context, caseID uuid.UUID) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `SELECT DISTINCT jsonb_object_keys(metadata) FROM documents WHERE case_id = $1 AND deleted_at IS NULL LIMIT 200`, caseID)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +640,86 @@ func (r *DocumentsRepo) Deleting(ctx context.Context, limit int) ([]types.Docume
 			return nil, err
 		}
 		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// SoftDeleteByCase marks every live document of a case deleting and returns
+// them (case:delete purges them one by one).
+func (r *DocumentsRepo) SoftDeleteByCase(ctx context.Context, caseID uuid.UUID) ([]types.Document, error) {
+	rows, err := r.pool.Query(ctx, `UPDATE documents AS d SET status = 'deleting', deleted_at = coalesce(d.deleted_at, now())
+		WHERE d.case_id = $1 AND (d.deleted_at IS NULL OR d.status = 'deleting') RETURNING `+docCols, caseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Document
+	for rows.Next() {
+		d, err := scanDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ByCase returns the live documents of a case, oldest first.
+func (r *DocumentsRepo) ByCase(ctx context.Context, caseID uuid.UUID) ([]types.Document, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+docCols+` FROM documents d WHERE d.case_id = $1 AND d.deleted_at IS NULL ORDER BY d.created_at, d.id`, caseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Document
+	for rows.Next() {
+		d, err := scanDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// WikiPending returns searchable documents whose wiki ingest has not started
+// and that stopped moving before `before` (housekeeping re-queues them).
+func (r *DocumentsRepo) WikiPending(ctx context.Context, before time.Time, limit int) ([]types.Document, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+docCols+` FROM documents d
+		WHERE d.deleted_at IS NULL AND d.wiki_status = 'pending' AND d.index_status = 'done'
+		  AND d.status IN ('completed','partial','enriching') AND d.updated_at < $1
+		ORDER BY d.updated_at LIMIT $2`, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Document
+	for rows.Next() {
+		d, err := scanDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// OrphanCaseIDs returns documents whose case_id points to no case at all
+// (documents.case_id has no FK on purpose; housekeeping reports them).
+func (r *DocumentsRepo) OrphanCaseIDs(ctx context.Context, limit int) (map[uuid.UUID]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT d.id, d.case_id FROM documents d
+		WHERE d.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM cases c WHERE c.id = d.case_id) LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]uuid.UUID{}
+	for rows.Next() {
+		var id, c uuid.UUID
+		if err := rows.Scan(&id, &c); err != nil {
+			return nil, err
+		}
+		out[id] = c
 	}
 	return out, rows.Err()
 }

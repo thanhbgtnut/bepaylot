@@ -27,12 +27,16 @@ type Inline struct {
 	// Failed collects tasks that exhausted retries.
 	Failed []string
 	dl     DeadLetterSink
+	// HonorDelays makes Opts.ProcessIn delay a task. Off by default so tests
+	// can Drain everything at once; the in-process runtime turns it on.
+	HonorDelays bool
 }
 
 type inlineTask struct {
-	typ     string
-	payload []byte
-	id      string
+	typ       string
+	payload   []byte
+	id        string
+	notBefore time.Time // Opts.ProcessIn
 }
 
 // NewInline returns an empty inline queue.
@@ -62,7 +66,11 @@ func (q *Inline) Enqueue(_ context.Context, taskType string, payload any, o Opts
 		}
 		q.seen[o.TaskID] = true
 	}
-	q.queue = append(q.queue, inlineTask{typ: taskType, payload: b, id: o.TaskID})
+	t := inlineTask{typ: taskType, payload: b, id: o.TaskID}
+	if o.ProcessIn > 0 && q.HonorDelays {
+		t.notBefore = time.Now().Add(o.ProcessIn)
+	}
+	q.queue = append(q.queue, t)
 	return nil
 }
 
@@ -73,17 +81,26 @@ func (q *Inline) Pending() int {
 	return len(q.queue)
 }
 
-// Drain runs queued tasks (including ones they enqueue) until the queue is
-// empty or limit tasks ran. Each task is retried up to its MaxRetry.
+// Drain runs due tasks (including ones they enqueue) until none is due or
+// limit tasks ran. With HonorDelays, delayed tasks wait for a later Drain.
+// Each task is retried up to its MaxRetry.
 func (q *Inline) Drain(ctx context.Context, limit int) error {
 	for n := 0; n < limit; n++ {
 		q.mu.Lock()
-		if len(q.queue) == 0 {
+		due := -1
+		now := time.Now()
+		for i, t := range q.queue {
+			if !t.notBefore.After(now) {
+				due = i
+				break
+			}
+		}
+		if due < 0 {
 			q.mu.Unlock()
 			return nil
 		}
-		t := q.queue[0]
-		q.queue = q.queue[1:]
+		t := q.queue[due]
+		q.queue = append(q.queue[:due:due], q.queue[due+1:]...)
 		h := q.handlers[t.typ]
 		q.mu.Unlock()
 		if h == nil {

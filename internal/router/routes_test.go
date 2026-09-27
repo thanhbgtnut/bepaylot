@@ -19,9 +19,9 @@ import (
 // docInfraPaths are routes that intentionally have no OpenAPI annotation
 // (the docs plumbing itself).
 var docInfraPaths = map[string]bool{
-	"GET /openapi.yaml": true,
-	"GET /docs":         true,
-	"GET /swagger/*any": true,
+	"GET /openapi.yaml":  true,
+	"GET /docs":          true,
+	"GET /swagger/{any}": true,
 }
 
 // TestRoutesMatchOpenAPISpec guards against adding or renaming an HTTP endpoint
@@ -79,7 +79,7 @@ func TestRoutesMatchOpenAPISpec(t *testing.T) {
 	}
 }
 
-var hertzParam = regexp.MustCompile(`:([A-Za-z0-9_]+)`)
+var hertzParam = regexp.MustCompile(`[:*]([A-Za-z0-9_]+)`)
 
 func hertzToOpenAPIPath(p string) string {
 	return hertzParam.ReplaceAllString(p, `{$1}`)

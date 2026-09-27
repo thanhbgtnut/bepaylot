@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BePaylot · Wiki</title>
+<link rel="stylesheet" href="assets/app.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="assets/api.js"></script>
+<style>
+  .wiki { display: grid; grid-template-columns: 260px minmax(0, 1fr) 280px; height: 100%; }
+  .wlist { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .wlist .head { padding: 12px; border-bottom: 1px solid var(--border); }
+  .wlist .items { flex: 1; overflow: auto; padding: 6px 0; }
+  .grp { padding: 10px 14px 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .witem { display: block; padding: 6px 14px; color: var(--text); border-left: 3px solid transparent; }
+  .witem:hover { background: var(--surface-2); text-decoration: none; }
+  .witem.active { background: var(--accent-soft); border-left-color: var(--accent); color: var(--accent); font-weight: 500; }
+  .witem .s { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .article { overflow: auto; min-height: 0; }
+  .article .inner { max-width: 820px; margin: 0 auto; padding: 26px 32px 60px; }
+  .article .md h1:first-child { font-size: 26px; margin-bottom: 4px; }
+  .side { border-left: 1px solid var(--border); background: var(--surface); overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+  .side h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+  .links a { display: inline-block; margin: 0 4px 4px 0; }
+  .editor textarea { width: 100%; min-height: 55vh; font-family: var(--mono); font-size: 13px; line-height: 1.55; }
+  .rev { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  @media (max-width: 1100px) { .wiki { grid-template-columns: 230px minmax(0, 1fr); } .side { display: none; } }
+  @media (max-width: 760px) { .wiki { grid-template-columns: 1fr; } .wlist { display: none; } }
+</style>
+</head>
+<body>
+<div id="page"></div>
+
+<script>
+const { api, esc, $, $$, h, fmtDate, toast, fail, renderMarkdown, linkCitations, Shell, dialog } = BP;
+const root = document.getElementById('page');
+root.classList.add('flush');
+let KB = null, pages = [], current = null, filterText = '';
+
+Shell.init({ page: 'wiki', title: 'Wiki', onKB: (kb) => { KB = kb; load(); },
+  actions: `<button class="btn" id="rebuild" title="Trích xuất lại graph và sinh lại wiki">⟳ Xây dựng lại</button>` });
+document.addEventListener('click', (e) => { if (e.target.closest('#rebuild')) rebuild(); });
+window.addEventListener('hashchange', () => openPage(decodeURIComponent(location.hash.slice(1))));
+
+root.innerHTML = `
+  <div class="wiki">
+    <aside class="wlist">
+      <div class="head"><input type="search" id="wq" placeholder="Tìm trang wiki…" style="width:100%"></div>
+      <div class="items" id="items"></div>
+    </aside>
+    <main class="article" id="article"></main>
+    <aside class="side" id="side"></aside>
+  </div>`;
+$('#wq').oninput = (e) => { filterText = e.target.value.toLowerCase(); renderList(); };
+
+const TYPE_LABEL = { index: 'Mục lục', entity: 'Thực thể', topic: 'Chủ đề', overview: 'Tổng quan' };
+
+async function load() {
+  pages = []; current = null;
+  $('#items').innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  $('#article').innerHTML = ''; $('#side').innerHTML = '';
+  if (!KB) { $('#items').innerHTML = ''; $('#article').innerHTML = `<div class="empty">Chưa chọn knowledge base.</div>`; return; }
+  try {
+    pages = (await api(`/kbs/${KB.id}/wiki/pages`)).data || [];
+  } catch (e) { $('#items').innerHTML = `<div class="empty small">${esc(e.message)}</div>`; return; }
+  renderList();
+  if (!pages.length) return renderEmptyKB();
+  const want = decodeURIComponent(location.hash.slice(1));
+  const first = pages.find((p) => p.slug === want) || pages.find((p) => p.page_type === 'index') || pages[0];
+  if (first.slug === want) openPage(want); else location.hash = encodeURIComponent(first.slug);
+}
+
+function renderEmptyKB() {
+  const on = KB.config && KB.config.graph_enabled;
+  $('#article').innerHTML = `<div class="empty" style="margin-top:8vh">
+    <div class="big">📚</div>
+    <h2>Knowledge base này chưa có trang wiki</h2>
+    <p class="muted" style="max-width:520px;margin:10px auto">Wiki được sinh tự động từ knowledge graph: mỗi thực thể (người, tổ chức, thửa đất, hợp đồng…) có một trang, liên kết với nhau bằng <code>[[slug]]</code> và trích dẫn tới đúng trang tài liệu.</p>
+    ${on ? `<p class="muted">Graph đang <b>bật</b>. Nếu tài liệu đã xử lý xong mà chưa có wiki, bấm <b>Xây dựng lại</b>.</p>`
+         : `<p class="muted">Graph đang <b>tắt</b> cho KB này.</p><button class="btn primary" id="enableGraph">Bật graph &amp; xây dựng</button>`}
+  </div>`;
+  const b = $('#enableGraph'); if (b) b.onclick = enableGraph;
+}
+
+async function enableGraph() {
+  try {
+    const kb = await api(`/kbs/${KB.id}`, { method: 'PATCH', body: { config: Object.assign({}, KB.config, { graph_enabled: true }) } });
+    Object.assign(KB, kb);
+    await rebuild(true);
+    renderEmptyKB();
+  } catch (e) { fail(e); }
+}
+async function rebuild(silent) {
+  if (!KB) return;
+  if (!silent && !confirm('Trích xuất lại graph và sinh lại wiki cho toàn bộ KB? Việc này gọi LLM cho mọi tài liệu.')) return;
+  try { const r = await api(`/kbs/${KB.id}/graph/rebuild`, { method: 'POST', body: {} }); toast(`Đã đưa ${r.queued ?? ''} tài liệu vào hàng đợi trích xuất graph`); } catch (e) { fail(e); }
+}
+
+function renderList() {
+  const groups = {};
+  for (const p of pages) {
+    if (filterText && !(p.title + ' ' + p.slug + ' ' + (p.summary || '') + ' ' + (p.aliases || []).join(' ')).toLowerCase().includes(filterText)) continue;
+    (groups[p.page_type] = groups[p.page_type] || []).push(p);
+  }
+  const order = Object.keys(groups).sort((a, b) => (a === 'index' ? -1 : b === 'index' ? 1 : a.localeCompare(b)));
+  $('#items').innerHTML = order.map((t) => `<div class="grp">${esc(TYPE_LABEL[t] || t)} · ${groups[t].length}</div>` +
+    groups[t].sort((a, b) => a.title.localeCompare(b.title, 'vi')).map((p) => `
+      <a class="witem ${current && current.slug === p.slug ? 'active' : ''}" href="#${encodeURIComponent(p.slug)}">
+        <div class="ellipsis">${esc(p.title)}</div>${p.summary ? `<div class="s">${esc(p.summary)}</div>` : ''}</a>`).join('')).join('')
+    || (pages.length ? '<div class="empty small">Không có trang khớp</div>' : '<div class="empty small">Chưa có trang</div>');
+}
+
+async function openPage(slug) {
+  if (!KB || !slug) return;
+  $('#article').innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+  try {
+    current = await api(`/kbs/${KB.id}/wiki/pages/${encodeURIComponent(slug)}`);
+  } catch (e) {
+    current = null;
+    $('#article').innerHTML = `<div class="empty"><div class="big">🔍</div>Không có trang <code>${esc(slug)}</code><br><span class="small">${esc(e.message)}</span></div>`;
+    $('#side').innerHTML = '';
+    renderList();
+    return;
+  }
+  renderList();
+  renderArticle();
+  renderSide();
+}
+
+function renderArticle() {
+  const p = current;
+  const known = new Set(pages.map((x) => x.slug));
+  const art = $('#article');
+  art.innerHTML = `<div class="inner">
+    <div class="row" style="justify-content:flex-end;margin-bottom:8px;gap:6px">
+      <span class="badge">${esc(TYPE_LABEL[p.page_type] || p.page_type)}</span>
+      <span class="badge ${p.last_edit_source === 'human' || p.last_edit_source === 'user' ? 'warn' : ''}">v${p.version} · ${esc(p.last_edit_source)}</span>
+      <button class="btn sm" id="edit">✎ Sửa</button>
+    </div>
+    <div id="body"></div></div>`;
+  const md = renderMarkdown(p.content, { wikiLinks: true, knownSlugs: known });
+  $('#body', art).appendChild(md);
+  $('#edit', art).onclick = openEditor;
+  art.scrollTop = 0;
+}
+
+function renderSide() {
+  const p = current;
+  const side = $('#side');
+  const link = (s) => `<a class="wikilink${pages.some((x) => x.slug === s) ? '' : ' dead'}" href="#${encodeURIComponent(s)}">${esc((pages.find((x) => x.slug === s) || {}).title || s)}</a>`;
+  side.innerHTML = `
+    ${p.summary ? `<div><h3>Tóm tắt</h3><div class="small">${esc(p.summary)}</div></div>` : ''}
+    ${(p.aliases || []).length ? `<div><h3>Tên khác</h3><div class="row wrap" style="gap:4px">${p.aliases.map((a) => `<span class="chip">${esc(a)}</span>`).join('')}</div></div>` : ''}
+    ${p.entity_id ? `<div><h3>Graph</h3><a class="btn sm" href="graph.html#entity=${p.entity_id}">Xem thực thể trên graph →</a></div>` : ''}
+    <div><h3>Nguồn (${(p.source_refs || []).length})</h3><div id="refs" class="small">${(p.source_refs || []).map((r) => `<div>${esc(r)}</div>`).join('') || '<span class="muted">—</span>'}</div></div>
+    <div><h3>Liên kết đến (${(p.out_links || []).length})</h3><div class="links small">${(p.out_links || []).map(link).join('') || '<span class="muted">—</span>'}</div></div>
+    <div><h3>Được nhắc từ (${(p.in_links || []).length})</h3><div class="links small">${(p.in_links || []).map(link).join('') || '<span class="muted">—</span>'}</div></div>
+    <div><h3>Lịch sử</h3><div class="small muted">Cập nhật ${fmtDate(p.updated_at)}</div><button class="btn sm" id="revs" style="margin-top:6px">Xem các phiên bản</button></div>`;
+  linkCitations($('#refs', side));
+  $('#revs', side).onclick = showRevisions;
+}
+
+async function showRevisions() {
+  const d = dialog(`<div class="dh"><h2>Phiên bản · ${esc(current.title)}</h2><button class="btn icon" data-close>✕</button></div><div class="db" id="rv"><span class="spinner"></span></div>`);
+  d.style.width = 'min(760px, calc(100vw - 32px))';
+  try {
+    const revs = await api(`/kbs/${KB.id}/wiki/pages/${encodeURIComponent(current.slug)}/revisions`);
+    const box = $('#rv', d);
+    box.innerHTML = (revs || []).map((r, i) => `<div class="rev"><div class="row"><b>v${r.version}</b><span class="badge">${esc(r.edit_source)}</span><span class="muted small" style="flex:1">${fmtDate(r.edited_at)}</span><button class="btn sm" data-i="${i}">Xem</button></div>${r.summary ? `<div class="small muted">${esc(r.summary)}</div>` : ''}</div>`).join('') || '<div class="muted">Chưa có phiên bản cũ.</div>';
+    $$('[data-i]', box).forEach((b) => b.onclick = () => { box.innerHTML = ''; box.appendChild(renderMarkdown(revs[+b.dataset.i].content, { wikiLinks: true })); });
+  } catch (e) { $('#rv', d).textContent = e.message; }
+}
+
+function openEditor() {
+  const p = current;
+  const art = $('#article');
+  art.innerHTML = `<div class="inner editor stack">
+    <div class="row"><h2 style="flex:1">Sửa trang</h2><button class="btn" id="cancel">Huỷ</button><button class="btn primary" id="save">Lưu</button></div>
+    <label class="field"><span>Tiêu đề</span><input type="text" id="etitle" value="${esc(p.title)}"></label>
+    <label class="field"><span>Tóm tắt</span><input type="text" id="esum" value="${esc(p.summary || '')}"></label>
+    <label class="field"><span>Nội dung (Markdown, liên kết bằng [[slug]])</span><textarea id="econtent">${esc(p.content)}</textarea></label>
+    <div class="small muted">Trang sửa tay sẽ không bị các lần sinh wiki tự động sau ghi đè.</div>
+  </div>`;
+  $('#cancel', art).onclick = renderArticle;
+  $('#save', art).onclick = async () => {
+    try {
+      current = await api(`/kbs/${KB.id}/wiki/pages/${encodeURIComponent(p.slug)}`, { method: 'PUT', body: { title: $('#etitle').value, summary: $('#esum').value, content: $('#econtent').value } });
+      const i = pages.findIndex((x) => x.slug === current.slug); if (i >= 0) pages[i] = current;
+      toast('Đã lưu phiên bản v' + current.version);
+      renderList(); renderArticle(); renderSide();
+    } catch (e) { fail(e); }
+  };
+}
+</script>
+</body>
+</html>

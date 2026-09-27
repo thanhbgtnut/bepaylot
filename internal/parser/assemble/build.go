@@ -24,6 +24,10 @@ type Options struct {
 	// in front of it (§5.2 note 3).
 	ReadingOrderFix  bool
 	LowConfThreshold float64
+	// MinRefineCoverage is the share of a block's OCR words that must agree
+	// with a region transcription (RawRegion.Text) before it is used; 0 means
+	// DefaultMinCoverage.
+	MinRefineCoverage float64
 	// AssetKey names the stored crop of a figure block; empty disables links.
 	AssetKey func(pageNo, blockNo int) string
 }
@@ -68,9 +72,10 @@ func BlockTypeOf(class string, overrides map[string]string) types.BlockType {
 }
 
 type workBlock struct {
-	block types.ParsedBlock
-	lines []int // indexes into raw lines
-	rank  float64
+	block   types.ParsedBlock
+	lines   []int // indexes into raw lines
+	rank    float64
+	refined string // region transcription, if any
 }
 
 // Build assembles a page without markdown; call Render afterwards (possibly
@@ -88,7 +93,7 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 		wb := &workBlock{block: types.ParsedBlock{
 			SourceID: r.ID, Type: BlockTypeOf(r.Class, opt.ClassMap), RawClass: r.Class,
 			Confidence: r.Confidence, BBox: r.Quad.BBox(), HTML: r.HTML, LaTeX: r.LaTeX,
-		}}
+		}, refined: r.Text}
 		blocks = append(blocks, wb)
 		byRegion[r.ID] = wb
 	}
@@ -142,6 +147,7 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 	for bi, wb := range blocks {
 		b := wb.block
 		b.BlockNo = bi
+		from := len(page.Lines)
 		texts := make([]string, 0, len(wb.lines))
 		for _, li := range wb.lines {
 			l := raw.Lines[li]
@@ -158,6 +164,22 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 			}
 		}
 		b.Text = strings.Join(texts, "\n")
+		if b.Type == types.BlockTable && from == len(page.Lines) {
+			// A table without OCR lines (whole-page VLM mode) gets one line
+			// per row so search and locate reach its cells.
+			page.Lines = append(page.Lines, tableRowLines(&b, cleanRefined(b.Type, wb.refined))...)
+		}
+		if wb.refined != "" {
+			switch b.Type {
+			case types.BlockTable: // a markdown table; lines keep OCR text (cells)
+				if t := cleanRefined(b.Type, wb.refined); t != "" {
+					b.Text, b.TextSource = t, types.TextSourceVLM
+				}
+			case types.BlockFigure:
+			default:
+				refineBlock(page, &b, from, len(page.Lines), wb.refined, opt.MinRefineCoverage)
+			}
+		}
 		if b.Type == types.BlockFigure && opt.AssetKey != nil {
 			b.AssetKey = opt.AssetKey(opt.PageNo, bi)
 		}
@@ -165,6 +187,9 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 			b.IsFurniture = true
 		}
 		page.Blocks = append(page.Blocks, b)
+	}
+	if Refined(page) {
+		page.TextSource = types.TextSourceVLM
 	}
 	return page
 }

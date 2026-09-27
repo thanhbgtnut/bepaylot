@@ -1,6 +1,7 @@
 // Package index is Module 2 (§6): sections, the vectorless document tree with
-// LLM summaries, and search — metadata filtering, Postgres full-text and
-// PageIndex-style reasoning over the tree. It uses no embeddings.
+// LLM summaries, and search — case scope and metadata filtering, Postgres
+// full-text, then reasoning over the case wiki index, wiki pages and
+// PageIndex-style trees down to verified source lines. It uses no embeddings.
 package index
 
 import (
@@ -31,8 +32,10 @@ type Deps struct {
 	// Either may be nil (extractive summaries / keyword fallback).
 	TreeLLM   interfaces.Completer
 	SearchLLM interfaces.Completer
-	Config    *config.Config
-	Log       *slog.Logger
+	// Cases resolves search scopes and case codes.
+	Cases  interfaces.CaseService
+	Config *config.Config
+	Log    *slog.Logger
 }
 
 // Service implements Module 2.
@@ -42,6 +45,8 @@ type Service struct {
 	q         queue.Enqueuer
 	treeLLM   interfaces.Completer
 	searchLLM interfaces.Completer
+	cases     interfaces.CaseService
+	wiki      interfaces.WikiReader
 	cfg       *config.Config
 	log       *slog.Logger
 	cache     *ttlCache
@@ -54,7 +59,7 @@ func New(d Deps) *Service {
 		log = slog.Default()
 	}
 	return &Service{
-		st: d.Store, docs: d.Docs, q: d.Queue, treeLLM: d.TreeLLM, searchLLM: d.SearchLLM, cfg: d.Config,
+		st: d.Store, docs: d.Docs, q: d.Queue, treeLLM: d.TreeLLM, searchLLM: d.SearchLLM, cases: d.Cases, cfg: d.Config,
 		log: log.With("module", "index"), cache: newTTLCache(d.Config.Search.CacheTTL, 2000),
 	}
 }
@@ -63,6 +68,10 @@ var (
 	_ interfaces.SectionReader = (*Service)(nil)
 	_ interfaces.Searcher      = (*Service)(nil)
 )
+
+// SetWiki plugs in the case wiki, read first by reasoning search (§6.10).
+// The wiki depends on this service's sections, hence the setter.
+func (s *Service) SetWiki(w interfaces.WikiReader) { s.wiki = w }
 
 // Handlers returns the task handlers owned by Module 2.
 func (s *Service) Handlers() map[string]queue.Handler {
@@ -98,6 +107,11 @@ func (s *Service) Sections(ctx context.Context, doc uuid.UUID, gen int) ([]types
 	return s.st.Index.Sections(ctx, doc, gen)
 }
 
+// Tree implements interfaces.SectionReader.
+func (s *Service) Tree(ctx context.Context, doc uuid.UUID, gen int) ([]types.TreeNode, error) {
+	return s.st.Index.Tree(ctx, doc, gen)
+}
+
 // build creates the sections of a freshly assembled document.
 func (s *Service) build(ctx context.Context, d types.Document) error {
 	pages, err := s.docs.LoadPages(ctx, d.ID, d.Gen, 0, 0)
@@ -112,8 +126,8 @@ func (s *Service) build(ctx context.Context, d types.Document) error {
 		queue.Opts{TaskID: fmt.Sprintf("tree:%s:%d", d.ID, d.Gen), Interactive: d.Interactive})
 }
 
-// tree builds the document tree, node summaries and the document card, then
-// hands the document to Module 3 when graph extraction is enabled.
+// tree builds the document tree, node summaries and the document card. The
+// document store then queues it for the case wiki (§6.8) when enabled.
 func (s *Service) tree(ctx context.Context, d types.Document) error {
 	secs, err := s.st.Index.Sections(ctx, d.ID, d.Gen)
 	if err != nil {
@@ -153,15 +167,7 @@ func (s *Service) tree(ctx context.Context, d types.Document) error {
 	if err := s.st.Index.ReplaceTree(ctx, d.ID, d.Gen, flatten(root, d.ID, d.Gen, secs)); err != nil {
 		return err
 	}
-	if err := s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil); err != nil {
-		return err
-	}
-	cur, err := s.docs.GetDocument(ctx, d.ID)
-	if err == nil && cur.Status == types.DocEnriching {
-		return s.q.Enqueue(ctx, types.TaskGraphExtract, types.DocTaskPayload{DocumentID: d.ID, KBID: d.KBID, Gen: d.Gen},
-			queue.Opts{TaskID: fmt.Sprintf("gx:%s:%d", d.ID, d.Gen)})
-	}
-	return nil
+	return s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil)
 }
 
 func (s *Service) proposeTOC(ctx context.Context, pages []*types.ParsedPage) []*node {
@@ -283,7 +289,6 @@ func (s *Service) card(ctx context.Context, d types.Document, root *node, pages 
 	var out interfaces.DocumentCard
 	var raw struct {
 		Title   string `json:"title"`
-		DocType string `json:"doc_type"`
 		Summary string `json:"summary"`
 	}
 	if err := s.treeLLM.CompleteJSON(ctx, fmt.Sprintf(promptCard, s.cfg.Index.Tree.CardSummaryWords), sb.String(), &raw); err != nil {
@@ -291,7 +296,6 @@ func (s *Service) card(ctx context.Context, d types.Document, root *node, pages 
 		return fallback
 	}
 	out.Title = firstNonEmpty(strings.TrimSpace(raw.Title), fallback.Title)
-	out.DocType = strings.TrimSpace(raw.DocType)
 	out.Summary = firstNonEmpty(strings.TrimSpace(raw.Summary), fallback.Summary)
 	return out
 }

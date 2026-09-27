@@ -43,17 +43,21 @@ type Policy struct {
 var policies = map[string]Policy{
 	types.TaskDocumentSplit:    {3, 5 * time.Minute},
 	types.TaskPageRender:       {3, 10 * time.Minute},
-	types.TaskPageOCR:          {3, 3 * time.Minute},
+	types.TaskPageOCR:          {3, 15 * time.Minute}, // turboocr_vlm: dozens of region calls per page
 	types.TaskDocumentAssemble: {3, 10 * time.Minute},
 	types.TaskIndexBuild:       {3, 30 * time.Minute},
 	types.TaskIndexTree:        {5, 30 * time.Minute},
-	types.TaskGraphExtract:     {3, 10 * time.Minute},
-	types.TaskGraphResolve:     {10, 60 * time.Minute},
-	types.TaskWikiIngest:       {10, 60 * time.Minute},
-	types.TaskWikiFinalize:     {5, 30 * time.Minute},
-	types.TaskDocumentDelete:   {3, time.Hour},
-	types.TaskGenCleanup:       {3, time.Hour},
-	types.TaskHousekeeping:     {0, 10 * time.Minute},
+	// wiki:ingest also retries while another worker holds the case lock.
+	types.TaskWikiIngest:     {10, 60 * time.Minute},
+	types.TaskWikiLint:       {3, 30 * time.Minute},
+	types.TaskWikiIndex:      {5, 2 * time.Minute},
+	types.TaskDocumentDelete: {3, time.Hour},
+	types.TaskCaseDelete:     {3, time.Hour},
+	types.TaskGenCleanup:     {3, time.Hour},
+	types.TaskHousekeeping:   {0, 10 * time.Minute},
+	// Callback retries are scheduled by the handler itself (backoff, state in
+	// document_callbacks); asynq only retries infrastructure errors.
+	types.TaskDocumentCallback: {3, 2 * time.Minute},
 }
 
 // PolicyFor returns the policy of a task type.

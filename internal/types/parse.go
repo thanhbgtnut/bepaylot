@@ -124,8 +124,12 @@ type ParsedBlock struct {
 	LaTeX       string    `json:"latex,omitempty"`
 	AssetKey    string    `json:"asset_key,omitempty"`
 	IsFurniture bool      `json:"is_furniture"`
-	MdStart     int       `json:"md_start"`
-	MdEnd       int       `json:"md_end"`
+	// TextSource is "vlm" when Text is a VLM transcription of the region that
+	// is rendered verbatim as the block's markdown; empty otherwise (Text is
+	// then the block's lines joined).
+	TextSource string `json:"text_source,omitempty"`
+	MdStart    int    `json:"md_start"`
+	MdEnd      int    `json:"md_end"`
 }
 
 // ParsedLine is one text line in reading order. Offsets are in runes of the

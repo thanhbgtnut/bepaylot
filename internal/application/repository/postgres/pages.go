@@ -265,10 +265,10 @@ func writeBlocksLines(ctx context.Context, tx pgx.Tx, doc uuid.UUID, p *types.Pa
 	blocks := make([][]any, len(p.Blocks))
 	for i, b := range p.Blocks {
 		blocks[i] = []any{doc, p.PageNo, b.BlockNo, b.SourceID, string(b.Type), b.RawClass, float32(b.Confidence), f32(b.BBox.Array()),
-			cleanText(b.Text), cleanText(b.HTML), cleanText(b.LaTeX), b.AssetKey, b.IsFurniture, b.MdStart, b.MdEnd}
+			cleanText(b.Text), cleanText(b.HTML), cleanText(b.LaTeX), b.AssetKey, b.IsFurniture, b.TextSource, b.MdStart, b.MdEnd}
 	}
 	if _, err := tx.CopyFrom(ctx, pgx.Identifier{"page_blocks"}, []string{"document_id", "page_no", "block_no", "source_id", "type",
-		"raw_class", "confidence", "bbox", "text", "html", "latex", "asset_key", "is_furniture", "md_start", "md_end"}, pgx.CopyFromRows(blocks)); err != nil {
+		"raw_class", "confidence", "bbox", "text", "html", "latex", "asset_key", "is_furniture", "text_source", "md_start", "md_end"}, pgx.CopyFromRows(blocks)); err != nil {
 		return fmt.Errorf("copy blocks: %w", err)
 	}
 	lines := make([][]any, len(p.Lines))
@@ -317,7 +317,7 @@ type PageBlock struct {
 // Blocks returns blocks of pages [from, to].
 func (r *PagesRepo) Blocks(ctx context.Context, doc uuid.UUID, from, to int) ([]PageBlock, error) {
 	rows, err := r.pool.Query(ctx, `SELECT page_no, block_no, source_id, type, raw_class, confidence, bbox, text, html, latex,
-		asset_key, is_furniture, md_start, md_end FROM page_blocks WHERE document_id = $1 AND page_no BETWEEN $2 AND $3
+		asset_key, is_furniture, text_source, md_start, md_end FROM page_blocks WHERE document_id = $1 AND page_no BETWEEN $2 AND $3
 		ORDER BY page_no, block_no`, doc, from, to)
 	if err != nil {
 		return nil, err
@@ -330,7 +330,7 @@ func (r *PagesRepo) Blocks(ctx context.Context, doc uuid.UUID, from, to int) ([]
 		var conf float32
 		var bbox []float32
 		if err := rows.Scan(&b.PageNo, &b.BlockNo, &b.SourceID, &typ, &b.RawClass, &conf, &bbox, &b.Text, &b.HTML, &b.LaTeX,
-			&b.AssetKey, &b.IsFurniture, &b.MdStart, &b.MdEnd); err != nil {
+			&b.AssetKey, &b.IsFurniture, &b.TextSource, &b.MdStart, &b.MdEnd); err != nil {
 			return nil, err
 		}
 		b.Type, b.Confidence, b.BBox = types.BlockType(typ), float64(conf), types.BBoxFromArray(f64(bbox))

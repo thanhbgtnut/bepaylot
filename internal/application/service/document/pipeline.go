@@ -39,6 +39,7 @@ func (s *Service) Handlers() map[string]queue.Handler {
 		types.TaskDocumentDelete:   s.handleDeleting(s.purge),
 		types.TaskGenCleanup:       s.handle(s.genCleanup),
 		types.TaskHousekeeping:     func(ctx context.Context, _ []byte) error { return s.Housekeeping(ctx) },
+		types.TaskDocumentCallback: s.deliverCallback,
 	}
 }
 
@@ -96,7 +97,7 @@ func strp(s string) *string { return &s }
 // fail marks the document failed with a permanent error.
 func (s *Service) fail(ctx context.Context, d types.Document, stage string, err error) error {
 	st := types.StageFailed
-	_, uerr := s.st.Documents.Update(context.WithoutCancel(ctx), d.ID, d.Gen, postgres.DocUpdate{
+	_, uerr := s.updateStatus(context.WithoutCancel(ctx), d.ID, d.Gen, postgres.DocUpdate{
 		Status: strp(types.DocFailed), ParseStatus: &st, Error: strp(stage + ": " + err.Error()),
 	})
 	if uerr != nil {
@@ -318,10 +319,12 @@ func (s *Service) renderImage(path string, opt pdf.RenderOptions, emit func(pdf.
 		WidthPt: float64(res.Width), HeightPt: float64(res.Height), RenderMs: int(time.Since(t0).Milliseconds())})
 }
 
-func (s *Service) engineOptions() parser.PageOptions {
+// engineOptions builds the page options; refine lets turboocr_vlm call the
+// VLM (other engines ignore it).
+func (s *Service) engineOptions(refine bool) parser.PageOptions {
 	o := s.cfg.Parser.Engines.TurboOCR.Options
 	on := func(p *bool) bool { return p == nil || *p }
-	return parser.PageOptions{Layout: on(o.Layout), ReadingOrder: on(o.ReadingOrder), Tables: on(o.Tables), Formulas: o.Formulas}
+	return parser.PageOptions{Layout: on(o.Layout), ReadingOrder: on(o.ReadingOrder), Tables: on(o.Tables), Formulas: o.Formulas, Refine: refine}
 }
 
 // ocr runs the OCR engine on one rendered page, merges the text layer and
@@ -345,8 +348,11 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	if err != nil {
 		return s.finishPageFailed(ctx, d, pageNo, err)
 	}
+	// A page whose PDF text layer is already good does not need the VLM (§5.9).
+	refine := !(s.cfg.Parser.Engines.VLM.SkipWithTextLayerEnabled() && layer != nil &&
+		textlayer.Usable(textlayer.Quality(layer, "", tlOpt), tlOpt))
 	t0 := time.Now()
-	raw, err := s.callEngine(ctx, engine, row)
+	raw, err := s.callEngine(ctx, engine, row, refine)
 	ocrMs := int(time.Since(t0).Milliseconds())
 	if err != nil {
 		if !queue.IsFinalAttempt(ctx) {
@@ -365,13 +371,16 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	page := assemble.Build(raw, assemble.Options{
 		PageNo: pageNo, DPI: row.DPI, Engine: engine.Name(), ClassMap: s.cfg.Parser.ClassMap,
 		ReadingOrderFix: s.cfg.Parser.ReadingOrderFixEnabled(), LowConfThreshold: s.cfg.Parser.LowConfThreshold,
-		AssetKey: func(pg, b int) string { return s.keys.Figure(d.KBID, d.ID, d.Gen, pg, b) },
+		MinRefineCoverage: s.cfg.Parser.Engines.VLM.MinCoverage,
+		AssetKey:          func(pg, b int) string { return s.keys.Figure(d.KBID, d.ID, d.Gen, pg, b) },
 	})
 	page.Rotation = row.Rotation
 	if layer != nil {
 		q := textlayer.Quality(layer, assemble.PlainText(page), tlOpt)
 		page.TextQuality = q
-		if textlayer.Usable(q, tlOpt) {
+		// VLM-refined text is kept: the layer would only replace it line by
+		// line and break the block's verbatim markdown.
+		if textlayer.Usable(q, tlOpt) && !assemble.Refined(page) {
 			textlayer.Merge(page, layer, tlOpt)
 		}
 	}
@@ -386,13 +395,13 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	return s.savePage(ctx, d, page, rawKey, ocrMs)
 }
 
-func (s *Service) callEngine(ctx context.Context, engine parser.Engine, row types.DocumentPage) (*parser.RawPage, error) {
+func (s *Service) callEngine(ctx context.Context, engine parser.Engine, row types.DocumentPage, refine bool) (*parser.RawPage, error) {
 	rc, info, err := s.objects.Get(ctx, row.ImageKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	return engine.ParsePage(ctx, parser.PageImage{PageNo: row.PageNo, Body: rc, Size: info.Size, Width: row.Width, Height: row.Height}, s.engineOptions())
+	return engine.ParsePage(ctx, parser.PageImage{PageNo: row.PageNo, Body: rc, Size: info.Size, Width: row.Width, Height: row.Height}, s.engineOptions(refine))
 }
 
 func (s *Service) savePage(ctx context.Context, d types.Document, page *types.ParsedPage, rawKey string, ocrMs int) error {
@@ -556,6 +565,7 @@ func (s *Service) Housekeeping(ctx context.Context) error {
 		_ = s.q.Enqueue(ctx, types.TaskDocumentDelete, types.DocTaskPayload{DocumentID: d.ID, KBID: d.KBID, Gen: -1},
 			queue.Opts{TaskID: fmt.Sprintf("del:%s:hk%d", d.ID, bucket)})
 	}
+	s.callbackHousekeeping(ctx, bucket)
 	return nil
 }
 

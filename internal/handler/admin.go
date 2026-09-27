@@ -139,7 +139,7 @@ func (h *Handlers) RetryDeadLetter(ctx context.Context, c *app.RequestContext) {
 // UploadAttachment handles POST /v1/sessions/{id}/attachments.
 //
 // @Summary   Attach files to a chat session (parsed on the high-priority lanes)
-// @Description Files go into the session's temporary knowledge base, which is added to the session's kb_ids so the agent can search them while parsing continues.
+// @Description Files go into the case bound to the session (§8.2), so the agent can search them while parsing continues. A session without a case answers 409.
 // @Tags      Sessions
 // @Accept    mpfd
 // @Produce   json
@@ -148,6 +148,7 @@ func (h *Handlers) RetryDeadLetter(ctx context.Context, c *app.RequestContext) {
 // @Param     metadata  formData  string  false  "JSON metadata for every file"
 // @Success   202       {object}  document.UploadResult
 // @Failure   404       {object}  dto.ErrorResponse
+// @Failure   409       {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth
 // @Router    /v1/sessions/{id}/attachments [post]
 func (h *Handlers) UploadAttachment(ctx context.Context, c *app.RequestContext) {
@@ -164,22 +165,18 @@ func (h *Handlers) UploadAttachment(ctx context.Context, c *app.RequestContext) 
 		h.notFound(c, "session not found")
 		return
 	}
-	kb, err := h.Docs.EnsureTempKB(ctx, u.ID, id)
-	if err != nil {
-		h.serverError(c, err)
+	if sess.CaseID == nil {
+		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", "the session is not bound to a case; bind one with metadata.case_id first"))
 		return
 	}
-	res, err := h.upload(ctx, c, u.ID, kb.ID, true)
+	cs, err := h.Cases.GetCaseOwned(ctx, u.ID, *sess.CaseID)
 	if err != nil {
-		if err == errMultipart {
-			h.badRequest(c, err.Error())
-			return
-		}
-		h.serviceError(c, err)
+		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", "the case of this session no longer exists"))
 		return
 	}
-	if err := h.attachKB(ctx, sess.ID, sess.Metadata, kb.ID); err != nil {
-		h.serverError(c, err)
+	res, err := h.upload(ctx, c, u.ID, cs.KBID, &cs.ID, true)
+	if err != nil {
+		h.uploadError(c, err)
 		return
 	}
 	c.JSON(consts.StatusAccepted, res)

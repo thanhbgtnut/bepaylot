@@ -17,6 +17,21 @@ import (
 // SessionsRepo persists types.Session.
 type SessionsRepo struct{ pool *pgxpool.Pool }
 
+// ErrCaseBound is returned when a session is already bound to another case.
+var ErrCaseBound = errors.New("session is bound to another case")
+
+const sessCols = `id, user_id, title, provider, model, system_override, summary, metadata, case_id, created_at, updated_at`
+
+func scanSession(row pgx.Row) (types.Session, error) {
+	var s types.Session
+	err := row.Scan(&s.ID, &s.UserID, &s.Title, &s.Provider, &s.Model, &s.SystemOverride, &s.Summary,
+		&metaScanner{&s.Metadata}, &s.CaseID, &s.CreatedAt, &s.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s, ErrNotFound
+	}
+	return s, err
+}
+
 // CreateParams are the writable fields when creating a session.
 type CreateParams struct {
 	// ID pins the new session to a specific id — used when a caller (e.g. an
@@ -31,6 +46,8 @@ type CreateParams struct {
 	Model          string
 	SystemOverride string
 	Metadata       map[string]any
+	// CaseID binds the new session to a case (§8.1).
+	CaseID *uuid.UUID
 }
 
 // Create inserts a new session.
@@ -46,13 +63,11 @@ func (r *SessionsRepo) Create(ctx context.Context, p CreateParams) (types.Sessio
 		id = uuid.New()
 	}
 
-	var s types.Session
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO sessions (id, user_id, title, provider, model, system_override, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, user_id, title, provider, model, system_override, summary, metadata, created_at, updated_at`,
-		id, p.UserID, cleanText(p.Title), cleanText(p.Provider), cleanText(p.Model), cleanText(p.SystemOverride), metaJSON,
-	).Scan(&s.ID, &s.UserID, &s.Title, &s.Provider, &s.Model, &s.SystemOverride, &s.Summary, &metaScanner{&s.Metadata}, &s.CreatedAt, &s.UpdatedAt)
+	s, err := scanSession(r.pool.QueryRow(ctx, `
+		INSERT INTO sessions (id, user_id, title, provider, model, system_override, metadata, case_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING `+sessCols,
+		id, p.UserID, cleanText(p.Title), cleanText(p.Provider), cleanText(p.Model), cleanText(p.SystemOverride), metaJSON, p.CaseID))
 	if err != nil {
 		return types.Session{}, fmt.Errorf("sessions.Create: %w", err)
 	}
@@ -61,21 +76,49 @@ func (r *SessionsRepo) Create(ctx context.Context, p CreateParams) (types.Sessio
 
 // Get returns a non-deleted session by id.
 func (r *SessionsRepo) Get(ctx context.Context, id uuid.UUID) (types.Session, error) {
-	var s types.Session
-	var deletedAt *time.Time
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, user_id, title, provider, model, system_override, summary, metadata, created_at, updated_at, deleted_at
-		FROM sessions WHERE id = $1 AND deleted_at IS NULL`, id).
-		Scan(&s.ID, &s.UserID, &s.Title, &s.Provider, &s.Model, &s.SystemOverride, &s.Summary,
-			&metaScanner{&s.Metadata}, &s.CreatedAt, &s.UpdatedAt, &deletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	s, err := scanSession(r.pool.QueryRow(ctx, `SELECT `+sessCols+` FROM sessions WHERE id = $1 AND deleted_at IS NULL`, id))
+	if errors.Is(err, ErrNotFound) {
 		return types.Session{}, ErrNotFound
 	}
 	if err != nil {
 		return types.Session{}, fmt.Errorf("sessions.Get: %w", err)
 	}
-	s.DeletedAt = deletedAt
 	return s, nil
+}
+
+// BindCase sets the session's case once: it succeeds when the session has no
+// case or already has this one, and returns ErrCaseBound for another case.
+func (r *SessionsRepo) BindCase(ctx context.Context, id, caseID uuid.UUID) (types.Session, error) {
+	s, err := scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET case_id = $2, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL AND (case_id IS NULL OR case_id = $2) RETURNING `+sessCols, id, caseID))
+	if errors.Is(err, ErrNotFound) {
+		if cur, gerr := r.Get(ctx, id); gerr == nil && cur.CaseID != nil && *cur.CaseID != caseID {
+			return cur, ErrCaseBound
+		}
+	}
+	return s, err
+}
+
+// ListByCase returns a user's sessions bound to one case, newest first.
+func (r *SessionsRepo) ListByCase(ctx context.Context, userID, caseID uuid.UUID, limit int) ([]types.Session, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `SELECT `+sessCols+` FROM sessions
+		WHERE user_id = $1 AND case_id = $2 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT $3`, userID, caseID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.Session
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // ListByUser returns sessions for a user, newest first, using updated_at as a
@@ -88,7 +131,7 @@ func (r *SessionsRepo) ListByUser(ctx context.Context, userID uuid.UUID, before 
 		before = time.Now().Add(24 * time.Hour)
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, title, provider, model, system_override, summary, metadata, created_at, updated_at
+		SELECT `+sessCols+`
 		FROM sessions
 		WHERE user_id = $1 AND deleted_at IS NULL AND updated_at < $2
 		ORDER BY updated_at DESC
@@ -100,9 +143,8 @@ func (r *SessionsRepo) ListByUser(ctx context.Context, userID uuid.UUID, before 
 
 	var out []types.Session
 	for rows.Next() {
-		var s types.Session
-		if err := rows.Scan(&s.ID, &s.UserID, &s.Title, &s.Provider, &s.Model, &s.SystemOverride,
-			&s.Summary, &metaScanner{&s.Metadata}, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		s, err := scanSession(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -124,19 +166,16 @@ func (r *SessionsRepo) Update(ctx context.Context, id uuid.UUID, p UpdateParams)
 		metaJSON, _ = cleanJSON(p.Metadata)
 	}
 	title, summary := cleanPtr(p.Title), cleanPtr(p.Summary)
-	var s types.Session
-	err := r.pool.QueryRow(ctx, `
+	s, err := scanSession(r.pool.QueryRow(ctx, `
 		UPDATE sessions SET
 			title      = COALESCE($2, title),
 			summary    = COALESCE($3, summary),
 			metadata   = COALESCE($4, metadata),
 			updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, user_id, title, provider, model, system_override, summary, metadata, created_at, updated_at`,
-		id, title, summary, metaJSON,
-	).Scan(&s.ID, &s.UserID, &s.Title, &s.Provider, &s.Model, &s.SystemOverride, &s.Summary,
-		&metaScanner{&s.Metadata}, &s.CreatedAt, &s.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+		RETURNING `+sessCols,
+		id, title, summary, metaJSON))
+	if errors.Is(err, ErrNotFound) {
 		return types.Session{}, ErrNotFound
 	}
 	if err != nil {

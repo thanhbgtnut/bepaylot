@@ -21,7 +21,7 @@ const (
 	DocDeleting   = "deleting"
 )
 
-// Stage states used by parse_status / index_status / graph_status.
+// Stage states used by parse_status / index_status / wiki_status.
 const (
 	StagePending    = "pending"
 	StageProcessing = "processing"
@@ -47,6 +47,9 @@ const (
 	TextSourceLayer     = "layer"
 	TextSourceMerged    = "merged"
 	TextSourceLayerOnly = "layer_only"
+	// TextSourceVLM marks text transcribed by a vision-language model from a
+	// cropped layout region (engine turboocr_vlm, §5.9).
+	TextSourceVLM = "vlm"
 )
 
 // Searchable reports whether documents in this state can be searched.
@@ -75,17 +78,16 @@ type KnowledgeBase struct {
 	Description    string          `json:"description,omitempty"`
 	Config         KBConfig        `json:"config"`
 	MetadataSchema *MetadataSchema `json:"metadata_schema,omitempty"`
-	GraphSchemaID  *uuid.UUID      `json:"graph_schema_id,omitempty"`
-	IsTemporary    bool            `json:"is_temporary"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	// IsTemporary marks the chat-attachment KBs of spec 0.4; none are
+	// created since cases replaced them (§8.2).
+	IsTemporary bool      `json:"is_temporary"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // KBConfig holds per-KB overrides of the global pipeline defaults.
 type KBConfig struct {
 	ParserEngine string `json:"parser_engine,omitempty"`
-	GraphEnabled bool   `json:"graph_enabled,omitempty"`
-	GraphSchema  string `json:"graph_schema,omitempty"`
 }
 
 // UploadBatch records one multi-file upload request.
@@ -104,6 +106,7 @@ type UploadBatch struct {
 type Document struct {
 	ID              uuid.UUID      `json:"id"`
 	KBID            uuid.UUID      `json:"kb_id"`
+	CaseID          uuid.UUID      `json:"case_id"`
 	BatchID         *uuid.UUID     `json:"batch_id,omitempty"`
 	FileName        string         `json:"file_name"`
 	MimeType        string         `json:"mime_type"`
@@ -115,7 +118,7 @@ type Document struct {
 	Status          string         `json:"status"`
 	ParseStatus     string         `json:"parse_status"`
 	IndexStatus     string         `json:"index_status"`
-	GraphStatus     string         `json:"graph_status"`
+	WikiStatus      string         `json:"wiki_status"`
 	PagesDone       int            `json:"pages_done"`
 	PagesFailed     int            `json:"pages_failed"`
 	PagesTextLayer  int            `json:"pages_text_layer"`
@@ -127,12 +130,17 @@ type Document struct {
 	Error           string         `json:"error,omitempty"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 	Title           string         `json:"title,omitempty"`
-	DocType         string         `json:"doc_type,omitempty"`
 	Summary         string         `json:"summary,omitempty"`
-	CreatedBy       uuid.UUID      `json:"created_by"`
-	Interactive     bool           `json:"-"` // uploaded from chat: uses the high-priority lanes
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	// CallbackURL, when set, receives a POST once the document reaches a
+	// terminal status (§4.7).
+	CallbackURL string `json:"callback_url,omitempty"`
+	// CallbackRun counts page reparses of the current generation, so each
+	// run that finishes gets its own delivery.
+	CallbackRun int       `json:"-"`
+	CreatedBy   uuid.UUID `json:"created_by"`
+	Interactive bool      `json:"-"` // uploaded from chat: uses the high-priority lanes
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Progress is PagesDone+PagesFailed over PageCount, in [0,1].
