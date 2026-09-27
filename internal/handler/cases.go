@@ -157,7 +157,7 @@ func (h *Handlers) GetCaseByCode(ctx context.Context, c *app.RequestContext) {
 
 // GetCase handles GET /v1/cases/{id}.
 //
-// @Summary   Case detail: document counts by status and wiki state
+// @Summary   Case detail: document counts by status
 // @Tags      Cases
 // @Produce   json
 // @Param     id   path      string  true  "Case id"  format(uuid)
@@ -219,7 +219,7 @@ func (h *Handlers) UpdateCase(ctx context.Context, c *app.RequestContext) {
 
 // DeleteCase handles DELETE /v1/cases/{id}.
 //
-// @Summary   Delete a case, its documents and its whole wiki (async)
+// @Summary   Delete a case and its documents (async)
 // @Tags      Cases
 // @Produce   json
 // @Param     id   path      string  true  "Case id"  format(uuid)
@@ -323,7 +323,7 @@ func (h *Handlers) UploadCaseDocuments(ctx context.Context, c *app.RequestContex
 
 // SearchCase handles POST /v1/cases/{id}/search.
 //
-// @Summary   Search one case (wiki index → wiki pages → source lines)
+// @Summary   Search one case (case TOC → document trees → pages → source lines)
 // @Tags      Cases
 // @Accept    json
 // @Produce   json

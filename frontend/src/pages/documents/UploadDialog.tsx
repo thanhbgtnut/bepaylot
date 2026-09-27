@@ -134,7 +134,7 @@ export function UploadDialog({
         </label>
       </div>
       <p className="-mt-2 text-xs text-subtle">
-        {code.trim() ? (existing ? "Thêm file vào hồ sơ có sẵn." : "Mã mới — hồ sơ sẽ được tạo khi tải lên.") : "Mỗi file thuộc đúng một hồ sơ; wiki và hỏi đáp làm việc theo hồ sơ."}
+        {code.trim() ? (existing ? "Thêm file vào hồ sơ có sẵn." : "Mã mới — hồ sơ sẽ được tạo khi tải lên.") : "Mỗi file thuộc đúng một hồ sơ; mục lục và hỏi đáp làm việc theo hồ sơ."}
       </p>
       <div
         className={

@@ -74,22 +74,6 @@ func (s *Service) CaseType(name string) types.CaseType {
 	return s.types[s.cfg.Cases.DefaultType]
 }
 
-// WikiEnabled implements interfaces.CaseService.
-func (s *Service) WikiEnabled(c types.Case) bool {
-	t := s.CaseType(c.CaseType)
-	if t.Wiki.Enabled != nil {
-		return *t.Wiki.Enabled
-	}
-	return s.cfg.Wiki.Enabled()
-}
-
-func (s *Service) wikiSchemaOf(t types.CaseType) string {
-	if t.Wiki.Schema != "" {
-		return t.Wiki.Schema
-	}
-	return s.cfg.Wiki.DefaultSchema
-}
-
 // GetCase implements interfaces.CaseService.
 func (s *Service) GetCase(ctx context.Context, id uuid.UUID) (types.Case, error) {
 	c, err := s.st.Cases.Get(ctx, id)
@@ -161,7 +145,6 @@ func (s *Service) create(ctx context.Context, owner, kb uuid.UUID, req CreateReq
 	}
 	c, created, err := s.st.Cases.Insert(ctx, types.Case{
 		KBID: kb, Code: code, CaseType: t.Name, Title: strings.TrimSpace(req.Title), Metadata: meta, CreatedBy: owner,
-		WikiSchema: s.wikiSchemaOf(t), WikiStatus: types.WikiNone,
 	})
 	if err != nil {
 		return c, false, err
@@ -329,7 +312,7 @@ func (s *Service) Update(ctx context.Context, owner, id uuid.UUID, req UpdateReq
 }
 
 // Delete soft-deletes a case and enqueues case:delete, which removes its
-// documents and its whole wiki.
+// documents.
 func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 	c, err := s.GetCaseOwned(ctx, owner, id)
 	if err != nil {
@@ -346,8 +329,8 @@ func (s *Service) Handlers() map[string]queue.Handler {
 	return map[string]queue.Handler{types.TaskCaseDelete: s.handleDelete}
 }
 
-// handleDelete purges a soft-deleted case: documents one by one (no wiki
-// retract per file), then every wiki row and pending op of the case.
+// handleDelete purges a soft-deleted case: its documents one by one, then
+// the pending ops of the case.
 func (s *Service) handleDelete(ctx context.Context, raw []byte) error {
 	var p types.CaseTaskPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -374,9 +357,6 @@ func (s *Service) handleDelete(ctx context.Context, raw []byte) error {
 		}
 	}
 	if err := s.st.Tasks.DeleteScopeOps(ctx, types.ScopeCase, c.ID.String()); err != nil {
-		return err
-	}
-	if err := s.st.Wiki.DeleteCase(ctx, c.ID, false); err != nil {
 		return err
 	}
 	s.log.Info("case purged", "case", c.ID, "code", c.Code, "documents", len(docs))

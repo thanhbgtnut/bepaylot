@@ -22,13 +22,14 @@ type fakeSearcher struct {
 	got     types.SearchRequest
 	listed  uuid.UUID
 	counted uuid.UUID
+	toc     uuid.UUID
 	read    int
 	pages   [2]int
 }
 
 func (f *fakeSearcher) Search(_ context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	f.got = req
-	return &types.SearchResponse{Hits: []types.SearchHit{{CitationID: "doc:x:p1:l1-1", FileName: "a.pdf", PageNo: 1, Quote: "q", Via: "wiki"}}}, nil
+	return &types.SearchResponse{Hits: []types.SearchHit{{CitationID: "doc:x:p1:l1-1", FileName: "a.pdf", PageNo: 1, Quote: "q", Via: "tree"}}}, nil
 }
 
 func (f *fakeSearcher) DocumentInCase(_ context.Context, _, doc, caseID uuid.UUID) (bool, error) {
@@ -54,10 +55,13 @@ func (f *fakeSearcher) FindInDocument(_ context.Context, _, _ uuid.UUID, _, _ st
 	return nil, nil
 }
 
-func (f *fakeSearcher) DocumentTree(context.Context, uuid.UUID, uuid.UUID) ([]types.TreeNode, error) {
-	root := uuid.New()
-	return []types.TreeNode{{ID: root, ShortID: "n0", Title: "Hợp đồng", PageStart: 1, PageEnd: 3},
-		{ID: uuid.New(), ParentID: &root, ShortID: "n1", Title: "Điều 1", PageStart: 1, PageEnd: 1}}, nil
+func (f *fakeSearcher) DocumentTreeText(context.Context, uuid.UUID, uuid.UUID, string) (string, error) {
+	return "<tree>\n[n1] Điều 1 (tr. 1)\n</tree>\n", nil
+}
+
+func (f *fakeSearcher) CaseTOC(_ context.Context, _, caseID uuid.UUID, _ types.MetadataFilter, _ []string) (*types.CaseTOC, error) {
+	f.toc = caseID
+	return &types.CaseTOC{Text: "[d1] a.pdf (3 tr.)\n", Documents: []types.TOCDoc{{Ref: "d1", DocumentID: uuid.New()}}}, nil
 }
 
 func (f *fakeSearcher) Locate(_ context.Context, _ uuid.UUID, c string) ([]types.SearchHit, error) {
@@ -73,23 +77,6 @@ func (f *fakeSearcher) ListDocuments(_ context.Context, _, caseID uuid.UUID, _ t
 func (f *fakeSearcher) MetadataValues(_ context.Context, _, caseID uuid.UUID, _ string) ([]interfaces.MetadataValue, error) {
 	f.counted = caseID
 	return nil, nil
-}
-
-// fakeWiki records the case every wiki tool asked for.
-type fakeWiki struct {
-	interfaces.WikiReader
-	asked []uuid.UUID
-}
-
-func (w *fakeWiki) IndexView(_ context.Context, caseID uuid.UUID, _ []uuid.UUID) (*types.WikiIndex, error) {
-	w.asked = append(w.asked, caseID)
-	return &types.WikiIndex{Content: "[w1] tong-quan — x", Refs: map[string]types.WikiRef{"w1": {Slug: "tong-quan"}}}, nil
-}
-
-func (w *fakeWiki) Page(_ context.Context, caseID uuid.UUID, slug string) (*types.WikiPage, error) {
-	w.asked = append(w.asked, caseID)
-	return &types.WikiPage{Slug: slug, Kind: types.WikiKindOverview, Title: "Tổng quan", Content: "A[^1]",
-		Footnotes: []types.WikiFootnote{{N: 1, CitationID: "doc:x:p1:l1-1", Quote: "A"}}}, nil
 }
 
 func invoke(t *testing.T, ctx context.Context, s *Session, name, args string) (string, error) {
@@ -113,8 +100,7 @@ func TestCaseToolsStayInCase(t *testing.T) {
 	}
 	caseA, in, other := uuid.New(), uuid.New(), uuid.New()
 	fs := &fakeSearcher{caseID: caseA, alive: true, allowed: map[uuid.UUID]bool{in: true}}
-	wk := &fakeWiki{}
-	if err := reg.SetKnowledgeTools(fs, wk); err != nil {
+	if err := reg.SetKnowledgeTools(fs); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := reg.NewSession().VisibleDescriptions()["kb_search"]; ok {
@@ -122,7 +108,7 @@ func TestCaseToolsStayInCase(t *testing.T) {
 	}
 	s := reg.NewSession()
 	s.EnableKnowledge()
-	for _, name := range []string{"kb_search", "wiki_index", "wiki_read", "wiki_search", "wiki_links", "kb_read_pages"} {
+	for _, name := range []string{"kb_case_toc", "kb_search", "kb_document_tree", "kb_read_pages"} {
 		if _, ok := s.VisibleDescriptions()[name]; !ok {
 			t.Fatalf("%s not bound after EnableKnowledge", name)
 		}
@@ -143,7 +129,7 @@ func TestCaseToolsStayInCase(t *testing.T) {
 	var res struct {
 		Hits []kbHit `json:"hits"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Hits) != 1 || res.Hits[0].CitationID == "" || res.Hits[0].Via != "wiki" {
+	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Hits) != 1 || res.Hits[0].CitationID == "" || res.Hits[0].Via != "tree" {
 		t.Fatalf("result = %s", out)
 	}
 	if _, err := invoke(t, ctx, s, "kb_list_documents", `{}`); err != nil || fs.listed != caseA {
@@ -179,16 +165,13 @@ func TestCaseToolsStayInCase(t *testing.T) {
 		t.Fatalf("tree level: %s %v", tree, err)
 	}
 
-	if _, err := invoke(t, ctx, s, "wiki_index", `{}`); err != nil {
-		t.Fatal(err)
+	toc, err := invoke(t, ctx, s, "kb_case_toc", `{}`)
+	if err != nil || fs.toc != caseA || !strings.Contains(toc, "[d1] a.pdf") || !strings.Contains(toc, "document_ids") {
+		t.Fatalf("case toc must be the case's: %s %v %v", toc, fs.toc, err)
 	}
-	page, err := invoke(t, ctx, s, "wiki_read", `{"page":"w1"}`)
-	if err != nil || !strings.Contains(page, "doc:x:p1:l1-1") {
-		t.Fatalf("wiki_read: %s %v", page, err)
-	}
-	for _, c := range wk.asked {
-		if c != caseA {
-			t.Fatalf("wiki asked for case %s, want %s", c, caseA)
+	for _, gone := range []string{"wiki_index", "wiki_read", "wiki_search", "wiki_links"} {
+		if _, ok := s.VisibleDescriptions()[gone]; ok {
+			t.Fatalf("%s must not exist any more", gone)
 		}
 	}
 

@@ -1,25 +1,14 @@
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
-import { linkCitations, markdownToHTML, type MarkdownOptions } from "../lib/markdown";
+import { linkCitations, markdownToHTML } from "../lib/markdown";
 import { useCitation } from "./Citation";
 
 // Renders sanitized markdown. Citation ids become clickable chips that open
-// the citation popover; [[slug]] wiki links call onWikiLink.
-export const Markdown = memo(function Markdown({
-  text,
-  className = "",
-  streaming = false,
-  onWikiLink,
-  ...opt
-}: {
-  text: string;
-  className?: string;
-  streaming?: boolean;
-  onWikiLink?: (slug: string) => void;
-} & MarkdownOptions) {
+// the citation popover.
+export const Markdown = memo(function Markdown({ text, className = "", streaming = false }: { text: string; className?: string; streaming?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const cite = useCitation();
-  const html = useMemo(() => markdownToHTML(text, opt), [text, opt.wikiLinks, opt.knownSlugs, opt.slugTitles, opt.footnotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const html = useMemo(() => markdownToHTML(text), [text]);
 
   useLayoutEffect(() => {
     if (ref.current) linkCitations(ref.current);
@@ -36,12 +25,6 @@ export const Markdown = memo(function Markdown({
         if (c?.dataset.cite) {
           e.preventDefault();
           cite.open(c.dataset.cite, c.getBoundingClientRect());
-          return;
-        }
-        const w = t.closest<HTMLElement>("a[data-slug]");
-        if (w && onWikiLink) {
-          e.preventDefault();
-          onWikiLink(w.dataset.slug!);
         }
       }}
     />

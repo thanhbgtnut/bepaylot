@@ -24,8 +24,6 @@ type SearchRequest struct {
 	TopK        int            `json:"top_k,omitempty"`
 	// OwnerID scopes the search to KBs the caller owns. Set by the server.
 	OwnerID uuid.UUID `json:"-"`
-	// SkipWiki searches the source documents only (tree + pages).
-	SkipWiki bool `json:"-"`
 }
 
 // SearchHit is one located answer passage.
@@ -44,30 +42,28 @@ type SearchHit struct {
 	Relevance  float64        `json:"relevance"`
 	Reason     string         `json:"reason,omitempty"`
 	CitationID string         `json:"citation_id"`
-	// Via is "wiki" when the hit came from a wiki footnote, "raw" when it was
-	// read from the source pages, "keyword" for full-text hits.
-	Via       string   `json:"via,omitempty"`
-	WikiPages []string `json:"wiki_pages,omitempty"`
-	BBoxes    []BBox   `json:"bboxes"`
+	// Via is "tree" when the hit was read from pages chosen on the tree,
+	// "keyword" for full-text hits.
+	Via    string `json:"via,omitempty"`
+	BBoxes []BBox `json:"bboxes"`
 }
 
 // SearchTrace explains how a reasoning search reached its hits.
 type SearchTrace struct {
-	Mode           string              `json:"mode"`
-	CandidateDocs  int                 `json:"candidate_docs"`
-	Cases          []uuid.UUID         `json:"cases,omitempty"`
-	WikiVersions   map[string]int      `json:"wiki_versions,omitempty"`
-	WikiPages      []string            `json:"wiki_pages,omitempty"`
-	RawRefs        []string            `json:"raw_refs,omitempty"`
-	StaleFootnotes int                 `json:"stale_footnotes,omitempty"`
-	SelectedDocs   []uuid.UUID         `json:"selected_docs"`
-	SelectedNodes  map[string][]string `json:"selected_nodes,omitempty"`
-	LLMCalls       int                 `json:"llm_calls"`
-	DroppedHits    int                 `json:"dropped_hits"`
-	Fallback       string              `json:"fallback,omitempty"`
-	Truncated      bool                `json:"truncated,omitempty"`
-	Cached         bool                `json:"cached,omitempty"`
-	ElapsedMs      int64               `json:"elapsed_ms"`
+	Mode          string              `json:"mode"`
+	CandidateDocs int                 `json:"candidate_docs"`
+	Cases         []uuid.UUID         `json:"cases,omitempty"`
+	Expanded      []string            `json:"expanded,omitempty"`
+	SelectedDocs  []uuid.UUID         `json:"selected_docs"`
+	SelectedNodes map[string][]string `json:"selected_nodes,omitempty"`
+	PagesRead     map[string][]int    `json:"pages_read,omitempty"`
+	LLMCalls      int                 `json:"llm_calls"`
+	TokensIn      int                 `json:"tokens_in,omitempty"`
+	DroppedHits   int                 `json:"dropped_hits"`
+	Fallback      string              `json:"fallback,omitempty"`
+	Truncated     bool                `json:"truncated,omitempty"`
+	Cached        bool                `json:"cached,omitempty"`
+	ElapsedMs     int64               `json:"elapsed_ms"`
 }
 
 // SearchResponse bundles hits and trace.
@@ -79,16 +75,61 @@ type SearchResponse struct {
 
 // DocumentBrief is a compact document listing entry.
 type DocumentBrief struct {
-	ID         uuid.UUID      `json:"id"`
-	KBID       uuid.UUID      `json:"kb_id"`
-	CaseID     uuid.UUID      `json:"case_id"`
+	ID        uuid.UUID      `json:"id"`
+	KBID      uuid.UUID      `json:"kb_id"`
+	CaseID    uuid.UUID      `json:"case_id"`
+	FileName  string         `json:"file_name"`
+	Status    string         `json:"status"`
+	PageCount int            `json:"page_count"`
+	Title     string         `json:"title,omitempty"`
+	Summary   string         `json:"summary,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// CaseTOC is the table of contents of a case (§6.6 step 2): one entry per
+// document with its card and the first branches of its tree. It is built
+// from stored cards and trees on every read; no LLM is involved.
+type CaseTOC struct {
+	Case      Case         `json:"case"`
+	Documents []TOCDoc     `json:"documents"`
+	Pending   []TOCPending `json:"pending,omitempty"`
+	// Text is the rendering given to the LLM (and to kb_case_toc).
+	Text       string `json:"text,omitempty"`
+	TokenCount int    `json:"token_count"`
+	// Truncated reports that branches or summaries were cut to fit
+	// search.case_toc_budget; expand re-opens a document.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// TOCDoc is one document of a case TOC. Ref is its short id (d<n>).
+type TOCDoc struct {
+	Ref        string         `json:"ref"`
+	DocumentID uuid.UUID      `json:"document_id"`
 	FileName   string         `json:"file_name"`
 	Status     string         `json:"status"`
-	WikiStatus string         `json:"wiki_status,omitempty"`
 	PageCount  int            `json:"page_count"`
 	Title      string         `json:"title,omitempty"`
 	Summary    string         `json:"summary,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+	Branches   []TOCBranch    `json:"branches,omitempty"`
+	TreeTokens int            `json:"tree_tokens"`
+}
+
+// TOCBranch is a first-level node of a document tree.
+type TOCBranch struct {
+	NodeID    string `json:"node_id"`
+	Title     string `json:"title"`
+	PageStart int    `json:"page_start"`
+	PageEnd   int    `json:"page_end"`
+	Summary   string `json:"summary,omitempty"`
+	HasMore   bool   `json:"has_more,omitempty"`
+}
+
+// TOCPending is a document of the case that is not searchable yet.
+type TOCPending struct {
+	DocumentID uuid.UUID `json:"document_id"`
+	FileName   string    `json:"file_name"`
+	Status     string    `json:"status"`
 }
 
 // PageOverview is a glimpse of one page used to decide which pages to read

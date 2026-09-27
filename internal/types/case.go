@@ -12,15 +12,6 @@ const (
 	CaseClosed = "closed"
 )
 
-// Wiki states of a case (cases.wiki_status, §6.6).
-const (
-	WikiNone     = "none"
-	WikiBuilding = "building"
-	WikiReady    = "ready"
-	WikiStale    = "stale"
-	WikiFailed   = "failed"
-)
-
 // DefaultCaseType is the case type used when none is given (§6.2).
 const DefaultCaseType = "default"
 
@@ -36,12 +27,6 @@ type Case struct {
 	Status    string         `json:"status"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedBy uuid.UUID      `json:"created_by"`
-
-	WikiSchema      string     `json:"wiki_schema"`
-	WikiStatus      string     `json:"wiki_status"`
-	WikiVersion     int        `json:"wiki_version"`
-	WikiBuiltAt     *time.Time `json:"wiki_built_at,omitempty"`
-	WikiDocsCovered int        `json:"wiki_docs_covered"`
 
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
@@ -73,11 +58,6 @@ type CaseType struct {
 	Parser         struct {
 		Engine string `json:"engine,omitempty" yaml:"engine"`
 	} `json:"parser" yaml:"parser"`
-	Wiki struct {
-		// Enabled nil = wiki.enabled_by_default.
-		Enabled *bool  `json:"enabled,omitempty" yaml:"enabled"`
-		Schema  string `json:"schema,omitempty" yaml:"schema"`
-	} `json:"wiki" yaml:"wiki"`
 }
 
 // CaseCodeRule validates and normalizes case codes.
@@ -86,7 +66,7 @@ type CaseCodeRule struct {
 	Normalize string `json:"normalize,omitempty" yaml:"normalize"` // upper_trim | lower_trim | trim (default)
 }
 
-// CaseTaskPayload is the payload of case-scoped tasks (wiki:*, case:delete).
+// CaseTaskPayload is the payload of case-scoped tasks (case:delete).
 type CaseTaskPayload struct {
 	CaseID uuid.UUID `json:"case_id"`
 }

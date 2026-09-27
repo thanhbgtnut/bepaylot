@@ -1,7 +1,8 @@
 // Package index is Module 2 (§6): sections, the vectorless document tree with
 // LLM summaries, and search — case scope and metadata filtering, Postgres
-// full-text, then reasoning over the case wiki index, wiki pages and
-// PageIndex-style trees down to verified source lines. It uses no embeddings.
+// full-text, then PageIndex-style reasoning over the case table of contents
+// and the document trees, reading only the pages of the chosen nodes down to
+// verified source lines (§6.6). It uses no embeddings and no wiki.
 package index
 
 import (
@@ -46,7 +47,6 @@ type Service struct {
 	treeLLM   interfaces.Completer
 	searchLLM interfaces.Completer
 	cases     interfaces.CaseService
-	wiki      interfaces.WikiReader
 	cfg       *config.Config
 	log       *slog.Logger
 	cache     *ttlCache
@@ -68,10 +68,6 @@ var (
 	_ interfaces.SectionReader = (*Service)(nil)
 	_ interfaces.Searcher      = (*Service)(nil)
 )
-
-// SetWiki plugs in the case wiki, read first by reasoning search (§6.10).
-// The wiki depends on this service's sections, hence the setter.
-func (s *Service) SetWiki(w interfaces.WikiReader) { s.wiki = w }
 
 // Handlers returns the task handlers owned by Module 2.
 func (s *Service) Handlers() map[string]queue.Handler {
@@ -126,8 +122,8 @@ func (s *Service) build(ctx context.Context, d types.Document) error {
 		queue.Opts{TaskID: fmt.Sprintf("tree:%s:%d", d.ID, d.Gen), Interactive: d.Interactive})
 }
 
-// tree builds the document tree, node summaries and the document card. The
-// document store then queues it for the case wiki (§6.8) when enabled.
+// tree builds the document tree, node summaries and the document card; the
+// document is searchable once it is stored (§6.5).
 func (s *Service) tree(ctx context.Context, d types.Document) error {
 	secs, err := s.st.Index.Sections(ctx, d.ID, d.Gen)
 	if err != nil {
@@ -164,7 +160,9 @@ func (s *Service) tree(ctx context.Context, d types.Document) error {
 	card := s.card(ctx, d, root, pages, useLLM)
 	root.title, root.summary = card.Title, card.Summary
 
-	if err := s.st.Index.ReplaceTree(ctx, d.ID, d.Gen, flatten(root, d.ID, d.Gen, secs)); err != nil {
+	nodes := flatten(root, d.ID, d.Gen, secs)
+	FillTreeTokens(nodes)
+	if err := s.st.Index.ReplaceTree(ctx, d.ID, d.Gen, nodes); err != nil {
 		return err
 	}
 	return s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil)

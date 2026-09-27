@@ -22,7 +22,6 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
-	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/llm"
 	"github.com/thanhenti/bepaylot/internal/parser"
@@ -46,7 +45,6 @@ type Harness struct {
 	Docs    *document.Service
 	Cases   *cases.Service
 	Index   *index.Service
-	Wiki    *wiki.Service
 	LLM     *ScriptLLM
 	Owner   types.User
 }
@@ -85,7 +83,6 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 	cfg := config.Defaults()
 	cfg.Parser.DefaultEngine = "echo"
 	cfg.Parser.Render.DPI = 72
-	cfg.Wiki.SchemasDir = findDir("configs/wiki_schemas")
 	cfg.Cases.TypesDir = findDir("configs/case_types")
 	for _, f := range tweak {
 		f(cfg)
@@ -118,17 +115,8 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 	}
 	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: renderer, Engines: engines, Cases: cs, Config: cfg})
 	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: q, TreeLLM: ai, SearchLLM: ai, Cases: cs, Config: cfg})
-	var wikiLLM interfaces.Completer = ai
-	if ai.NoWikiLLM {
-		wikiLLM = nil
-	}
-	wk := wiki.New(wiki.Deps{Store: st, Docs: docs, Sections: idx, Cases: cs, Queue: q, LLM: wikiLLM, Config: cfg})
-	idx.SetWiki(wk)
-	if err := wk.EnsureSchemas(ctx); err != nil {
-		t.Fatal(err)
-	}
 	handlers := map[string]queue.Handler{}
-	for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers(), wk.Handlers()} {
+	for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers()} {
 		for k, v := range m {
 			handlers[k] = v
 		}
@@ -136,7 +124,7 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 	q.Register(handlers, func(ctx context.Context, taskType, queueName string, payload []byte, err error, attempts int) {
 		_ = st.Tasks.InsertDeadLetter(ctx, postgres.DeadLetter{TaskType: taskType, Queue: queueName, Scope: "test", ScopeID: "test", Payload: payload, LastError: err.Error(), FailCount: attempts})
 	})
-	return &Harness{T: t, Ctx: ctx, Store: st, Config: cfg, Queue: q, Objects: objects, Docs: docs, Cases: cs, Index: idx, Wiki: wk, LLM: ai, Owner: user}
+	return &Harness{T: t, Ctx: ctx, Store: st, Config: cfg, Queue: q, Objects: objects, Docs: docs, Cases: cs, Index: idx, LLM: ai, Owner: user}
 }
 
 // scriptTweaks apply to the ScriptLLM of every harness built by New*; set
@@ -144,7 +132,7 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 var scriptTweaks []func(*ScriptLLM)
 
 // NewWithScript is New with the script LLM prepared before services are
-// wired (e.g. NoWikiLLM).
+// wired (e.g. a scripted tree search).
 func NewWithScript(t *testing.T, script func(*ScriptLLM), tweak ...func(*config.Config)) *Harness {
 	t.Helper()
 	scriptTweaks = []func(*ScriptLLM){script}
@@ -243,42 +231,34 @@ func (echoOCR) ParsePage(_ context.Context, in parser.PageImage, _ parser.PageOp
 	return &parser.RawPage{Width: in.Width, Height: in.Height, Raw: []byte("{}")}, nil
 }
 
-// ScriptLLM answers the index, search and wiki prompts deterministically.
+// ScriptLLM answers the index and search prompts deterministically.
 // Hooks let a test script one prompt kind; it counts calls per kind.
 type ScriptLLM struct {
 	mu    sync.Mutex
 	Calls map[string]int
-	// NoWikiLLM builds the wiki without an LLM (template pages only).
-	NoWikiLLM bool
-	// FailWiki makes every wiki extraction fail (a model returning no JSON).
-	FailWiki bool
-	// Extract scripts the wiki extraction ({"entities": [...], "relations":
-	// [...]}; user = the prompt with the [p<page>:L<line>] lines); nil = no
-	// entities.
-	Extract func(user string) map[string]any
-	// WikiIndex scripts step 2 of search (the wiki index); nil = read every
-	// file listed in the index from source.
-	WikiIndex func(user string) map[string]any
-	// WikiRead scripts step 3 of search (the wiki pages); nil = answer with
-	// the footnotes whose quote contains the first word of the question.
-	WikiRead func(user string) map[string]any
-	// Locate scripts step 4b (hits on numbered pages); nil = the lines
+	// TreeSearch scripts step 2 of search (the case TOC and trees; user =
+	// the prompt); nil = select the nodes whose line holds the first word
+	// of the question, else every file of the case.
+	TreeSearch func(user string) map[string]any
+	// Locate scripts step 4 (hits on numbered pages); nil = the lines
 	// containing the first word of the question.
 	Locate func(user string) map[string]any
+	// Prompts keeps the user prompt of every call per kind.
+	Prompts map[string][]string
 }
 
 // NewScriptLLM returns a script with default behaviour.
-func NewScriptLLM() *ScriptLLM { return &ScriptLLM{Calls: map[string]int{}} }
+func NewScriptLLM() *ScriptLLM {
+	return &ScriptLLM{Calls: map[string]int{}, Prompts: map[string][]string{}}
+}
 
 var (
 	lineRe     = regexp.MustCompile(`\[L(\d+)\] (.*)`)
 	pageRe     = regexp.MustCompile(`<page n="(\d+)" doc="(d\d+)"`)
-	nodeRe     = regexp.MustCompile(`\[(n\d+)\] `)
 	partRe     = regexp.MustCompile(`<part id="(n\d+)"`)
 	questionRe = regexp.MustCompile(`Question: (.*)`)
-	indexRefRe = regexp.MustCompile(`\[(w\d+)\] [^\n]*\(\d+ tr\.\)`) // file lines of the wiki index
-	wikiPageRe = regexp.MustCompile(`<wiki_page id="(w\d+)"`)
-	footRe     = regexp.MustCompile(`^\[\^(\d+)\] .*?: "(.*)"`)
+	fileRefRe  = regexp.MustCompile(`(?m)^\[(d\d+)\] `)            // file lines of the case TOC
+	nodeLineRe = regexp.MustCompile(`\[(d\d+\.n\d+)\] ([^\[\n]*)`) // tree nodes (one or two per line)
 )
 
 func question(user string) []string {
@@ -311,44 +291,27 @@ func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any
 	case strings.Contains(system, "pick which cases"):
 		kind = "select_cases"
 		reply = map[string]any{"select": []map[string]string{{"case": "c1"}}}
-	case strings.Contains(system, "search a case wiki index"):
-		kind = "wiki_index"
-		if s.WikiIndex != nil {
-			reply = s.WikiIndex(user)
-		} else {
-			var raw []map[string]string
-			for _, m := range indexRefRe.FindAllStringSubmatch(user, -1) {
-				raw = append(raw, map[string]string{"ref": m[1]})
-			}
-			reply = map[string]any{"wiki": []string{}, "raw": raw}
-		}
-	case strings.Contains(system, "answer a question from the wiki pages"):
-		kind = "wiki_read"
-		if s.WikiRead != nil {
-			reply = s.WikiRead(user)
+	case strings.Contains(system, "tables of contents"):
+		kind = "tree_search"
+		if s.TreeSearch != nil {
+			reply = s.TreeSearch(user)
 		} else {
 			q := question(user)
-			var hits []map[string]any
-			page := ""
-			for _, ln := range strings.Split(user, "\n") {
-				if m := wikiPageRe.FindStringSubmatch(ln); m != nil {
-					page = m[1]
-				}
-				if m := footRe.FindStringSubmatch(ln); m != nil && len(q) > 0 && strings.Contains(textutil.Normalize(m[2]), q[0]) {
-					var n int
-					fmt.Sscan(m[1], &n)
-					hits = append(hits, map[string]any{"page": page, "footnotes": []int{n}, "relevance": 0.9})
+			var sel []map[string]string
+			if len(q) > 0 {
+				for _, m := range nodeLineRe.FindAllStringSubmatch(user, -1) {
+					if strings.Contains(textutil.Normalize(m[2]), q[0]) {
+						sel = append(sel, map[string]string{"node": m[1]})
+					}
 				}
 			}
-			reply = map[string]any{"hits": hits, "raw": []any{}}
+			if len(sel) == 0 {
+				for _, m := range fileRefRe.FindAllStringSubmatch(user, -1) {
+					sel = append(sel, map[string]string{"node": m[1]})
+				}
+			}
+			reply = map[string]any{"select": sel, "expand": []string{}}
 		}
-	case strings.Contains(system, "navigate"):
-		kind = "select_nodes"
-		var sel []map[string]string
-		for _, m := range nodeRe.FindAllStringSubmatch(user, -1) {
-			sel = append(sel, map[string]string{"node_id": m[1]})
-		}
-		reply = map[string]any{"select": sel, "answerable": true}
 	case strings.Contains(system, "exact lines"):
 		kind = "locate"
 		if s.Locate != nil {
@@ -371,21 +334,12 @@ func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any
 			}
 		}
 		reply = map[string]any{"hits": hits}
-	case s.FailWiki && strings.Contains(system, "extract entities"):
-		s.mu.Unlock()
-		return fmt.Errorf("no JSON value in reply")
-	case strings.Contains(system, "extract entities"):
-		kind = "wiki_extract"
-		if s.Extract != nil {
-			reply = s.Extract(user)
-		} else {
-			reply = map[string]any{"entities": []any{}, "relations": []any{}}
-		}
 	default:
 		s.mu.Unlock()
 		return fmt.Errorf("script llm: unexpected prompt %q", strings.SplitN(system, "\n", 2)[0])
 	}
 	s.Calls[kind]++
+	s.Prompts[kind] = append(s.Prompts[kind], user)
 	s.mu.Unlock()
 	b, _ := json.Marshal(reply)
 	return llm.DecodeJSON(string(b), out)

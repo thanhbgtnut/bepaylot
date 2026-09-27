@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/thanhenti/bepaylot/internal/types"
 )
 
 // TasksRepo persists dead letters, pending ops and processing spans (§4.5).
@@ -76,7 +73,7 @@ func (r *TasksRepo) TakeDeadLetter(ctx context.Context, id int64) (DeadLetter, e
 	return d, err
 }
 
-// PendingOp is a durable queued operation (debounced wiki work etc.).
+// PendingOp is a durable queued operation (batched or debounced work).
 type PendingOp struct {
 	ID        int64
 	TaskType  string
@@ -105,17 +102,6 @@ func (r *TasksRepo) HasDeadLetter(ctx context.Context, scope, scopeID, relatedID
 	err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM task_dead_letters WHERE scope = $1 AND scope_id = $2 AND related_id = $3)`,
 		scope, scopeID, relatedID).Scan(&ok)
 	return ok, err
-}
-
-// EnqueueWikiOp queues one wiki op of a case (task_pending_ops, task type
-// wiki:ingest, scope case), once per (op, document, generation).
-func (r *TasksRepo) EnqueueWikiOp(ctx context.Context, caseID uuid.UUID, op string, p types.WikiOpPayload) (bool, error) {
-	b, err := json.Marshal(p)
-	if err != nil {
-		return false, err
-	}
-	return r.EnqueueOpOnce(ctx, PendingOp{TaskType: types.TaskWikiIngest, Scope: types.ScopeCase, ScopeID: caseID.String(),
-		Op: op, DedupKey: fmt.Sprintf("%s:%d:%v", p.DocumentID, p.Gen, p.PageIDs), Payload: b})
 }
 
 // EnqueueOpOnce stores a pending op unless one with the same identity and

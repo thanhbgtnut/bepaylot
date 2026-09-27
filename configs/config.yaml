@@ -175,7 +175,7 @@ callback:
 
 workers:
   role: ${BEPAYLOT_ROLE}             # api | worker | all (default all)
-  concurrency: { core: 4, ocr: 8, index: 6, wiki: 8, maintenance: 2 }   # render = parser.render.workers
+  concurrency: { core: 4, ocr: 8, index: 6, maintenance: 2 }   # render = parser.render.workers
   render_inflight_batches: 1        # per document
   render_ahead_pages: 32            # rendered pages waiting for OCR, per document
   ocr_inflight_pages: 8             # per document
@@ -245,47 +245,29 @@ index:
     provider: ""                    # "" = llm.default_provider
     model: ""                       # "" = llm.default_model
 
+# Search walks trees only (§6.6): case TOC → document tree → pages of the
+# chosen nodes → lines. No wiki, no embeddings.
 search:
   provider: ""
   model: ""                         # a fast model is recommended
   default_mode: reasoning           # reasoning | keyword | metadata
-  map_token_budget: 12000           # multi-case (kb_ids) index above this → pick cases first
-  max_wiki_pages: 4                 # wiki pages read at step 3 (§6.10)
-  node_read_budget: 6000            # smaller tree branches are read without walking
-  max_docs_selected: 5              # files read from source per request
+  case_toc_budget: 6000             # case TOC (cards + first branches); above it branches/summaries are cut
+  tree_token_budget: 8000           # trees within it are given whole (§6.5)
+  map_token_budget: 12000           # multi-case (kb_ids) TOC above this → pick cases first
+  node_read_budget: 6000            # bigger nodes must be expanded, not read
+  full_doc_token_budget: 12000      # smaller files are read whole when chosen
+  page_token_budget: 24000          # page tokens per call; above it pages are batched
+  max_docs_selected: 5              # files whose pages are read per request
   parallel_docs: 4
-  tree_token_budget: 8000
-  full_doc_token_budget: 12000
-  page_token_budget: 24000
-  max_hops: 3
-  max_llm_calls: 12
+  max_hops: 3                       # expands / re-walks of the tree
+  max_llm_calls: 8
   quote_min_similarity: 0.8
   cache_ttl: 10m
   timeout: 60s
 
 # Cases (§6.2): one YAML file per case type (code pattern/normalization,
-# metadata schemas, parser engine, wiki on/off and schema).
+# metadata schemas, parser engine).
 cases:
   types_dir: configs/case_types
   default_type: default             # used when upload/create names no case_type
   auto_create_on_upload: true       # false = create cases first (POST /kbs/:id/cases)
-
-# LLM Wiki of each case (§6.6–6.9), stored in Postgres.
-wiki:
-  enabled_by_default: true          # case types can turn it off with wiki.enabled: false
-  schemas_dir: configs/wiki_schemas
-  default_schema: generic
-  provider: ""                      # "" = llm.default_provider
-  model: ""                         # "" = llm.default_model; extracts entities and relations (JSON only)
-  strict_citations: false           # true = refuse hand edits with invalid footnotes (422)
-  index: { max_tokens: 6000 }
-  # Ingest: the LLM only extracts (1 call per file, 1 per part of a big file);
-  # every page is written by code from the index tree and the extraction.
-  ingest:
-    extract: true                   # false = source pages + overview only, 0 LLM calls
-    doc_token_budget: 24000         # bigger files are extracted part by part (top branches of the tree)
-    parallel: 2                     # parts extracted at the same time
-    max_llm_calls: 8                # per file; above it the file is "partial"
-    max_entities: 40                # per file
-    name_similarity: 0.85           # trigram threshold for entity names without identity
-  lint: { interval: 24h, llm: false }

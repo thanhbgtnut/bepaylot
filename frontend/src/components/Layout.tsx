@@ -10,8 +10,7 @@ import { Empty, Icon, Menu } from "./ui";
 const NAV: [string, string, string][] = [
   ["/documents", "folder_open", "Tài liệu"],
   ["/chat", "forum", "Hỏi đáp"],
-  ["/wiki", "menu_book", "Wiki"],
-  ["/graph", "hub", "Graph"],
+  ["/cases", "account_tree", "Hồ sơ"],
 ];
 
 // BePaylot's own mark (same as the favicon): a "b" monogram on a rounded tile.

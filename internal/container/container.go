@@ -22,7 +22,6 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
-	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler"
 	"github.com/thanhenti/bepaylot/internal/llm"
@@ -168,7 +167,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		}
 		log.Warn("redis.addr is empty: tasks run in-process (single instance only, queued work is lost on restart)")
 		app.inline = queue.NewInline()
-		app.inline.HonorDelays = true // callback backoff, wiki debounce
+		app.inline.HonorDelays = true // callback backoff
 		app.enqueuer = app.inline
 		h.Inspector = inlineInspector{app.inline}
 	}
@@ -218,7 +217,6 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	}
 	treeLLM := completer(cfg.Index.Tree.Provider, cfg.Index.Tree.Model, 4096)
 	searchLLM := completer(cfg.Search.Provider, cfg.Search.Model, 4096)
-	wikiLLM := completer(cfg.Wiki.Provider, cfg.Wiki.Model, 8192)
 
 	cs, err := cases.New(st, app.enqueuer, cfg, log)
 	if err != nil {
@@ -226,29 +224,24 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	}
 	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: app.enqueuer, Renderer: renderer, Engines: engines, Cases: cs, Config: cfg, Log: log})
 	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: app.enqueuer, TreeLLM: treeLLM, SearchLLM: searchLLM, Cases: cs, Config: cfg, Log: log})
-	wk := wiki.New(wiki.Deps{Store: st, Docs: docs, Sections: idx, Cases: cs, Queue: app.enqueuer, LLM: wikiLLM, Config: cfg, Log: log})
-	idx.SetWiki(wk)
-	if err := wk.EnsureSchemas(ctx); err != nil {
-		log.Warn("wiki schemas not loaded", "err", err)
-	}
 	app.docs = docs
 
-	h.Docs, h.Cases, h.Searcher, h.Wiki, h.Engines, h.Queue = docs, cs, idx, wk, engines, app.enqueuer
-	if err := toolReg.SetKnowledgeTools(idx, wk); err != nil {
+	h.Docs, h.Cases, h.Searcher, h.Engines, h.Queue = docs, cs, idx, engines, app.enqueuer
+	if err := toolReg.SetKnowledgeTools(idx); err != nil {
 		return err
 	}
 	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs})
 
 	if cfg.Workers.RunsWorkers() {
 		handlers := map[string]queue.Handler{}
-		for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers(), wk.Handlers()} {
+		for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers()} {
 			for k, v := range m {
 				handlers[k] = v
 			}
 		}
 		// One sweep re-drives every module (§4.3).
 		handlers[types.TaskHousekeeping] = func(ctx context.Context, _ []byte) error {
-			return errors.Join(docs.Housekeeping(ctx), cs.Housekeeping(ctx), wk.Housekeeping(ctx))
+			return errors.Join(docs.Housekeeping(ctx), cs.Housekeeping(ctx))
 		}
 		sink := deadLetterSink(st, log)
 		if app.inline != nil {
@@ -361,7 +354,7 @@ func (d describer) DescribeCase(ctx context.Context, owner, caseID uuid.UUID) *p
 		return nil
 	}
 	info := &prompt.CaseInfo{ID: c.ID.String(), Code: c.Code, TypeTitle: d.cases.CaseType(c.CaseType).Title, Title: c.Title, Status: c.Status,
-		Metadata: c.Metadata, Documents: c.Documents, WikiStatus: c.WikiStatus, WikiDocs: c.WikiDocsCovered}
+		Metadata: c.Metadata, Documents: c.Documents}
 	for _, f := range d.docs.MetadataKeys(ctx, c) {
 		info.Fields = append(info.Fields, prompt.MetadataField{Key: f.Key, Type: f.Type, Description: f.Description, Values: f.Values})
 	}

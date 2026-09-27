@@ -1,4 +1,4 @@
-import { lazy, StrictMode, Suspense } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
@@ -7,15 +7,11 @@ import { AppProvider } from "./components/AppContext";
 import { AuthProvider, RequireAuth } from "./components/AuthContext";
 import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/toast";
-import { Loading } from "./components/ui";
 import { LoginPage } from "./pages/auth/LoginPage";
+import { CasePage } from "./pages/cases/CasePage";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { DocumentDetail } from "./pages/documents/DocumentDetail";
 import { DocumentsPage } from "./pages/documents/DocumentsPage";
-import { WikiPage } from "./pages/wiki/WikiPage";
-
-// three.js is only loaded when the graph is opened.
-const GraphPage = lazy(() => import("./pages/graph/GraphPage").then((m) => ({ default: m.GraphPage })));
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -34,16 +30,8 @@ const router = createBrowserRouter([
       { path: "documents/:id", element: <DocumentDetail /> },
       { path: "chat", element: <ChatPage /> },
       { path: "chat/:sessionId", element: <ChatPage /> },
-      { path: "wiki", element: <WikiPage /> },
-      { path: "wiki/:caseId/*", element: <WikiPage /> },
-      {
-        path: "graph",
-        element: (
-          <Suspense fallback={<Loading />}>
-            <GraphPage />
-          </Suspense>
-        ),
-      },
+      { path: "cases", element: <CasePage /> },
+      { path: "cases/:caseId", element: <CasePage /> },
       { path: "*", element: <Navigate to="/documents" replace /> },
     ],
   },

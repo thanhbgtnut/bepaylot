@@ -83,8 +83,8 @@ func (s *Service) UpdateKB(ctx context.Context, owner, id uuid.UUID, p postgres.
 	return kb, nil
 }
 
-// DeleteKB soft-deletes a KB and its cases; housekeeping purges documents
-// and case wikis.
+// DeleteKB soft-deletes a KB and its cases; housekeeping purges their
+// documents.
 func (s *Service) DeleteKB(ctx context.Context, owner, id uuid.UUID) error {
 	if err := notFound(s.st.KBs.SoftDelete(ctx, id, owner)); err != nil {
 		return err
@@ -209,8 +209,7 @@ func (s *Service) Cancel(ctx context.Context, owner, id uuid.UUID) error {
 	return err
 }
 
-// Delete marks a document deleting, retracts it from the case wiki (§6.8)
-// and enqueues its purge.
+// Delete marks a document deleting and enqueues its purge.
 func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 	d, err := s.GetOwned(ctx, owner, id)
 	if err != nil {
@@ -218,11 +217,6 @@ func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 	}
 	if err := notFound(s.st.Documents.SoftDelete(ctx, d.ID)); err != nil {
 		return err
-	}
-	if d.WikiStatus != types.StageSkipped {
-		if err := s.queueWikiOp(ctx, d, types.WikiOpRetractDoc, d.Gen); err != nil {
-			s.log.Warn("wiki retract not queued", "doc", d.ID, "err", err)
-		}
 	}
 	return s.q.Enqueue(ctx, types.TaskDocumentDelete, types.DocTaskPayload{DocumentID: d.ID, KBID: d.KBID, Gen: -1}, queue.Opts{TaskID: "del:" + d.ID.String()})
 }
@@ -261,17 +255,9 @@ func (s *Service) Reparse(ctx context.Context, owner, id uuid.UUID, req ReparseR
 		}
 	}
 	if len(req.Pages) == 0 {
-		old := d
 		gen, err := s.st.Documents.BumpGen(ctx, d.ID)
 		if err != nil {
 			return d, notFound(err)
-		}
-		// Full reparse = retract the old generation + ingest the new one
-		// once it is indexed (§6.8).
-		if old.WikiStatus != types.StageSkipped {
-			if err := s.queueWikiOp(ctx, old, types.WikiOpRetractDoc, old.Gen); err != nil {
-				s.log.Warn("wiki retract not queued", "doc", d.ID, "err", err)
-			}
 		}
 		d.Gen, d.Status = gen, types.DocQueued
 		return d, s.enqueue(ctx, types.TaskDocumentSplit, d, nil, fmt.Sprintf("split:%s:%d", d.ID, gen))

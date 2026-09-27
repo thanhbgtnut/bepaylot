@@ -195,17 +195,18 @@ type Index struct {
 // TreeLLMEnabled defaults to true.
 func (i Index) TreeLLMEnabled() bool { return i.Tree.LLM == nil || *i.Tree.LLM }
 
-// Search configures reasoning search: wiki index → wiki pages → source pages
-// (§6.10).
+// Search configures reasoning search by walking trees: case TOC → document
+// tree → pages of the chosen nodes → lines (§6.6).
 type Search struct {
 	Provider    string `yaml:"provider"`
 	Model       string `yaml:"model"`
 	DefaultMode string `yaml:"default_mode"`
-	// MapTokenBudget: a multi-case (kb_ids) index above it first picks cases.
+	// CaseTOCBudget caps the case table of contents (cards + first
+	// branches); above it branches, then summaries are cut.
+	CaseTOCBudget int `yaml:"case_toc_budget"`
+	// MapTokenBudget: a multi-case (kb_ids) TOC above it first picks cases.
 	MapTokenBudget int `yaml:"map_token_budget"`
-	// MaxWikiPages wiki pages are read at step 3.
-	MaxWikiPages int `yaml:"max_wiki_pages"`
-	// NodeReadBudget: smaller branches are read without walking the tree.
+	// NodeReadBudget: a node above it must be expanded, not read.
 	NodeReadBudget     int           `yaml:"node_read_budget"`
 	MaxDocsSelected    int           `yaml:"max_docs_selected"`
 	ParallelDocs       int           `yaml:"parallel_docs"`
@@ -246,7 +247,7 @@ func (c *Config) applyPipelineDefaults() {
 	if c.Workers.Concurrency == nil {
 		c.Workers.Concurrency = map[string]int{}
 	}
-	for pool, n := range map[string]int{"core": 4, "ocr": 8, "index": 6, "wiki": 8, "maintenance": 2} {
+	for pool, n := range map[string]int{"core": 4, "ocr": 8, "index": 6, "maintenance": 2} {
 		if c.Workers.Concurrency[pool] <= 0 {
 			c.Workers.Concurrency[pool] = n
 		}
@@ -318,8 +319,8 @@ func (c *Config) applyPipelineDefaults() {
 
 	s := &c.Search
 	setString(&s.DefaultMode, "reasoning")
+	setInt(&s.CaseTOCBudget, 6000)
 	setInt(&s.MapTokenBudget, 12000)
-	setInt(&s.MaxWikiPages, 4)
 	setInt(&s.NodeReadBudget, 6000)
 	setInt(&s.MaxDocsSelected, 5)
 	setInt(&s.ParallelDocs, 4)
@@ -327,7 +328,7 @@ func (c *Config) applyPipelineDefaults() {
 	setInt(&s.FullDocTokenBudget, 12000)
 	setInt(&s.PageTokenBudget, 24000)
 	setInt(&s.MaxHops, 3)
-	setInt(&s.MaxLLMCalls, 12)
+	setInt(&s.MaxLLMCalls, 8)
 	if s.QuoteMinSimilarity == 0 {
 		s.QuoteMinSimilarity = 0.8
 	}

@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/thanhenti/bepaylot/internal/types"
-	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // CreateKBRequest is the body of POST /v1/kbs.
@@ -102,6 +101,8 @@ type DocumentSearchResponse struct {
 // TreeResponse is a document tree, root first.
 type TreeResponse struct {
 	Nodes []types.TreeNode `json:"nodes"`
+	// Text is the tree as the LLM reads it (format=text).
+	Text string `json:"text,omitempty"`
 }
 
 // LocationsResponse lists resolved positions.
@@ -138,52 +139,6 @@ type CaseConflict struct {
 // CaseTypeList lists the loaded case types.
 type CaseTypeList struct {
 	Data []types.CaseType `json:"data"`
-}
-
-// WikiIndexResponse is the wiki index as given to the LLM.
-type WikiIndexResponse struct {
-	Content string `json:"content"`
-}
-
-// WikiRevisionList lists page revisions, newest first.
-type WikiRevisionList struct {
-	Data []types.WikiRevision `json:"data"`
-}
-
-// WikiProposalRequest accepts or rejects an ingest proposal.
-type WikiProposalRequest struct {
-	Action string `json:"action"` // accept | reject
-}
-
-// WikiSearchResponse lists full-text matches in a case wiki.
-type WikiSearchResponse struct {
-	Data []interfaces.WikiSearchHit `json:"data"`
-}
-
-// WikiLogList lists wiki log lines, newest first.
-type WikiLogList struct {
-	Data []types.WikiLogEntry `json:"data"`
-}
-
-// WikiLintList lists lint issues.
-type WikiLintList struct {
-	Data []types.WikiLintIssue `json:"data"`
-}
-
-// WikiLintPatch changes the status of a lint issue.
-type WikiLintPatch struct {
-	Status string `json:"status"` // fixed | dismissed | open
-}
-
-// SchemaList lists wiki schemas.
-type SchemaList struct {
-	Data []types.WikiSchema `json:"data"`
-}
-
-// SchemaTestRequest is the body of POST /v1/wiki/schemas/{name}/test.
-type SchemaTestRequest struct {
-	Text       string `json:"text,omitempty"`
-	DocumentID string `json:"document_id,omitempty"`
 }
 
 // QueueStat is one queue's depth.

@@ -10,9 +10,6 @@ import { metaValue, SOURCE, STATUS, TERMINAL, type Tone } from "../lib/format";
 const ALIAS: Record<string, string> = {
   docs: "folder_open",
   chat: "forum",
-  wiki: "menu_book",
-  graph: "hub",
-  graphNodes: "hub",
   gear: "settings",
   plus: "add",
   close: "close",
@@ -74,7 +71,7 @@ export function Badge({ tone = "", children, title }: { tone?: Tone; children: R
 
 export function StatusBadge({ status }: { status: DocStatus }) {
   const [label, tone] = STATUS[status] ?? [status, ""];
-  const spinning = !TERMINAL.has(status) && status !== "enriching";
+  const spinning = !TERMINAL.has(status);
   return (
     <Badge tone={tone}>
       {spinning && <span className="spinner size-2.5 border-[1.5px]" />}

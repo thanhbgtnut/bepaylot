@@ -18,12 +18,12 @@ import (
 type CasesRepo struct{ pool *pgxpool.Pool }
 
 const caseCols = `c.id, c.kb_id, c.code, c.case_type, c.title, c.status, c.metadata, c.created_by,
-	c.wiki_schema, c.wiki_status, c.wiki_version, c.wiki_built_at, c.wiki_docs_covered, c.created_at, c.updated_at, c.deleted_at`
+	c.created_at, c.updated_at, c.deleted_at`
 
 func scanCase(row pgx.Row) (types.Case, error) {
 	var c types.Case
 	err := row.Scan(&c.ID, &c.KBID, &c.Code, &c.CaseType, &c.Title, &c.Status, &metaScanner{&c.Metadata}, &c.CreatedBy,
-		&c.WikiSchema, &c.WikiStatus, &c.WikiVersion, &c.WikiBuiltAt, &c.WikiDocsCovered, &c.CreatedAt, &c.UpdatedAt, &c.DeletedAt)
+		&c.CreatedAt, &c.UpdatedAt, &c.DeletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -38,11 +38,11 @@ func (r *CasesRepo) Insert(ctx context.Context, c types.Case) (types.Case, bool,
 		return c, false, err
 	}
 	out, err := scanCase(r.pool.QueryRow(ctx, `
-		INSERT INTO cases AS c (kb_id, code, case_type, title, metadata, created_by, wiki_schema, wiki_status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO cases AS c (kb_id, code, case_type, title, metadata, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (kb_id, code) WHERE deleted_at IS NULL DO NOTHING
 		RETURNING `+caseCols,
-		c.KBID, cleanText(c.Code), c.CaseType, cleanText(c.Title), meta, c.CreatedBy, c.WikiSchema, c.WikiStatus))
+		c.KBID, cleanText(c.Code), c.CaseType, cleanText(c.Title), meta, c.CreatedBy))
 	if errors.Is(err, ErrNotFound) {
 		existing, gerr := r.ByCode(ctx, c.KBID, c.Code)
 		return existing, false, gerr
@@ -238,13 +238,11 @@ func (r *CasesRepo) SoftDeleteByKB(ctx context.Context, kb uuid.UUID) ([]uuid.UU
 	return out, rows.Err()
 }
 
-// Deleted returns soft-deleted cases that still own documents or wiki rows,
-// so housekeeping can re-drive case:delete.
+// Deleted returns soft-deleted cases that still own documents, so
+// housekeeping can re-drive case:delete.
 func (r *CasesRepo) Deleted(ctx context.Context, limit int) ([]uuid.UUID, error) {
 	rows, err := r.pool.Query(ctx, `SELECT c.id FROM cases c WHERE c.deleted_at IS NOT NULL
-		AND (EXISTS (SELECT 1 FROM documents d WHERE d.case_id = c.id)
-		  OR EXISTS (SELECT 1 FROM wiki_pages w WHERE w.case_id = c.id)
-		  OR EXISTS (SELECT 1 FROM wiki_log l WHERE l.case_id = c.id))
+		AND EXISTS (SELECT 1 FROM documents d WHERE d.case_id = c.id)
 		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -257,33 +255,6 @@ func (r *CasesRepo) Deleted(ctx context.Context, limit int) ([]uuid.UUID, error)
 			return nil, err
 		}
 		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
-// SetWikiStatus records the wiki state of a case; covered < 0 keeps it.
-func (r *CasesRepo) SetWikiStatus(ctx context.Context, id uuid.UUID, status string, covered int) error {
-	_, err := r.pool.Exec(ctx, `UPDATE cases SET wiki_status = $2,
-		wiki_docs_covered = CASE WHEN $3 >= 0 THEN $3 ELSE wiki_docs_covered END, updated_at = now() WHERE id = $1`, id, status, covered)
-	return err
-}
-
-// WithWiki lists live cases whose wiki is enabled and not empty, for the
-// periodic lint.
-func (r *CasesRepo) WithWiki(ctx context.Context, limit int) ([]types.Case, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+caseCols+` FROM cases c WHERE c.deleted_at IS NULL AND c.wiki_version > 0
-		ORDER BY c.updated_at DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []types.Case
-	for rows.Next() {
-		c, err := scanCase(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
 	}
 	return out, rows.Err()
 }

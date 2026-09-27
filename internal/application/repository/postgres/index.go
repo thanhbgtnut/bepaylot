@@ -145,10 +145,10 @@ func (r *IndexRepo) ReplaceTree(ctx context.Context, doc uuid.UUID, gen int, nod
 			ids = []uuid.UUID{}
 		}
 		rows[i] = []any{n.ID, doc, gen, n.ParentID, n.ShortID, n.Ord, n.Level, cleanText(n.Title), n.Origin, n.PageStart, n.PageEnd,
-			cleanText(n.Summary), ids, n.TokenCount}
+			cleanText(n.Summary), ids, n.TokenCount, n.TreeTokens}
 	}
 	if _, err := tx.CopyFrom(ctx, pgx.Identifier{"doc_tree_nodes"}, []string{"id", "document_id", "gen", "parent_id", "short_id", "ord",
-		"level", "title", "origin", "page_start", "page_end", "summary", "section_ids", "token_count"}, pgx.CopyFromRows(rows)); err != nil {
+		"level", "title", "origin", "page_start", "page_end", "summary", "section_ids", "token_count", "tree_tokens"}, pgx.CopyFromRows(rows)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -157,7 +157,7 @@ func (r *IndexRepo) ReplaceTree(ctx context.Context, doc uuid.UUID, gen int, nod
 // Tree returns every node of (doc, gen), parents before children.
 func (r *IndexRepo) Tree(ctx context.Context, doc uuid.UUID, gen int) ([]types.TreeNode, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id, document_id, gen, parent_id, short_id, ord, level, title, origin, page_start, page_end,
-		summary, section_ids, token_count FROM doc_tree_nodes WHERE document_id = $1 AND gen = $2 ORDER BY level, ord`, doc, gen)
+		summary, section_ids, token_count, COALESCE(tree_tokens, 0) FROM doc_tree_nodes WHERE document_id = $1 AND gen = $2 ORDER BY level, ord`, doc, gen)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (r *IndexRepo) Tree(ctx context.Context, doc uuid.UUID, gen int) ([]types.T
 	for rows.Next() {
 		var n types.TreeNode
 		if err := rows.Scan(&n.ID, &n.DocumentID, &n.Gen, &n.ParentID, &n.ShortID, &n.Ord, &n.Level, &n.Title, &n.Origin,
-			&n.PageStart, &n.PageEnd, &n.Summary, &n.SectionIDs, &n.TokenCount); err != nil {
+			&n.PageStart, &n.PageEnd, &n.Summary, &n.SectionIDs, &n.TokenCount, &n.TreeTokens); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

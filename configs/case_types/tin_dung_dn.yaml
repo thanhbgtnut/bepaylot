@@ -1,9 +1,6 @@
 # Loại case "hồ sơ tín dụng doanh nghiệp" (§6.2): cùng logic xử lý hồ sơ,
-# chỉ khác quy tắc mã và wiki schema.
+# chỉ khác quy tắc mã.
 name: tin_dung_dn
 title: Hồ sơ tín dụng doanh nghiệp
 code: { pattern: '^TD-\d{4}-\d{6}$', normalize: upper_trim }
 parser: { engine: "" }
-wiki:
-  enabled: true
-  schema: generic

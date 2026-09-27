@@ -35,7 +35,6 @@ export type DocStatus =
   | "parsing"
   | "assembling"
   | "indexing"
-  | "enriching"
   | "completed"
   | "partial"
   | "failed"
@@ -54,7 +53,6 @@ export interface Document {
   status: DocStatus;
   parse_status: string;
   index_status: string;
-  wiki_status: string;
   pages_done: number;
   pages_failed: number;
   engine?: string;
@@ -129,6 +127,8 @@ export interface TreeNode {
   page_start: number;
   page_end: number;
   summary?: string;
+  token_count?: number;
+  tree_tokens?: number;
 }
 
 export interface LineMatch {
@@ -212,11 +212,6 @@ export interface Case {
   title?: string;
   status: "open" | "closed";
   metadata?: Record<string, unknown>;
-  wiki_schema: string;
-  wiki_status: "none" | "building" | "ready" | "stale" | "failed";
-  wiki_version: number;
-  wiki_built_at?: string;
-  wiki_docs_covered: number;
   documents?: Record<string, number>;
   created_at: string;
   updated_at: string;
@@ -228,115 +223,37 @@ export interface CaseType {
   code: { pattern?: string; normalize?: string };
 }
 
-// ---- wiki (one per case)
+// ---- case table of contents (§6.6): cards + first tree branches, no LLM
 
-export type WikiKind = "overview" | "source" | "entity" | "topic" | "note";
-
-export interface WikiAttribute {
-  value: unknown;
-  footnotes?: number[];
-  conflict?: boolean;
-  history?: { value: unknown; footnotes?: number[]; citation_id?: string }[];
-}
-
-export interface WikiFootnote {
-  n: number;
-  document_id: string;
-  gen: number;
-  page_no: number;
-  line_from: number;
-  line_to: number;
-  quote: string;
-  citation_id: string;
-  status: "valid" | "stale";
-  file_name?: string;
-}
-
-export interface WikiLink {
-  from: string;
-  from_title?: string;
-  to: string;
-  to_title?: string;
-  relation?: string;
-  attributes?: Record<string, unknown>;
-  footnote_n?: number;
-}
-
-export interface WikiPage {
-  id: string;
-  case_id: string;
-  slug: string;
-  kind: WikiKind;
-  entity_type?: string;
-  document_id?: string;
+export interface TOCBranch {
+  node_id: string;
   title: string;
-  aliases?: string[];
-  summary: string;
-  content: string;
-  attributes?: Record<string, WikiAttribute>;
-  version: number;
-  last_edit_source: "system" | "user";
-  proposed_content?: string;
-  proposed_attributes?: Record<string, WikiAttribute>;
-  created_at: string;
-  updated_at: string;
-  footnotes?: WikiFootnote[];
-  links_out?: WikiLink[];
-  links_in?: WikiLink[];
+  page_start: number;
+  page_end: number;
+  summary?: string;
+  has_more?: boolean;
 }
 
-export interface WikiPageRef {
-  slug: string;
-  title: string;
-  kind: WikiKind;
-  entity_type?: string;
-  summary: string;
-  document_id?: string;
-  proposed?: boolean;
-  updated_at: string;
-}
-
-export interface WikiTOC {
-  case: Case;
-  pages: WikiPageRef[];
-  pending?: { document_id: string; file_name: string; status: string; wiki_status: string }[];
-  open_lint_issues: number;
-  documents_total: number;
-}
-
-export interface WikiRevision {
-  version: number;
-  title: string;
-  content: string;
-  edit_source: "system" | "user";
-  edited_at: string;
-}
-
-export interface WikiLogEntry {
-  id: number;
-  at: string;
-  op: string;
+export interface TOCDoc {
   ref: string;
-  document_id?: string;
-  pages: string[];
-  summary: string;
-  actor: string;
-  llm_calls?: number;
+  document_id: string;
+  file_name: string;
+  status: DocStatus;
+  page_count: number;
+  title?: string;
+  summary?: string;
+  metadata?: Record<string, unknown>;
+  branches?: TOCBranch[];
+  tree_tokens: number;
 }
 
-export interface WikiLintIssue {
-  id: number;
-  kind: string;
-  page_ids: string[];
-  pages?: string[];
-  detail: Record<string, unknown>;
-  status: "open" | "fixed" | "dismissed";
-  found_at: string;
-}
-
-export interface WikiGraph {
-  nodes: { slug: string; title: string; kind: WikiKind; entity_type?: string }[];
-  edges: WikiLink[];
+export interface CaseTOC {
+  case: Case;
+  documents: TOCDoc[];
+  pending?: { document_id: string; file_name: string; status: DocStatus }[];
+  text?: string;
+  token_count: number;
+  truncated?: boolean;
 }
 
 // ---------------------------------------------------------------- auth

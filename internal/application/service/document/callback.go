@@ -75,7 +75,7 @@ func callbackPayload(id uuid.UUID, event string, d types.Document, caseCode stri
 	doc := map[string]any{
 		"id": d.ID, "kb_id": d.KBID, "case_id": d.CaseID, "case_code": caseCode, "file_name": d.FileName, "mime_type": d.MimeType, "size_bytes": d.SizeBytes,
 		"gen": d.Gen, "status": d.Status, "parse_status": d.ParseStatus, "index_status": d.IndexStatus,
-		"wiki_status": d.WikiStatus, "page_count": d.PageCount, "pages_done": d.PagesDone, "pages_failed": d.PagesFailed,
+		"page_count": d.PageCount, "pages_done": d.PagesDone, "pages_failed": d.PagesFailed,
 		"metadata": nonNil(d.Metadata), "created_at": d.CreatedAt, "updated_at": d.UpdatedAt,
 	}
 	if d.BatchID != nil {

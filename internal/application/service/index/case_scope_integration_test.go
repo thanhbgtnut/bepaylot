@@ -13,8 +13,8 @@ import (
 )
 
 // Two cases of one KB hold the same file. Search, the per-document scope
-// check, metadata counts and the wiki never leave the case (N13, N16, N18,
-// N23).
+// check, metadata counts and the case TOC never leave the case (N13, N16,
+// N18).
 func TestSearchNeverLeavesTheCase(t *testing.T) {
 	h := testkit.New(t)
 	kb := h.KB(types.KBConfig{}, nil)
@@ -55,13 +55,13 @@ func TestSearchNeverLeavesTheCase(t *testing.T) {
 		}
 	}
 
-	// An LLM that names index ids it was never shown gets nothing from
-	// another case (N16 e).
-	h.LLM.WikiIndex = func(string) map[string]any {
-		return map[string]any{"wiki": []string{"w99"}, "raw": []map[string]string{{"ref": "w42.n1"}, {"ref": b.String()}}}
+	// An LLM that names refs it was never shown gets nothing from another
+	// case (N16 e).
+	h.LLM.TreeSearch = func(string) map[string]any {
+		return map[string]any{"select": []map[string]string{{"node": "d9"}, {"node": "d1.n99"}, {"node": b.String()}}, "expand": []string{"d42", "d1.n77"}}
 	}
 	resp, err := h.Index.Search(h.Ctx, types.SearchRequest{Query: "tien thue", CaseIDs: []uuid.UUID{caseA.ID}, OwnerID: h.Owner.ID})
-	h.LLM.WikiIndex = nil
+	h.LLM.TreeSearch = nil
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,28 +92,20 @@ func TestSearchNeverLeavesTheCase(t *testing.T) {
 		t.Fatalf("string filter on a numeric value: %+v %v", docs, err)
 	}
 
-	// The wiki of each case is its own (N23): B's source page is not
-	// readable in A, and A's pages never cite B's file.
-	srcB, err := h.Store.Wiki.SourcePage(h.Ctx, caseB.ID, b)
-	if err != nil {
-		t.Fatalf("source page of B: %v", err)
+	// The case TOC lists A's files only (N16 d); another owner gets nothing.
+	toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, caseA.ID, nil, nil)
+	if err != nil || len(toc.Documents) != 2 {
+		t.Fatalf("toc of A = %+v %v", toc, err)
 	}
-	if p, err := h.Wiki.Page(h.Ctx, caseA.ID, srcB.Slug); err == nil && p.DocumentID != nil && *p.DocumentID == b {
-		t.Fatal("case A reads the source page of B's file")
-	}
-	pages, err := h.Store.Wiki.Pages(h.Ctx, caseA.ID)
-	if err != nil || len(pages) == 0 {
-		t.Fatalf("wiki of A: %v", err)
-	}
-	for _, p := range pages {
-		full, err := h.Wiki.Page(h.Ctx, caseA.ID, p.Slug)
-		if err != nil {
-			t.Fatal(err)
+	for _, d := range toc.Documents {
+		if d.DocumentID == b {
+			t.Fatal("the TOC of A lists B's file")
 		}
-		for _, f := range full.Footnotes {
-			if f.DocumentID == b {
-				t.Fatalf("wiki page %s of A cites a file of B", p.Slug)
-			}
-		}
+	}
+	if _, err := h.Index.CaseTOC(h.Ctx, uuid.New(), caseA.ID, nil, nil); err == nil {
+		t.Fatal("another owner must not read the TOC of A")
+	}
+	if toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, caseB.ID, nil, nil); err != nil || len(toc.Documents) != 1 || toc.Documents[0].DocumentID != b {
+		t.Fatalf("toc of B = %+v %v", toc, err)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
-	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
 	"github.com/thanhenti/bepaylot/internal/llm"
@@ -42,7 +41,6 @@ type Handlers struct {
 	Docs      *document.Service
 	Cases     *cases.Service
 	Searcher  interfaces.Searcher
-	Wiki      *wiki.Service
 	Engines   *parser.Registry
 	Queue     queue.Enqueuer
 	Inspector QueueInspector

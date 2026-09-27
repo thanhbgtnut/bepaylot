@@ -22,7 +22,6 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
-	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
 	"github.com/thanhenti/bepaylot/internal/middleware"
 	"github.com/thanhenti/bepaylot/internal/types"
@@ -33,16 +32,15 @@ import (
 func (h *Handlers) serviceError(c *app.RequestContext, err error) {
 	switch {
 	case errors.Is(err, document.ErrNotFound), errors.Is(err, index.ErrNotFound), errors.Is(err, cases.ErrNotFound),
-		errors.Is(err, wiki.ErrNotFound), errors.Is(err, postgres.ErrNotFound):
+		errors.Is(err, postgres.ErrNotFound):
 		msg := "not found"
 		if errors.Is(err, cases.ErrNotFound) && err.Error() != cases.ErrNotFound.Error() {
 			msg = err.Error()
 		}
 		h.notFound(c, msg)
-	case errors.Is(err, cases.ErrConflict), errors.Is(err, cases.ErrClosed), errors.Is(err, wiki.ErrBusy):
+	case errors.Is(err, cases.ErrConflict), errors.Is(err, cases.ErrClosed):
 		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", err.Error()))
-	case errors.Is(err, document.ErrBadRequest), errors.Is(err, index.ErrBadRequest), errors.Is(err, cases.ErrBadRequest),
-		errors.Is(err, wiki.ErrBadRequest):
+	case errors.Is(err, document.ErrBadRequest), errors.Is(err, index.ErrBadRequest), errors.Is(err, cases.ErrBadRequest):
 		c.JSON(consts.StatusUnprocessableEntity, dto.NewError("invalid_request_error", err.Error()))
 	case errors.Is(err, context.DeadlineExceeded):
 		c.JSON(consts.StatusGatewayTimeout, dto.NewError("timeout_error", err.Error()))
@@ -632,7 +630,7 @@ func (h *Handlers) DocumentEvents(ctx context.Context, c *app.RequestContext) {
 			_ = stream.Publish(&hsse.Event{Event: "gone", Data: []byte(`{}`)})
 			return
 		}
-		ev := map[string]any{"status": d.Status, "parse_status": d.ParseStatus, "index_status": d.IndexStatus, "wiki_status": d.WikiStatus,
+		ev := map[string]any{"status": d.Status, "parse_status": d.ParseStatus, "index_status": d.IndexStatus,
 			"page_count": d.PageCount, "pages_done": d.PagesDone, "pages_failed": d.PagesFailed, "progress": d.Progress(), "error": d.Error}
 		b, _ := json.Marshal(ev)
 		if string(b) != last {

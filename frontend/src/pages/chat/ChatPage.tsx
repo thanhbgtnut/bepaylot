@@ -177,7 +177,7 @@ export function ChatPage() {
           <CasePicker value={scopeCase} disabled={!!(sessionId && sessCaseId)} />
           <span className="text-xs text-muted">
             <Icon name="lock" size={14} className="align-[-2px]" />{" "}
-            {scopeCase ? "Agent chỉ đọc tài liệu và wiki của hồ sơ này" : "Chọn hồ sơ để bắt đầu hỏi"}
+            {scopeCase ? "Agent chỉ đọc tài liệu của hồ sơ này" : "Chọn hồ sơ để bắt đầu hỏi"}
           </span>
         </div>
 
@@ -251,7 +251,7 @@ export function ChatPage() {
             )}
           </div>
           <p className="mx-auto mt-2 max-w-200 text-center text-xs text-subtle">
-            Agent tra cứu wiki và tài liệu của hồ sơ đang chọn. Bấm vào nhãn trích dẫn để xem vùng trên trang gốc.
+            Agent duyệt mục lục của hồ sơ, chỉ đọc đúng các trang cần thiết rồi trả lời. Bấm vào nhãn trích dẫn để xem vùng trên trang gốc.
           </p>
         </div>
       </section>

@@ -155,14 +155,14 @@ func (r *KBRepo) FinishBatch(ctx context.Context, id uuid.UUID, accepted, reject
 type DocumentsRepo struct{ pool *pgxpool.Pool }
 
 const docCols = `d.id, d.kb_id, d.case_id, d.batch_id, coalesce(d.created_by, '00000000-0000-0000-0000-000000000000'::uuid), d.file_name, d.mime_type, d.size_bytes, d.sha256, d.storage_key,
-	d.page_count, d.gen, d.status, d.parse_status, d.index_status, d.wiki_status, d.pages_done, d.pages_failed, d.pages_text_layer,
+	d.page_count, d.gen, d.status, d.parse_status, d.index_status, d.pages_done, d.pages_failed, d.pages_text_layer,
 	d.pdfa_part, d.pdfa_conformance, d.pdf_info, d.engine, d.markdown_key, d.error, d.metadata, d.title, d.summary,
 	d.interactive, d.callback_url, d.callback_run, d.created_at, d.updated_at`
 
 func scanDoc(row pgx.Row) (types.Document, error) {
 	var d types.Document
 	err := row.Scan(&d.ID, &d.KBID, &d.CaseID, &d.BatchID, &d.CreatedBy, &d.FileName, &d.MimeType, &d.SizeBytes, &d.SHA256, &d.StorageKey,
-		&d.PageCount, &d.Gen, &d.Status, &d.ParseStatus, &d.IndexStatus, &d.WikiStatus, &d.PagesDone, &d.PagesFailed, &d.PagesTextLayer,
+		&d.PageCount, &d.Gen, &d.Status, &d.ParseStatus, &d.IndexStatus, &d.PagesDone, &d.PagesFailed, &d.PagesTextLayer,
 		&d.PDFAPart, &d.PDFAConformance, &metaScanner{&d.PDFInfo}, &d.Engine, &d.MarkdownKey, &d.Error, &metaScanner{&d.Metadata},
 		&d.Title, &d.Summary, &d.Interactive, &d.CallbackURL, &d.CallbackRun, &d.CreatedAt, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -360,13 +360,13 @@ func (r *DocumentsRepo) RankByText(ctx context.Context, f DocumentFilter, query 
 
 // DocUpdate is a partial document update used by the pipeline.
 type DocUpdate struct {
-	Status, ParseStatus, IndexStatus, WikiStatus *string
-	Error                                        *string
-	PageCount                                    *int
-	PDFInfo                                      map[string]any
-	MarkdownKey                                  *string
-	PagesTextLayer                               *int
-	Title, Summary                               *string
+	Status, ParseStatus, IndexStatus *string
+	Error                            *string
+	PageCount                        *int
+	PDFInfo                          map[string]any
+	MarkdownKey                      *string
+	PagesTextLayer                   *int
+	Title, Summary                   *string
 }
 
 // Update applies u when the document is still at generation gen and not
@@ -384,7 +384,6 @@ func (r *DocumentsRepo) Update(ctx context.Context, id uuid.UUID, gen int, u Doc
 	str("status", u.Status)
 	str("parse_status", u.ParseStatus)
 	str("index_status", u.IndexStatus)
-	str("wiki_status", u.WikiStatus)
 	str("error", u.Error)
 	str("markdown_key", u.MarkdownKey)
 	str("title", u.Title)
@@ -609,7 +608,7 @@ func (r *DocumentsRepo) CreateMetadataIndex(ctx context.Context, key string) err
 // before; housekeeping advances them.
 func (r *DocumentsRepo) Stuck(ctx context.Context, before time.Time, limit int) ([]types.Document, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+docCols+` FROM documents d
-		WHERE d.deleted_at IS NULL AND d.status IN ('queued','splitting','parsing','assembling','indexing','enriching')
+		WHERE d.deleted_at IS NULL AND d.status IN ('queued','splitting','parsing','assembling','indexing')
 		AND d.updated_at < $1 ORDER BY d.updated_at LIMIT $2`, before, limit)
 	if err != nil {
 		return nil, err
@@ -667,28 +666,6 @@ func (r *DocumentsRepo) SoftDeleteByCase(ctx context.Context, caseID uuid.UUID) 
 // ByCase returns the live documents of a case, oldest first.
 func (r *DocumentsRepo) ByCase(ctx context.Context, caseID uuid.UUID) ([]types.Document, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+docCols+` FROM documents d WHERE d.case_id = $1 AND d.deleted_at IS NULL ORDER BY d.created_at, d.id`, caseID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []types.Document
-	for rows.Next() {
-		d, err := scanDoc(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
-}
-
-// WikiPending returns searchable documents whose wiki ingest has not started
-// and that stopped moving before `before` (housekeeping re-queues them).
-func (r *DocumentsRepo) WikiPending(ctx context.Context, before time.Time, limit int) ([]types.Document, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+docCols+` FROM documents d
-		WHERE d.deleted_at IS NULL AND d.wiki_status = 'pending' AND d.index_status = 'done'
-		  AND d.status IN ('completed','partial','enriching') AND d.updated_at < $1
-		ORDER BY d.updated_at LIMIT $2`, before, limit)
 	if err != nil {
 		return nil, err
 	}

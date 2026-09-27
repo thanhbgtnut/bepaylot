@@ -9,7 +9,6 @@ const (
 	PoolRender      = "render"
 	PoolOCR         = "ocr"
 	PoolIndex       = "index"
-	PoolWiki        = "wiki"
 	PoolMaintenance = "maintenance"
 )
 
@@ -23,7 +22,6 @@ const (
 	QueuePageInteractive   = "page_interactive"
 	QueueIndex             = "index"
 	QueueIndexInteractive  = "index_interactive"
-	QueueWiki              = "wiki"
 	QueueMaintenance       = "low"
 	QueueCallback          = "callback"
 )
@@ -36,11 +34,6 @@ const (
 	TaskDocumentAssemble = "document:assemble"
 	TaskIndexBuild       = "index:build"
 	TaskIndexTree        = "index:tree"
-	// TaskWikiIngest drains a case's pending wiki ops (ingest, retract,
-	// refresh) one at a time (§6.8).
-	TaskWikiIngest       = "wiki:ingest"
-	TaskWikiLint         = "wiki:lint"
-	TaskWikiIndex        = "wiki:index"
 	TaskDocumentDelete   = "document:delete"
 	TaskCaseDelete       = "case:delete"
 	TaskGenCleanup       = "document:gen_cleanup"
@@ -66,7 +59,6 @@ var queueDefinitions = []QueueDefinition{
 	{QueuePageInteractive, PoolOCR, 3, []string{TaskPageOCR}},
 	{QueueIndex, PoolIndex, 1, []string{TaskIndexBuild, TaskIndexTree}},
 	{QueueIndexInteractive, PoolIndex, 3, []string{TaskIndexBuild, TaskIndexTree}},
-	{QueueWiki, PoolWiki, 1, []string{TaskWikiIngest, TaskWikiLint, TaskWikiIndex}},
 	{QueueMaintenance, PoolMaintenance, 1, []string{TaskDocumentDelete, TaskCaseDelete, TaskGenCleanup, TaskHousekeeping}},
 	{QueueCallback, PoolCore, 1, []string{TaskDocumentCallback}},
 }
@@ -136,24 +128,6 @@ type DocTaskPayload struct {
 	Interactive bool      `json:"interactive,omitempty"`
 	// Pages is the page range of a page:render batch or the page of page:ocr.
 	Pages []int `json:"pages,omitempty"`
-}
-
-// Wiki pending ops (task_pending_ops.op with task_type wiki:ingest).
-const (
-	WikiOpIngestDoc  = "ingest"
-	WikiOpRetractDoc = "retract"
-	WikiOpRefresh    = "refresh"
-)
-
-// WikiOpPayload is the payload of one wiki pending op: the document and
-// generation to ingest or retract, or the pages to re-check (refresh).
-type WikiOpPayload struct {
-	DocumentID uuid.UUID `json:"document_id"`
-	Gen        int       `json:"gen"`
-	FileName   string    `json:"file_name,omitempty"`
-	Pages      []int     `json:"pages,omitempty"`
-	// PageIDs are wiki pages to rewrite from their remaining footnotes.
-	PageIDs []uuid.UUID `json:"page_ids,omitempty"`
 }
 
 // Task scopes used by dead letters and pending ops.

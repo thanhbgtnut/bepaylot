@@ -25,7 +25,6 @@ export const STATUS: Record<DocStatus, [string, Tone]> = {
   parsing: ["Đang OCR", "info"],
   assembling: ["Đang ghép", "info"],
   indexing: ["Lập chỉ mục", "info"],
-  enriching: ["Làm giàu", "ok"],
   completed: ["Hoàn tất", "ok"],
   partial: ["Một phần", "warn"],
   failed: ["Lỗi", "err"],
@@ -34,7 +33,7 @@ export const STATUS: Record<DocStatus, [string, Tone]> = {
 };
 
 export const TERMINAL = new Set<string>(["completed", "partial", "failed", "cancelled", "deleting"]);
-export const isBusy = (s: string) => !TERMINAL.has(s) && s !== "enriching";
+export const isBusy = (s: string) => !TERMINAL.has(s);
 
 export const SOURCE: Record<string, [string, Tone]> = {
   vlm: ["VLM", "vlm"],

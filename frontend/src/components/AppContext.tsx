@@ -16,7 +16,7 @@ interface AppState {
   connError: string;
   selectKB: (id: string) => void;
   reloadKBs: () => Promise<void>;
-  // Cases (hồ sơ) of the current knowledge base; the wiki, graph and chat
+  // Cases (hồ sơ) of the current knowledge base; the case view and the chat
   // work on one case at a time.
   cases: Case[] | null;
   kcase: Case | null;

@@ -110,7 +110,6 @@ func setup(t *testing.T) (*Service, *queue.Inline, *postgres.Store, uuid.UUID, *
 		handlers[k] = v
 	}
 	handlers[types.TaskIndexBuild] = func(context.Context, []byte) error { return nil } // Module 2 stub
-	handlers[types.TaskWikiIngest] = func(context.Context, []byte) error { return nil } // wiki stub
 	q.Register(handlers, nil)
 	return svc, q, st, user.ID, ocr
 }

@@ -13,7 +13,6 @@ const (
 	DocParsing    = "parsing"
 	DocAssembling = "assembling"
 	DocIndexing   = "indexing"
-	DocEnriching  = "enriching"
 	DocCompleted  = "completed"
 	DocPartial    = "partial"
 	DocFailed     = "failed"
@@ -21,7 +20,7 @@ const (
 	DocDeleting   = "deleting"
 )
 
-// Stage states used by parse_status / index_status / wiki_status.
+// Stage states used by parse_status / index_status.
 const (
 	StagePending    = "pending"
 	StageProcessing = "processing"
@@ -55,7 +54,7 @@ const (
 // Searchable reports whether documents in this state can be searched.
 func Searchable(status string) bool {
 	switch status {
-	case DocCompleted, DocPartial, DocEnriching:
+	case DocCompleted, DocPartial:
 		return true
 	}
 	return false
@@ -118,7 +117,6 @@ type Document struct {
 	Status          string         `json:"status"`
 	ParseStatus     string         `json:"parse_status"`
 	IndexStatus     string         `json:"index_status"`
-	WikiStatus      string         `json:"wiki_status"`
 	PagesDone       int            `json:"pages_done"`
 	PagesFailed     int            `json:"pages_failed"`
 	PagesTextLayer  int            `json:"pages_text_layer"`
@@ -237,6 +235,9 @@ type TreeNode struct {
 	Summary    string      `json:"summary,omitempty"`
 	SectionIDs []uuid.UUID `json:"section_ids"`
 	TokenCount int         `json:"token_count"`
+	// TreeTokens estimates the subtree rendered as a table of contents
+	// (§6.5 step 7); 0 on trees stored before it was recorded.
+	TreeTokens int `json:"tree_tokens"`
 }
 
 // ProcessingSpan records one pipeline stage execution for observability.

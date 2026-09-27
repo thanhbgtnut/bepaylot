@@ -13,11 +13,11 @@ import { Icon, Modal, Spinner } from "../../components/ui";
 
 type Mode = "login" | "register";
 
-const TAGS = ["OCR + text layer", "LLM Wiki", "Search vectorless", "Agent theo hồ sơ"];
+const TAGS = ["OCR + text layer", "Mục lục PageIndex", "Search vectorless", "Agent theo hồ sơ"];
 
 const SLIDES: { icon: string; title: string; text: string }[] = [
   { icon: "document_scanner", title: "Parse mọi trang hồ sơ", text: "TurboOCR lấy layout, VLM đọc từng vùng, text layer PDF/A bổ sung — mỗi dòng giữ trang và toạ độ." },
-  { icon: "menu_book", title: "Wiki riêng cho từng hồ sơ", text: "Entity, quan hệ và chú thích về dòng gốc được dựng sẵn khi index, đọc như DeepWiki." },
+  { icon: "account_tree", title: "Mục lục cho từng hồ sơ", text: "Mỗi file có cây mục lục kèm tóm tắt; agent duyệt cây, chỉ đọc đúng các trang cần để trả lời." },
   { icon: "forum", title: "Hỏi agent, nhận trích dẫn", text: "Agent chỉ tìm trong đúng một case, bóc tách trường thông tin và kiểm rule kèm nguồn." },
 ];
 
@@ -128,7 +128,7 @@ export function LoginPage() {
             <span className="text-accent">đọc hiểu và hỏi đáp</span> trong một nơi
           </p>
           <p className="mt-4 text-base leading-6 text-muted">
-            BePaylot parse tài liệu theo từng trang, dựng wiki cho mỗi hồ sơ và để agent tìm đúng thông tin trong đúng hồ sơ — không nhầm sang hồ sơ khác.
+            BePaylot parse tài liệu theo từng trang, dựng mục lục cho mỗi file và để agent tìm đúng thông tin trong đúng hồ sơ — không nhầm sang hồ sơ khác.
           </p>
           <div className="mt-6 flex flex-wrap gap-2">
             {TAGS.map((t) => (

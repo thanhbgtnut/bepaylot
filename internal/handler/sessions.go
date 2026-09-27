@@ -20,7 +20,7 @@ import (
 // CreateSession handles POST /v1/sessions.
 //
 // @Summary   Create a session explicitly, optionally bound to a case
-// @Description case_id (or case {kb_id, code}) binds the session to one case for its whole life: the wiki_* and kb_* tools only see that case (§8.1).
+// @Description case_id (or case {kb_id, code}) binds the session to one case for its whole life: the kb_* tools only see that case (§8.1).
 // @Tags      Sessions
 // @Accept    json
 // @Produce   json

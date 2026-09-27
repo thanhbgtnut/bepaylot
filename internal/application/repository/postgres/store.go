@@ -35,7 +35,6 @@ type Store struct {
 	Index     *IndexRepo
 	Tasks     *TasksRepo
 	Cases     *CasesRepo
-	Wiki      *WikiRepo
 	Callbacks *CallbacksRepo
 }
 
@@ -87,7 +86,6 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		Index:     &IndexRepo{pool},
 		Tasks:     &TasksRepo{pool},
 		Cases:     &CasesRepo{pool},
-		Wiki:      &WikiRepo{pool: pool, db: pool},
 		Callbacks: &CallbacksRepo{pool},
 	}, nil
 }

@@ -22,7 +22,7 @@ func TestLoadTypesAndCodes(t *testing.T) {
 	if CheckCode(tt.Code, NormalizeCode(tt.Code, "RT11")) == nil {
 		t.Fatal("a code outside the pattern must be refused")
 	}
-	if tt.Wiki.Schema != "thanh_toan" || tt.MetadataSchema == nil {
+	if tt.Title == "" || tt.MetadataSchema == nil {
 		t.Fatalf("type = %+v", tt)
 	}
 	if NormalizeCode(types.CaseCodeRule{}, "  ab c ") != "ab c" {

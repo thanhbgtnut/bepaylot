@@ -34,7 +34,6 @@ type Config struct {
 	Index    Index    `yaml:"index"`
 	Search   Search   `yaml:"search"`
 	Cases    Cases    `yaml:"cases"`
-	Wiki     Wiki     `yaml:"wiki"`
 }
 
 // ToolsCfg configures the built-in tool set.
@@ -376,7 +375,7 @@ func (c *Config) applyDefaults() {
 	setString(&c.Log.Format, "json")
 
 	c.applyPipelineDefaults()
-	c.applyWikiDefaults()
+	c.applyCasesDefaults()
 }
 
 func (c *Config) validate() error {

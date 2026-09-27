@@ -20,8 +20,6 @@ type DocumentStore interface {
 	LoadPages(ctx context.Context, doc uuid.UUID, gen, from, to int) ([]*types.ParsedPage, error)
 	// SetIndexResult records the index stage outcome and the document card.
 	SetIndexResult(ctx context.Context, doc uuid.UUID, gen int, card DocumentCard, failed error) error
-	// SetWikiStatus records the wiki ingest outcome of a document (§6.8).
-	SetWikiStatus(ctx context.Context, doc uuid.UUID, gen int, status string, failed error) error
 }
 
 // DocumentCard is the document-level summary produced by Module 2. It
@@ -49,11 +47,9 @@ type CaseService interface {
 	ResolveCase(ctx context.Context, owner, kb uuid.UUID, ref CaseRef) (c types.Case, created bool, err error)
 	// CaseType returns the named type, or the default type.
 	CaseType(name string) types.CaseType
-	// WikiEnabled reports whether documents of the case are ingested.
-	WikiEnabled(c types.Case) bool
 }
 
-// SectionReader is Module 2 (Index)'s read contract for the wiki.
+// SectionReader is Module 2 (Index)'s read contract for sections and trees.
 type SectionReader interface {
 	Sections(ctx context.Context, doc uuid.UUID, gen int) ([]types.Section, error)
 	Tree(ctx context.Context, doc uuid.UUID, gen int) ([]types.TreeNode, error)
@@ -63,12 +59,21 @@ type SectionReader interface {
 // Every per-document call takes the case it must belong to.
 type Searcher interface {
 	Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
+	// CaseTOC renders the table of contents of a case (§6.6 step 2): cards
+	// and first tree branches of its searchable documents, narrowed by
+	// metadata; expand lists document refs (d<n>) shown with their whole
+	// tree instead of the first branches.
+	CaseTOC(ctx context.Context, owner, caseID uuid.UUID, filter types.MetadataFilter, expand []string) (*types.CaseTOC, error)
 	// FindInDocument searches one document, limited to pages from..to when
 	// they are > 0.
 	FindInDocument(ctx context.Context, owner, doc uuid.UUID, query, mode string, from, to int) ([]types.PageSearchHit, error)
 	// PageOverview describes pages from..to of one document (all when 0).
 	PageOverview(ctx context.Context, owner, doc uuid.UUID, from, to int) ([]types.PageOverview, error)
 	DocumentTree(ctx context.Context, owner, doc uuid.UUID) ([]types.TreeNode, error)
+	// DocumentTreeText renders the tree of a document (or the subtree of
+	// node) the way the LLM reads it (§6.5): whole when it fits
+	// search.tree_token_budget, cut from the deepest level otherwise.
+	DocumentTreeText(ctx context.Context, owner, doc uuid.UUID, node string) (string, error)
 	ReadPages(ctx context.Context, owner, doc uuid.UUID, from, to int) (string, error)
 	// ListDocuments lists the documents of one case.
 	ListDocuments(ctx context.Context, owner, caseID uuid.UUID, filter types.MetadataFilter, statuses []string, limit int) ([]types.DocumentBrief, error)
@@ -86,36 +91,6 @@ type Searcher interface {
 type MetadataValue struct {
 	Value string `json:"value"`
 	Count int    `json:"count"`
-}
-
-// WikiReader is the read contract of the case wiki (§6.6) for search and the
-// agent. Every call is scoped to one case.
-type WikiReader interface {
-	// IndexView returns the wiki index of the case. With docs, source lines
-	// keep only those documents and other pages only when they cite one.
-	// A case without wiki gets an index of document cards and trees.
-	IndexView(ctx context.Context, caseID uuid.UUID, docs []uuid.UUID) (*types.WikiIndex, error)
-	// Expand renders the branches of an index entry that were cut.
-	Expand(ctx context.Context, caseID uuid.UUID, ref string) (string, error)
-	// Page returns a page with footnotes and links; slug of another case is
-	// not found.
-	Page(ctx context.Context, caseID uuid.UUID, slug string) (*types.WikiPage, error)
-	SearchPages(ctx context.Context, caseID uuid.UUID, query string, limit int) ([]WikiSearchHit, error)
-	Links(ctx context.Context, caseID uuid.UUID, slug, relation, direction string) ([]types.WikiLink, error)
-	// MarkFootnotesStale flags footnotes that no longer match their lines.
-	MarkFootnotesStale(ctx context.Context, caseID, page uuid.UUID, ns []int) error
-	// LogQuery appends a query line to the wiki log (the log records
-	// ingests, queries and lint passes).
-	LogQuery(ctx context.Context, caseID, owner uuid.UUID, question string, pages []string, hits int) error
-}
-
-// WikiSearchHit is one full-text match in a case wiki.
-type WikiSearchHit struct {
-	Slug    string  `json:"slug"`
-	Title   string  `json:"title"`
-	Kind    string  `json:"kind"`
-	Snippet string  `json:"snippet"`
-	Score   float64 `json:"score"`
 }
 
 // Completer asks an LLM for a JSON answer and decodes it into out.

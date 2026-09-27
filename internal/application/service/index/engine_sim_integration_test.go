@@ -247,7 +247,7 @@ func TestSimulatedScan20PagesBothEngines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reg.SetKnowledgeTools(h.Index, nil); err != nil {
+	if err := reg.SetKnowledgeTools(h.Index); err != nil {
 		t.Fatal(err)
 	}
 	sess := reg.NewSession()

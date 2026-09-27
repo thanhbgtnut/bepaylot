@@ -6,14 +6,6 @@ import { fold } from "../lib/format";
 import { useApp } from "./AppContext";
 import { Badge, Icon } from "./ui";
 
-export const WIKI_STATUS: Record<string, [string, "" | "ok" | "warn" | "err" | "info"]> = {
-  none: ["Chưa có wiki", ""],
-  building: ["Đang dựng wiki", "info"],
-  ready: ["Wiki sẵn sàng", "ok"],
-  stale: ["Wiki cần cập nhật", "warn"],
-  failed: ["Wiki lỗi", "err"],
-};
-
 export const caseLabel = (c: Case) => (c.code === "_UNASSIGNED" ? "Chưa gán hồ sơ" : c.code);
 export const caseDocs = (c: Case) => Object.values(c.documents ?? {}).reduce((a, b) => a + b, 0);
 
@@ -78,7 +70,6 @@ export function CasePicker({ value, onChange, disabled }: { value?: Case | null;
             <div className="min-h-0 flex-1 overflow-auto py-1">
               {!list.length && <div className="px-4 py-3 text-sm text-subtle">{cases?.length ? "Không có hồ sơ khớp" : "Chưa có hồ sơ — tải file lên kèm mã hồ sơ để tạo."}</div>}
               {list.map((c) => {
-                const [label, tone] = WIKI_STATUS[c.wiki_status] ?? [c.wiki_status, ""];
                 return (
                   <button
                     key={c.id}
@@ -96,7 +87,7 @@ export function CasePicker({ value, onChange, disabled }: { value?: Case | null;
                         {caseDocs(c)} file · {c.case_type}
                       </span>
                     </span>
-                    <Badge tone={tone}>{label}</Badge>
+                    {c.status === "closed" && <Badge>đóng</Badge>}
                   </button>
                 );
               })}

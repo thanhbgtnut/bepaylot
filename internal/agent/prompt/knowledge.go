@@ -18,10 +18,8 @@ type CaseInfo struct {
 	// Deleted is set when the case no longer exists.
 	Deleted bool
 	// Documents counts files by status.
-	Documents  map[string]int
-	WikiStatus string
-	WikiDocs   int
-	Fields     []MetadataField
+	Documents map[string]int
+	Fields    []MetadataField
 }
 
 // MetadataField is a metadata key the model can filter by.
@@ -42,7 +40,7 @@ func sectionCase(tc TurnContext) string {
 	var b strings.Builder
 	b.WriteString("<case>\n")
 	if c.Deleted {
-		b.WriteString("This conversation was bound to a case that no longer exists; its files and wiki are gone and the document tools will fail.\n</case>")
+		b.WriteString("This conversation was bound to a case that no longer exists; its files are gone and the document tools will fail.\n</case>")
 		return b.String()
 	}
 	fmt.Fprintf(&b, "This conversation works on exactly one case: code %s", c.Code)
@@ -52,7 +50,7 @@ func sectionCase(tc TurnContext) string {
 	if c.Title != "" {
 		fmt.Fprintf(&b, ", %q", c.Title)
 	}
-	fmt.Fprintf(&b, ", status %s. Every wiki_* and kb_* tool only sees this case; other cases cannot be reached, whatever code a message mentions.\n", c.Status)
+	fmt.Fprintf(&b, ", status %s. Every kb_* tool only sees this case; other cases cannot be reached, whatever code a message mentions.\n", c.Status)
 	if len(c.Metadata) > 0 {
 		keys := make([]string, 0, len(c.Metadata))
 		for k := range c.Metadata {
@@ -80,7 +78,7 @@ func sectionCase(tc TurnContext) string {
 	if len(parts) > 0 {
 		fmt.Fprintf(&b, " (%s)", strings.Join(parts, ", "))
 	}
-	fmt.Fprintf(&b, ". Wiki: %s, %d of %d files compiled into it.\n", c.WikiStatus, c.WikiDocs, total)
+	b.WriteString(".\n")
 	if len(c.Fields) > 0 {
 		b.WriteString("File metadata fields (filter kb_search / kb_list_documents with `metadata`):\n")
 		for _, f := range c.Fields {
@@ -97,7 +95,6 @@ func sectionCase(tc TurnContext) string {
 	b.WriteString(`</case>
 <citations>
 - Every statement taken from a file ends with its citation id in brackets, e.g. [doc:<id>:p3:l5-7], exactly as returned by the tools.
-- Wiki pages are a finding aid: cite the citation_id of their footnotes (source lines), never the wiki page itself.
 - Never invent citation ids; if the tools found nothing, say so.
 </citations>`)
 	return b.String()

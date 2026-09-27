@@ -14,7 +14,7 @@ import { UploadDialog } from "./UploadDialog";
 
 const STATUS_FILTERS: [string, string][] = [
   ["queued,splitting,parsing,assembling,indexing", "Đang xử lý"],
-  ["completed,enriching", "Hoàn tất"],
+  ["completed", "Hoàn tất"],
   ["partial", "Một phần"],
   ["failed", "Lỗi"],
 ];

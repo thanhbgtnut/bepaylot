@@ -119,8 +119,6 @@ definitions:
         type: string
       updated_at:
         type: string
-      wiki_status:
-        type: string
     type: object
   document.FailedPage:
     properties:
@@ -791,7 +789,7 @@ definitions:
         description: Case names the case by KB and code instead of CaseID.
       case_id:
         description: |-
-          CaseID binds the session to one case (§8.1): the wiki_* and kb_* tools
+          CaseID binds the session to one case (§8.1): the kb_* tools
           then see that case only. Binding is permanent: another case is 409.
         type: string
       session_id:
@@ -936,20 +934,6 @@ definitions:
     properties:
       callback_id:
         description: CallbackID selects a delivery; empty retries the latest one.
-        type: string
-    type: object
-  dto.SchemaList:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/types.WikiSchema'
-        type: array
-    type: object
-  dto.SchemaTestRequest:
-    properties:
-      document_id:
-        type: string
-      text:
         type: string
     type: object
   dto.SessionBrief:
@@ -1122,6 +1106,9 @@ definitions:
         items:
           $ref: '#/definitions/types.TreeNode'
         type: array
+      text:
+        description: Text is the tree as the LLM reads it (format=text).
+        type: string
     type: object
   dto.UpdateKBRequest:
     properties:
@@ -1168,57 +1155,6 @@ definitions:
       last_login_at:
         type: string
       name:
-        type: string
-    type: object
-  dto.WikiIndexResponse:
-    properties:
-      content:
-        type: string
-    type: object
-  dto.WikiLintList:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/types.WikiLintIssue'
-        type: array
-    type: object
-  dto.WikiLintPatch:
-    properties:
-      status:
-        description: fixed | dismissed | open
-        type: string
-    type: object
-  dto.WikiLogList:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/types.WikiLogEntry'
-        type: array
-    type: object
-  dto.WikiProposalRequest:
-    properties:
-      action:
-        description: accept | reject
-        type: string
-    type: object
-  dto.WikiSearchResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/interfaces.WikiSearchHit'
-        type: array
-    type: object
-  interfaces.WikiSearchHit:
-    properties:
-      kind:
-        type: string
-      score:
-        type: number
-      slug:
-        type: string
-      snippet:
-        type: string
-      title:
         type: string
     type: object
   postgres.PageBlock:
@@ -1317,18 +1253,6 @@ definitions:
       status:
         type: string
     type: object
-  types.AttributeDef:
-    properties:
-      name:
-        type: string
-      pattern:
-        type: string
-      required:
-        type: boolean
-      type:
-        description: string | number | money | date | bool
-        type: string
-    type: object
   types.BBox:
     properties:
       x0:
@@ -1414,16 +1338,6 @@ definitions:
         type: string
       updated_at:
         type: string
-      wiki_built_at:
-        type: string
-      wiki_docs_covered:
-        type: integer
-      wiki_schema:
-        type: string
-      wiki_status:
-        type: string
-      wiki_version:
-        type: integer
     type: object
   types.CaseCodeRule:
     properties:
@@ -1432,6 +1346,29 @@ definitions:
         type: string
       pattern:
         type: string
+    type: object
+  types.CaseTOC:
+    properties:
+      case:
+        $ref: '#/definitions/types.Case'
+      documents:
+        items:
+          $ref: '#/definitions/types.TOCDoc'
+        type: array
+      pending:
+        items:
+          $ref: '#/definitions/types.TOCPending'
+        type: array
+      text:
+        description: Text is the rendering given to the LLM (and to kb_case_toc).
+        type: string
+      token_count:
+        type: integer
+      truncated:
+        description: |-
+          Truncated reports that branches or summaries were cut to fit
+          search.case_toc_budget; expand re-opens a document.
+        type: boolean
     type: object
   types.CaseType:
     properties:
@@ -1456,14 +1393,6 @@ definitions:
         type: object
       title:
         type: string
-      wiki:
-        properties:
-          enabled:
-            description: Enabled nil = wiki.enabled_by_default.
-            type: boolean
-          schema:
-            type: string
-        type: object
     type: object
   types.Document:
     properties:
@@ -1526,8 +1455,6 @@ definitions:
         type: string
       updated_at:
         type: string
-      wiki_status:
-        type: string
     type: object
   types.DocumentBrief:
     properties:
@@ -1549,8 +1476,6 @@ definitions:
       summary:
         type: string
       title:
-        type: string
-      wiki_status:
         type: string
     type: object
   types.DocumentCallback:
@@ -1771,13 +1696,9 @@ definitions:
         type: string
       via:
         description: |-
-          Via is "wiki" when the hit came from a wiki footnote, "raw" when it was
-          read from the source pages, "keyword" for full-text hits.
+          Via is "tree" when the hit was read from pages chosen on the tree,
+          "keyword" for full-text hits.
         type: string
-      wiki_pages:
-        items:
-          type: string
-        type: array
     type: object
   types.SearchRequest:
     properties:
@@ -1833,16 +1754,22 @@ definitions:
         type: integer
       elapsed_ms:
         type: integer
+      expanded:
+        items:
+          type: string
+        type: array
       fallback:
         type: string
       llm_calls:
         type: integer
       mode:
         type: string
-      raw_refs:
-        items:
-          type: string
-        type: array
+      pages_read:
+        additionalProperties:
+          items:
+            type: integer
+          type: array
+        type: object
       selected_docs:
         items:
           type: string
@@ -1853,18 +1780,60 @@ definitions:
             type: string
           type: array
         type: object
-      stale_footnotes:
+      tokens_in:
         type: integer
       truncated:
         type: boolean
-      wiki_pages:
+    type: object
+  types.TOCBranch:
+    properties:
+      has_more:
+        type: boolean
+      node_id:
+        type: string
+      page_end:
+        type: integer
+      page_start:
+        type: integer
+      summary:
+        type: string
+      title:
+        type: string
+    type: object
+  types.TOCDoc:
+    properties:
+      branches:
         items:
-          type: string
+          $ref: '#/definitions/types.TOCBranch'
         type: array
-      wiki_versions:
-        additionalProperties:
-          type: integer
+      document_id:
+        type: string
+      file_name:
+        type: string
+      metadata:
+        additionalProperties: {}
         type: object
+      page_count:
+        type: integer
+      ref:
+        type: string
+      status:
+        type: string
+      summary:
+        type: string
+      title:
+        type: string
+      tree_tokens:
+        type: integer
+    type: object
+  types.TOCPending:
+    properties:
+      document_id:
+        type: string
+      file_name:
+        type: string
+      status:
+        type: string
     type: object
   types.TreeNode:
     properties:
@@ -1899,388 +1868,20 @@ definitions:
         type: string
       token_count:
         type: integer
-    type: object
-  types.WikiAttrValue:
-    properties:
-      citation_id:
-        type: string
-      footnotes:
-        items:
-          type: integer
-        type: array
-      value: {}
-    type: object
-  types.WikiAttribute:
-    properties:
-      conflict:
-        type: boolean
-      footnotes:
-        items:
-          type: integer
-        type: array
-      history:
-        items:
-          $ref: '#/definitions/types.WikiAttrValue'
-        type: array
-      value: {}
-    type: object
-  types.WikiEntityType:
-    properties:
-      attributes:
-        items:
-          $ref: '#/definitions/types.AttributeDef'
-        type: array
-      description:
-        type: string
-      identity:
-        items:
-          type: string
-        type: array
-      name:
-        type: string
-      title:
-        type: string
-    type: object
-  types.WikiFootnote:
-    properties:
-      citation_id:
-        type: string
-      document_id:
-        type: string
-      file_name:
-        type: string
-      gen:
+      tree_tokens:
+        description: |-
+          TreeTokens estimates the subtree rendered as a table of contents
+          (§6.5 step 7); 0 on trees stored before it was recorded.
         type: integer
-      line_from:
-        type: integer
-      line_to:
-        type: integer
-      "n":
-        type: integer
-      page_no:
-        type: integer
-      quote:
-        type: string
-      status:
-        type: string
-    type: object
-  types.WikiLink:
-    properties:
-      attributes:
-        additionalProperties: {}
-        type: object
-      footnote_n:
-        type: integer
-      from:
-        type: string
-      from_title:
-        type: string
-      relation:
-        type: string
-      to:
-        type: string
-      to_title:
-        type: string
-    type: object
-  types.WikiLintIssue:
-    properties:
-      case_id:
-        type: string
-      detail:
-        additionalProperties: {}
-        type: object
-      found_at:
-        type: string
-      id:
-        type: integer
-      kind:
-        type: string
-      page_ids:
-        items:
-          type: string
-        type: array
-      pages:
-        items:
-          type: string
-        type: array
-      resolved_at:
-        type: string
-      resolved_by:
-        type: string
-      status:
-        type: string
-    type: object
-  types.WikiLogEntry:
-    properties:
-      actor:
-        type: string
-      at:
-        type: string
-      case_id:
-        type: string
-      document_id:
-        type: string
-      id:
-        type: integer
-      llm_calls:
-        type: integer
-      op:
-        type: string
-      pages:
-        items:
-          type: string
-        type: array
-      ref:
-        type: string
-      summary:
-        type: string
-      tokens_in:
-        type: integer
-      tokens_out:
-        type: integer
-    type: object
-  types.WikiPage:
-    properties:
-      aliases:
-        items:
-          type: string
-        type: array
-      attributes:
-        additionalProperties:
-          $ref: '#/definitions/types.WikiAttribute'
-        type: object
-      case_id:
-        type: string
-      content:
-        type: string
-      created_at:
-        type: string
-      document_id:
-        type: string
-      entity_type:
-        type: string
-      footnotes:
-        description: Filled on single-page reads.
-        items:
-          $ref: '#/definitions/types.WikiFootnote'
-        type: array
-      id:
-        type: string
-      identity_key:
-        type: string
-      kind:
-        type: string
-      last_edit_source:
-        type: string
-      links_in:
-        items:
-          $ref: '#/definitions/types.WikiLink'
-        type: array
-      links_out:
-        items:
-          $ref: '#/definitions/types.WikiLink'
-        type: array
-      ord:
-        type: integer
-      proposed_attributes:
-        additionalProperties:
-          $ref: '#/definitions/types.WikiAttribute'
-        type: object
-      proposed_content:
-        type: string
-      slug:
-        type: string
-      summary:
-        type: string
-      title:
-        type: string
-      updated_at:
-        type: string
-      version:
-        type: integer
-    type: object
-  types.WikiPageRef:
-    properties:
-      document_id:
-        type: string
-      entity_type:
-        type: string
-      kind:
-        type: string
-      proposed:
-        type: boolean
-      slug:
-        type: string
-      summary:
-        type: string
-      title:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  types.WikiPending:
-    properties:
-      document_id:
-        type: string
-      file_name:
-        type: string
-      status:
-        type: string
-      wiki_status:
-        type: string
-    type: object
-  types.WikiRelationType:
-    properties:
-      attributes:
-        items:
-          $ref: '#/definitions/types.AttributeDef'
-        type: array
-      description:
-        type: string
-      from:
-        items:
-          type: string
-        type: array
-      name:
-        type: string
-      to:
-        items:
-          type: string
-        type: array
-    type: object
-  types.WikiSchema:
-    properties:
-      conventions:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      entity_types:
-        items:
-          $ref: '#/definitions/types.WikiEntityType'
-        type: array
-      id:
-        type: string
-      language:
-        type: string
-      limits:
-        properties:
-          max_pages:
-            type: integer
-          max_pages_touched:
-            type: integer
-        type: object
-      name:
-        type: string
-      relations:
-        items:
-          $ref: '#/definitions/types.WikiRelationType'
-        type: array
-      topics:
-        items:
-          type: string
-        type: array
-      version:
-        type: integer
-    type: object
-  types.WikiTOC:
-    properties:
-      case:
-        $ref: '#/definitions/types.Case'
-      documents_total:
-        type: integer
-      open_lint_issues:
-        type: integer
-      pages:
-        items:
-          $ref: '#/definitions/types.WikiPageRef'
-        type: array
-      pending:
-        items:
-          $ref: '#/definitions/types.WikiPending'
-        type: array
-    type: object
-  wiki.EditRequest:
-    properties:
-      attributes:
-        additionalProperties:
-          $ref: '#/definitions/types.WikiAttribute'
-        type: object
-      content:
-        type: string
-      footnotes:
-        additionalProperties:
-          type: string
-        type: object
-      title:
-        type: string
-    type: object
-  wiki.EditResult:
-    properties:
-      invalid_footnotes:
-        items:
-          type: string
-        type: array
-      page:
-        $ref: '#/definitions/types.WikiPage'
-    type: object
-  wiki.GraphNode:
-    properties:
-      entity_type:
-        type: string
-      kind:
-        type: string
-      slug:
-        type: string
-      title:
-        type: string
-    type: object
-  wiki.LinkGraph:
-    properties:
-      edges:
-        items:
-          $ref: '#/definitions/types.WikiLink'
-        type: array
-      nodes:
-        items:
-          $ref: '#/definitions/wiki.GraphNode'
-        type: array
-    type: object
-  wiki.NoteRequest:
-    properties:
-      content:
-        type: string
-      message_id:
-        type: string
-      session_id:
-        type: string
-      title:
-        type: string
-    type: object
-  wiki.TestResult:
-    properties:
-      entities:
-        items:
-          additionalProperties: {}
-          type: object
-        type: array
-      llm_calls:
-        type: integer
-      relations:
-        items:
-          additionalProperties: {}
-          type: object
-        type: array
     type: object
 info:
   contact: {}
-  description: A streaming AI agent backend with document processing. `/v1/messages`
+  description: 'A streaming AI agent backend with document processing. `/v1/messages`
     mirrors the Anthropic Messages API (with additive `provider` and `metadata.session_id`
     / `metadata.kb_ids` fields); `/v1/sessions` manages conversations; `/v1/kbs`,
-    `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer) and search
-    them without embeddings; `/v1/graph` and `/v1/kbs/{id}/wiki` expose the extracted
-    knowledge graph.
+    `/v1/cases`, `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer)
+    into page-indexed tables of contents and search them without embeddings: an LLM
+    walks the case and document trees and reads only the pages it chose.'
   title: bepaylot API
   version: 1.0.0
 paths:
@@ -2770,7 +2371,7 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Delete a case, its documents and its whole wiki (async)
+      summary: Delete a case and its documents (async)
       tags:
       - Cases
     get:
@@ -2794,7 +2395,7 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: 'Case detail: document counts by status and wiki state'
+      summary: 'Case detail: document counts by status'
       tags:
       - Cases
     patch:
@@ -2962,11 +2563,15 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Search one case (wiki index → wiki pages → source lines)
+      summary: Search one case (case TOC → document trees → pages → source lines)
       tags:
       - Cases
-  /v1/cases/{id}/wiki:
+  /v1/cases/{id}/toc:
     get:
+      description: Built from stored cards and trees, without the LLM (§6.6 step 2).
+        text is the rendering given to the LLM (and to kb_case_toc); documents holds
+        the same data as JSON for the UI. metadata narrows the files; expand (comma-separated
+        d<n>) shows those files with their whole tree.
       parameters:
       - description: Case id
         format: uuid
@@ -2974,88 +2579,11 @@ paths:
         name: id
         required: true
         type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.WikiTOC'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: 'Case wiki navigation: pages by kind, files not in the wiki yet, wiki
-        state'
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/events:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - text/event-stream
-      responses:
-        "200":
-          description: event stream
-          schema:
-            type: string
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Stream wiki events (ingest_started, page_updated, ingest_done, lint_done)
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/export:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: md (default) | html
+      - description: Metadata filter (JSON object)
         in: query
-        name: format
+        name: metadata
         type: string
-      produces:
-      - application/zip
-      - text/html
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: file
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: 'Export the wiki: zip of markdown pages or one static HTML file'
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/index:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Index id to expand, e.g. w4 or w4.n2
+      - description: File refs to show whole, e.g. d1,d3
         in: query
         name: expand
         type: string
@@ -3065,405 +2593,17 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/dto.WikiIndexResponse'
+            $ref: '#/definitions/types.CaseTOC'
         "404":
           description: Not Found
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: The wiki index exactly as given to the LLM (index.md of LLM Wiki)
+      summary: 'The case table of contents: file cards and first branches of their
+        trees'
       tags:
-      - Wiki
-  /v1/cases/{id}/wiki/links:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: overview | source | entity | topic | note
-        in: query
-        name: kind
-        type: string
-      - description: Entity type of the schema
-        in: query
-        name: entity_type
-        type: string
-      - description: Only this relation
-        in: query
-        name: relation
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/wiki.LinkGraph'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: The link graph of the wiki (nodes = pages, edges = links)
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/lint:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: open | fixed | dismissed
-        in: query
-        name: status
-        type: string
-      - description: stale | contradiction | orphan | missing_link | gap | index_drift
-        in: query
-        name: kind
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.WikiLintList'
-      security:
-      - ApiKeyAuth: []
-      summary: Lint issues of the wiki
-      tags:
-      - Wiki
-    post:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: Accepted
-          schema:
-            $ref: '#/definitions/dto.OK'
-      security:
-      - ApiKeyAuth: []
-      summary: Run the wiki lint now (async)
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/lint/{issue_id}:
-    patch:
-      consumes:
-      - application/json
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Issue id
-        in: path
-        name: issue_id
-        required: true
-        type: integer
-      - description: New status
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.WikiLintPatch'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.OK'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Mark a lint issue fixed or dismissed
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/log:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: ingest | retract | lint | edit | note | rebuild | query
-        in: query
-        name: op
-        type: string
-      - description: Only lines about this file
-        format: uuid
-        in: query
-        name: document_id
-        type: string
-      - description: 'Cursor: at of the last line (RFC3339)'
-        in: query
-        name: before
-        type: string
-      - default: 100
-        description: Page size (max 500)
-        in: query
-        name: limit
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.WikiLogList'
-      security:
-      - ApiKeyAuth: []
-      summary: The wiki log (log.md of LLM Wiki), newest first
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/notes:
-    post:
-      consumes:
-      - application/json
-      description: Body {title, content} or {session_id, message_id} (an assistant
-        answer of a session bound to this case). Inline citation ids become footnotes
-        after being checked; sentences without a valid citation are dropped.
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Note
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/wiki.NoteRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/types.WikiPage'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Save an answer as a note page ("Lưu vào wiki")
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/pages/{slug}:
-    delete:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Note slug
-        in: path
-        name: slug
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.OK'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Delete a note page (other pages are maintained by ingest)
-      tags:
-      - Wiki
-    get:
-      description: Returns content, attributes, footnotes (n → citation_id, quote,
-        file, page, status), links in and out and the ingest proposal if any. The
-        slug contains "/", e.g. nguon/hop-dong-15-2026. A slug of another case is
-        404.
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Page slug (optionally followed by /revisions)
-        in: path
-        name: slug
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.WikiPage'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Read a wiki page, or its history with …/{slug}/revisions
-      tags:
-      - Wiki
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Page slug followed by /proposal or /revisions/{v}/restore
-        in: path
-        name: slug
-        required: true
-        type: string
-      - description: 'For /proposal: {\'
-        in: body
-        name: request
-        schema:
-          $ref: '#/definitions/dto.WikiProposalRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/types.WikiPage'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Accept/reject an ingest proposal (…/{slug}/proposal) or restore a revision
-        (…/{slug}/revisions/{v}/restore)
-      tags:
-      - Wiki
-    put:
-      consumes:
-      - application/json
-      description: 'footnotes maps a footnote number to a citation id of this case
-        (doc:<id>:p<page>:l<a>-<b>); each is checked against the source lines. Invalid
-        footnotes are marked stale (or refused with 422 when wiki.strict_citations).
-        An edited page is not overwritten by ingest: later ingests leave a proposal.'
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Page slug
-        in: path
-        name: slug
-        required: true
-        type: string
-      - description: Changes
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/wiki.EditRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/wiki.EditResult'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Edit a wiki page by hand (title, content, attributes, footnotes)
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/rebuild:
-    post:
-      description: Use after a schema change. Note pages and hand-edited pages are
-        kept; edited pages receive proposals.
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: Accepted
-          schema:
-            $ref: '#/definitions/dto.OK'
-      security:
-      - ApiKeyAuth: []
-      summary: 'Rebuild the wiki: drop generated pages and ingest every file again'
-      tags:
-      - Wiki
-  /v1/cases/{id}/wiki/search:
-    get:
-      parameters:
-      - description: Case id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Query
-        in: query
-        name: q
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.WikiSearchResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Full-text search in the wiki of a case
-      tags:
-      - Wiki
+      - Search
   /v1/citations:
     get:
       parameters:
@@ -3934,12 +3074,23 @@ paths:
       - Search
   /v1/documents/{id}/tree:
     get:
+      description: 'format=text returns the tree as the LLM reads it (§6.5): whole
+        when it fits search.tree_token_budget, deep levels collapsed otherwise; node_id
+        limits it to one subtree.'
       parameters:
       - description: Document id
         format: uuid
         in: path
         name: id
         required: true
+        type: string
+      - description: json (default) or text
+        in: query
+        name: format
+        type: string
+      - description: Only this subtree (format=text), e.g. n3
+        in: query
+        name: node_id
         type: string
       produces:
       - application/json
@@ -4618,10 +3769,11 @@ paths:
       consumes:
       - application/json
       description: 'Scope: case_ids, or kb_ids (every case of those KBs; API only).
-        mode=reasoning (default): an LLM reads the case wiki index, then wiki pages,
-        then walks file trees and cites exact source lines, every hit re-checked against
-        the current lines; mode=keyword: Postgres full-text + trigram; mode=metadata:
-        list documents matching the metadata filter. No embeddings are used.'
+        mode=reasoning (default): an LLM reads the case table of contents, walks the
+        file trees, only the pages of the chosen nodes are read and exact source lines
+        are cited, every hit re-checked against the current lines; mode=keyword: Postgres
+        full-text + trigram; mode=metadata: list documents matching the metadata filter.
+        No embeddings are used.'
       parameters:
       - description: Query, scope and filters
         in: body
@@ -4642,8 +3794,8 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Search cases (reasoning over the case wiki and document trees, keyword,
-        or metadata only)
+      summary: Search cases (reasoning over tables of contents, keyword, or metadata
+        only)
       tags:
       - Search
   /v1/sessions:
@@ -4683,7 +3835,7 @@ paths:
       consumes:
       - application/json
       description: 'case_id (or case {kb_id, code}) binds the session to one case
-        for its whole life: the wiki_* and kb_* tools only see that case (§8.1).'
+        for its whole life: the kb_* tools only see that case (§8.1).'
       parameters:
       - description: Session fields
         in: body
@@ -4978,106 +4130,6 @@ paths:
       summary: Rescan the skills directory and reconcile the database
       tags:
       - Skills
-  /v1/wiki/schemas:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.SchemaList'
-      security:
-      - ApiKeyAuth: []
-      summary: List wiki schemas (latest version of each)
-      tags:
-      - Wiki schemas
-    post:
-      consumes:
-      - application/json
-      description: Existing cases keep their pages until POST /v1/cases/{id}/wiki/rebuild.
-      parameters:
-      - description: Schema
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/types.WikiSchema'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/types.WikiSchema'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Create a new wiki schema version (validated)
-      tags:
-      - Wiki schemas
-  /v1/wiki/schemas/{name}:
-    get:
-      parameters:
-      - description: Schema name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.SchemaList'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Every version of a wiki schema
-      tags:
-      - Wiki schemas
-  /v1/wiki/schemas/{name}/test:
-    post:
-      consumes:
-      - application/json
-      description: Returns the entities (with identity keys and the lines of each
-        attribute) and relations an ingest would keep after checking them against
-        the source lines, and the LLM calls used. Nothing is stored.
-      parameters:
-      - description: Schema name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Text or document id
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.SchemaTestRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/wiki.TestResult'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: Dry-run the extraction of a schema on a text or a document
-      tags:
-      - Wiki schemas
 schemes:
 - http
 - https

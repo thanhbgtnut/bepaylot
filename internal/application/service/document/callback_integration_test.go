@@ -142,7 +142,7 @@ func TestCallbackRetriesUntilDelivered(t *testing.T) {
 	d := last.body["document"].(map[string]any)
 	if last.body["event"] != "document.completed" || d["id"] != doc.String() || d["status"] != "completed" ||
 		d["metadata"].(map[string]any)["loai"] != "GCN" || d["case_code"] != "HS-CB-1" || d["case_id"] != res.Case.ID.String() ||
-		d["wiki_status"] != "done" || d["page_count"].(float64) != 1 {
+		d["wiki_status"] != nil || d["page_count"].(float64) != 1 {
 		t.Fatalf("body = %v", last.body)
 	}
 	if got, _ := h.Docs.GetDocument(h.Ctx, doc); got.CallbackURL != rcv.srv.URL+"/hook?src=bepaylot" {

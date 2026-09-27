@@ -3,38 +3,9 @@ import { marked } from "marked";
 
 import { CITE_RE, citationLabel, parseCitation } from "./format";
 
-export interface MarkdownOptions {
-  // Turn [[slug]] / [[slug|label]] into wiki links; unknown slugs are marked dead.
-  wikiLinks?: boolean;
-  knownSlugs?: Set<string>;
-  // Page titles shown for [[slug]] links without a label.
-  slugTitles?: Map<string, string>;
-  // Wiki footnotes: [^n] becomes a superscript that opens its citation.
-  footnotes?: Map<number, { citation: string; stale?: boolean; label?: string }>;
-}
-
-const esc = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-
-export function markdownToHTML(md: string, opt: MarkdownOptions = {}): string {
-  let src = md ?? "";
-  if (opt.wikiLinks) {
-    src = src.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, slug: string, label?: string) => {
-      const s = slug.trim();
-      const dead = opt.knownSlugs && !opt.knownSlugs.has(s);
-      return `<a class="wikilink${dead ? " dead" : ""}" href="#" data-slug="${esc(s)}">${esc(label || opt.slugTitles?.get(s) || s)}</a>`;
-    });
-  }
-  if (opt.footnotes) {
-    const fns = opt.footnotes;
-    src = src.replace(/\[\^(\d+)\](?!:)/g, (_m, n: string) => {
-      const f = fns.get(Number(n));
-      if (!f) return `<sup class="fn missing" title="Chú thích ${n} không còn">${n}</sup>`;
-      return `<sup><button type="button" class="cite fn${f.stale ? " stale" : ""}" data-cite="${esc(f.citation)}" title="${esc(f.label ?? f.citation)}">${n}</button></sup>`;
-    });
-  }
-  const html = marked.parse(src, { gfm: true, async: false }) as string;
-  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-slug", "data-cite", "target"] });
+export function markdownToHTML(md: string): string {
+  const html = marked.parse(md ?? "", { gfm: true, async: false }) as string;
+  return DOMPurify.sanitize(html, { ADD_ATTR: ["data-cite", "target"] });
 }
 
 // Replaces citation ids in text nodes with <button class="cite"> elements.

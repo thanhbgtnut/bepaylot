@@ -6,7 +6,6 @@ package document
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -147,9 +146,8 @@ func (s *Service) LoadPages(ctx context.Context, doc uuid.UUID, gen, from, to in
 	return out, nil
 }
 
-// SetIndexResult implements interfaces.DocumentStore. A document whose case
-// has a wiki moves to enriching and is queued for ingest (§6.8); search works
-// from here on either way.
+// SetIndexResult implements interfaces.DocumentStore. The tree is the last
+// stage: the document is searchable and settles as completed (or partial).
 func (s *Service) SetIndexResult(ctx context.Context, doc uuid.UUID, gen int, card interfaces.DocumentCard, failed error) error {
 	d, err := s.st.Documents.Get(ctx, doc)
 	if err != nil {
@@ -176,48 +174,7 @@ func (s *Service) SetIndexResult(ctx context.Context, doc uuid.UUID, gen int, ca
 	if d.ParseStatus == types.StagePartial {
 		final = types.DocPartial
 	}
-	wiki := types.StageSkipped
-	if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil && s.cases.WikiEnabled(c) {
-		final, wiki = types.DocEnriching, types.StagePending
-	}
-	u.WikiStatus = &wiki
 	u.Status = &final
-	ok, err := s.updateStatus(ctx, doc, gen, u)
-	if err != nil || !ok || wiki != types.StagePending {
-		return err
-	}
-	return s.queueWikiOp(ctx, d, types.WikiOpIngestDoc, gen)
-}
-
-// SetWikiStatus implements interfaces.DocumentStore. A finished ingest
-// (done, partial, failed, skipped) settles the document status.
-func (s *Service) SetWikiStatus(ctx context.Context, doc uuid.UUID, gen int, status string, failed error) error {
-	d, err := s.st.Documents.Get(ctx, doc)
-	if err != nil {
-		return err
-	}
-	u := postgres.DocUpdate{WikiStatus: &status}
-	if failed != nil {
-		msg := "wiki: " + failed.Error()
-		u.Error = &msg
-	}
-	if d.Status == types.DocEnriching && status != types.StagePending && status != types.StageProcessing {
-		final := types.DocCompleted
-		if d.ParseStatus == types.StagePartial {
-			final = types.DocPartial
-		}
-		u.Status = &final
-	}
 	_, err = s.updateStatus(ctx, doc, gen, u)
 	return err
-}
-
-// queueWikiOp records a wiki op of the document's case and wakes the case's
-// ingest stream (§6.8). The op survives restarts in task_pending_ops.
-func (s *Service) queueWikiOp(ctx context.Context, d types.Document, op string, gen int) error {
-	if _, err := s.st.Tasks.EnqueueWikiOp(ctx, d.CaseID, op, types.WikiOpPayload{DocumentID: d.ID, Gen: gen, FileName: d.FileName}); err != nil {
-		return err
-	}
-	return s.q.Enqueue(ctx, types.TaskWikiIngest, types.CaseTaskPayload{CaseID: d.CaseID},
-		queue.Opts{TaskID: fmt.Sprintf("wi:%s:%s:%d:%s", d.CaseID, d.ID, gen, op)})
 }

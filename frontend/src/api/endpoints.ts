@@ -15,12 +15,7 @@ import type {
   TranscriptMessage,
   TreeNode,
   UploadResult,
-  WikiGraph,
-  WikiLintIssue,
-  WikiLogEntry,
-  WikiPage,
-  WikiRevision,
-  WikiTOC,
+  CaseTOC,
 } from "./types";
 
 const q = (params: Record<string, string | number | undefined | null>) => {
@@ -29,7 +24,6 @@ const q = (params: Record<string, string | number | undefined | null>) => {
   const str = s.toString();
   return str ? "?" + str : "";
 };
-const enc = encodeURIComponent;
 
 // ---- knowledge bases
 
@@ -40,7 +34,7 @@ export const updateKB = (id: string, body: { name?: string; description?: string
   request<KnowledgeBase>(`/kbs/${id}`, { method: "PATCH", body });
 export const listEngines = () => request<{ data: EngineInfo[] }>("/parser/engines").then((r) => r.data ?? []);
 
-// ---- cases (one dossier = one case; the wiki and the chat are per case)
+// ---- cases (one dossier = one case; the table of contents and the chat are per case)
 
 export const listCaseTypes = () => request<{ data: CaseType[] }>("/case-types").then((r) => r.data ?? []);
 export const listCases = (kb: string, f: { q?: string; limit?: number } = {}) =>
@@ -48,6 +42,8 @@ export const listCases = (kb: string, f: { q?: string; limit?: number } = {}) =>
 export const getCase = (id: string) => request<Case>(`/cases/${id}`);
 export const createCase = (kb: string, body: { code: string; case_type?: string; title?: string }) =>
   request<Case>(`/kbs/${kb}/cases`, { body });
+// The case table of contents: file cards and the first branches of their trees.
+export const getCaseTOC = (id: string) => request<CaseTOC>(`/cases/${id}/toc`);
 
 // ---- documents
 
@@ -128,33 +124,3 @@ export function streamMessage(m: MessageRequest) {
     signal: m.signal,
   });
 }
-
-// ---- wiki (one per case)
-
-const page = (c: string, slug: string) => `/cases/${c}/wiki/pages/${slug.split("/").map(enc).join("/")}`;
-
-export const getWiki = (c: string) => request<WikiTOC>(`/cases/${c}/wiki`);
-export const getWikiPage = (c: string, slug: string) => request<WikiPage>(page(c, slug));
-export const editWikiPage = (c: string, slug: string, body: { title?: string; content?: string }) =>
-  request<{ page: WikiPage; invalid_footnotes?: string[] }>(page(c, slug), { method: "PUT", body });
-export const wikiRevisions = (c: string, slug: string) =>
-  request<{ data: WikiRevision[] }>(page(c, slug) + "/revisions").then((r) => r.data ?? []);
-export const restoreWikiRevision = (c: string, slug: string, v: number) =>
-  request<WikiPage>(page(c, slug) + `/revisions/${v}/restore`, { body: {} });
-export const decideWikiProposal = (c: string, slug: string, action: "accept" | "reject") =>
-  request<WikiPage>(page(c, slug) + "/proposal", { body: { action } });
-export const deleteWikiNote = (c: string, slug: string) => request(page(c, slug), { method: "DELETE" });
-export const searchWiki = (c: string, text: string) =>
-  request<{ data: { slug: string; title: string; kind: string; snippet: string }[] }>(`/cases/${c}/wiki/search` + q({ q: text })).then(
-    (r) => r.data ?? [],
-  );
-export const wikiGraph = (c: string) => request<WikiGraph>(`/cases/${c}/wiki/links`);
-export const wikiLog = (c: string) => request<{ data: WikiLogEntry[] }>(`/cases/${c}/wiki/log?limit=200`).then((r) => r.data ?? []);
-export const wikiLint = (c: string, status = "open") =>
-  request<{ data: WikiLintIssue[] }>(`/cases/${c}/wiki/lint` + q({ status })).then((r) => r.data ?? []);
-export const runWikiLint = (c: string) => request(`/cases/${c}/wiki/lint`, { body: {} });
-export const setLintStatus = (c: string, id: number, status: "fixed" | "dismissed" | "open") =>
-  request(`/cases/${c}/wiki/lint/${id}`, { method: "PATCH", body: { status } });
-export const rebuildWiki = (c: string) => request(`/cases/${c}/wiki/rebuild`, { body: {} });
-export const exportWiki = (c: string, code: string, format: "md" | "html" = "md") =>
-  download(`/cases/${c}/wiki/export?format=${format}`, `wiki-${code}.${format === "md" ? "zip" : "html"}`);

@@ -386,7 +386,6 @@ function InfoPanel({ doc, page, onGo }: { doc: Doc; page: PageView | null; onGo:
         <span className="flex flex-wrap gap-1.5">
           <span className="tag">parse: {doc.parse_status}</span>
           <span className="tag">index: {doc.index_status}</span>
-          <span className="tag">wiki: {doc.wiki_status}</span>
         </span>
       </Row>
       {doc.metadata && Object.keys(doc.metadata).length > 0 && (

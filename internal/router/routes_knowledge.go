@@ -11,7 +11,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
 )
 
-// registerKnowledgeRoutes mounts the case, document, search and wiki APIs
+// registerKnowledgeRoutes mounts the case, document and search APIs
 // (§10). They answer 503 when the document modules are not configured.
 func registerKnowledgeRoutes(v1 *route.RouterGroup, h *handler.Handlers) {
 	g := v1.Group("", requireModules(h))
@@ -60,34 +60,11 @@ func registerKnowledgeRoutes(v1 *route.RouterGroup, h *handler.Handlers) {
 	// Search (§10.3).
 	g.POST("/search", h.Search)
 	g.POST("/documents/:id/search", h.SearchInDocument)
+	g.GET("/cases/:id/toc", h.CaseTOC)
 	g.GET("/documents/:id/tree", h.DocumentTree)
 	g.GET("/citations", h.LocateCitation)
 
-	// Case wiki (§10.4); slugs contain "/", hence the catch-all page path.
-	g.GET("/cases/:id/wiki", h.GetWiki)
-	g.GET("/cases/:id/wiki/index", h.GetWikiIndex)
-	g.GET("/cases/:id/wiki/pages/*slug", h.GetWikiPage)
-	g.PUT("/cases/:id/wiki/pages/*slug", h.EditWikiPage)
-	g.POST("/cases/:id/wiki/pages/*slug", h.PostWikiPage)
-	g.DELETE("/cases/:id/wiki/pages/*slug", h.DeleteWikiPage)
-	g.GET("/cases/:id/wiki/links", h.WikiLinks)
-	g.GET("/cases/:id/wiki/search", h.SearchWiki)
-	g.POST("/cases/:id/wiki/notes", h.CreateWikiNote)
-	g.GET("/cases/:id/wiki/log", h.WikiLog)
-	g.GET("/cases/:id/wiki/lint", h.ListWikiLint)
-	g.POST("/cases/:id/wiki/lint", h.RunWikiLint)
-	g.PATCH("/cases/:id/wiki/lint/:issue_id", h.PatchWikiLint)
-	g.POST("/cases/:id/wiki/rebuild", h.RebuildWiki)
-	g.GET("/cases/:id/wiki/export", h.ExportWiki)
-	g.GET("/cases/:id/wiki/events", h.WikiEvents)
-
-	// Wiki schemas (§10.5).
-	g.GET("/wiki/schemas", h.ListWikiSchemas)
-	g.POST("/wiki/schemas", h.CreateWikiSchema)
-	g.GET("/wiki/schemas/:name", h.GetWikiSchema)
-	g.POST("/wiki/schemas/:name/test", h.TestWikiSchema)
-
-	// Operations (§10.6).
+	// Operations (§10.4).
 	g.GET("/admin/queues", h.QueueStats)
 	g.GET("/admin/dead-letters", h.ListDeadLetters)
 	g.POST("/admin/dead-letters/:id/retry", h.RetryDeadLetter)
@@ -95,7 +72,7 @@ func registerKnowledgeRoutes(v1 *route.RouterGroup, h *handler.Handlers) {
 
 func requireModules(h *handler.Handlers) app.HandlerFunc {
 	return func(ctx context.Context, c *app.RequestContext) {
-		if h.Docs == nil || h.Searcher == nil || h.Cases == nil || h.Wiki == nil {
+		if h.Docs == nil || h.Searcher == nil || h.Cases == nil {
 			c.AbortWithStatusJSON(consts.StatusServiceUnavailable, dto.NewError("unavailable_error",
 				"document modules are not configured on this server (check storage.s3 and redis settings)"))
 			return

@@ -34,7 +34,7 @@ type MessagesRequest struct {
 type Metadata struct {
 	UserID    string `json:"user_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"` // bepaylot extension
-	// CaseID binds the session to one case (§8.1): the wiki_* and kb_* tools
+	// CaseID binds the session to one case (§8.1): the kb_* tools
 	// then see that case only. Binding is permanent: another case is 409.
 	CaseID string `json:"case_id,omitempty"`
 	// Case names the case by KB and code instead of CaseID.

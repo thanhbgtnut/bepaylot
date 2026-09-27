@@ -19,7 +19,7 @@ import (
 
 // @title                       bepaylot API
 // @version                     1.0.0
-// @description                 A streaming AI agent backend with document processing. `/v1/messages` mirrors the Anthropic Messages API (with additive `provider` and `metadata.session_id` / `metadata.kb_ids` fields); `/v1/sessions` manages conversations; `/v1/kbs`, `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer) and search them without embeddings; `/v1/graph` and `/v1/kbs/{id}/wiki` expose the extracted knowledge graph.
+// @description                 A streaming AI agent backend with document processing. `/v1/messages` mirrors the Anthropic Messages API (with additive `provider` and `metadata.session_id` / `metadata.kb_ids` fields); `/v1/sessions` manages conversations; `/v1/kbs`, `/v1/cases`, `/v1/documents` and `/v1/search` parse files (OCR + PDF text layer) into page-indexed tables of contents and search them without embeddings: an LLM walks the case and document trees and reads only the pages it chose.
 // @BasePath                    /
 // @schemes                     http https
 // @securityDefinitions.apikey  ApiKeyAuth

@@ -65,21 +65,28 @@ func TestIndexAndReasoningSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.Status != types.DocCompleted || d.IndexStatus != types.StageDone || d.WikiStatus != types.StageDone || d.Title == "" {
-			t.Fatalf("doc %s: status %s index %s wiki %s title %q err %q", id, d.Status, d.IndexStatus, d.WikiStatus, d.Title, d.Error)
+		// The tree is the last stage: completed right after it (§4.6).
+		if d.Status != types.DocCompleted || d.IndexStatus != types.StageDone || d.Title == "" {
+			t.Fatalf("doc %s: status %s index %s title %q err %q", id, d.Status, d.IndexStatus, d.Title, d.Error)
 		}
 	}
 	caseA, caseB := h.Case(kb.ID, "HS-A"), h.Case(kb.ID, "HS-B")
-	if caseA.WikiStatus != types.WikiReady || caseA.WikiDocsCovered != 1 || caseA.WikiVersion == 0 {
-		t.Fatalf("wiki state of A = %+v", caseA)
-	}
 	tree, err := h.Index.DocumentTree(h.Ctx, h.Owner.ID, docA)
 	if err != nil || len(tree) != 4 || tree[1].Origin != "bookmark" || tree[1].Summary == "" {
 		t.Fatalf("tree = %+v err %v", tree, err)
 	}
+	if tree[0].TreeTokens == 0 || tree[0].TreeTokens != tree[1].TreeTokens+tree[2].TreeTokens+tree[3].TreeTokens {
+		t.Fatalf("tree tokens not recorded: %+v", tree)
+	}
+	// The tree text is whole when it fits (N37): every node is listed.
+	text, err := h.Index.DocumentTreeText(h.Ctx, h.Owner.ID, docA, "")
+	if err != nil || strings.Count(text, "[n") != 3 || strings.Contains(text, "expand") {
+		t.Fatalf("tree text = %q err %v", text, err)
+	}
 
-	// Reasoning search in case A: the wiki index leads to the file, the
-	// tree to page 2, and the fabricated quote is dropped (N13).
+	// Reasoning search in case A: the tree leads to page 2 only, whose
+	// lines are read, and the fabricated quote is dropped (N13, N21).
+	treeCalls, locateCalls := h.LLM.Calls["tree_search"], h.LLM.Calls["locate"]
 	resp, err := h.Index.Search(h.Ctx, types.SearchRequest{Query: "Vốn kinh doanh là bao nhiêu?", CaseIDs: []uuid.UUID{caseA.ID}, OwnerID: h.Owner.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -99,11 +106,31 @@ func TestIndexAndReasoningSearch(t *testing.T) {
 			top = hit
 		}
 	}
-	if top.PageNo != 2 || len(top.BBoxes) == 0 || top.BBoxes[0].IsZero() || top.Via != "raw" {
+	if top.PageNo != 2 || len(top.BBoxes) == 0 || top.BBoxes[0].IsZero() || top.Via != "tree" {
 		t.Fatalf("top hit = %+v", top)
 	}
-	if resp.Trace.DroppedHits == 0 || resp.Trace.LLMCalls == 0 || len(resp.Trace.Cases) != 1 || resp.Trace.WikiVersions[caseA.ID.String()] == 0 {
+	if resp.Trace.DroppedHits == 0 || resp.Trace.LLMCalls != 2 || len(resp.Trace.Cases) != 1 || resp.Trace.TokensIn == 0 ||
+		fmt.Sprint(resp.Trace.PagesRead[docA.String()]) != "[2]" {
 		t.Fatalf("trace = %+v", resp.Trace)
+	}
+	// One call on the whole tree, one on the pages of the chosen node.
+	if h.LLM.Calls["tree_search"]-treeCalls != 1 || h.LLM.Calls["locate"]-locateCalls != 1 {
+		t.Fatalf("calls = %v", h.LLM.Calls)
+	}
+	treePrompt := h.LLM.Prompts["tree_search"][treeCalls]
+	pagesPrompt := h.LLM.Prompts["locate"][locateCalls]
+	if !strings.Contains(treePrompt, "CHU HO") || strings.Contains(treePrompt, "50.000.000") {
+		t.Fatalf("step 2 must show the whole tree and no page text:\n%s", treePrompt)
+	}
+	if !strings.Contains(pagesPrompt, `<page n="2"`) || strings.Contains(pagesPrompt, `<page n="1"`) || strings.Contains(pagesPrompt, `<page n="3"`) {
+		t.Fatalf("only the pages of the chosen node are read:\n%s", pagesPrompt)
+	}
+
+	// The case TOC lists the file with its first branches (§6.6).
+	toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, caseA.ID, nil, nil)
+	if err != nil || len(toc.Documents) != 1 || len(toc.Documents[0].Branches) != 3 || !strings.Contains(toc.Text, "[d1] a.pdf (3 tr.)") ||
+		!strings.Contains(toc.Text, "[d1.n") {
+		t.Fatalf("toc = %+v err %v", toc, err)
 	}
 
 	// A KB-wide search covers both cases.
@@ -129,7 +156,7 @@ func TestIndexAndReasoningSearch(t *testing.T) {
 	if err != nil || len(loc) != 1 || !strings.Contains(loc[0].Quote, "50.000.000") {
 		t.Fatalf("locate = %+v err %v", loc, err)
 	}
-	text, err := h.Index.ReadPages(h.Ctx, h.Owner.ID, docA, 2, 2)
+	text, err = h.Index.ReadPages(h.Ctx, h.Owner.ID, docA, 2, 2)
 	if err != nil || !strings.Contains(text, "[L1] Von kinh doanh: 50.000.000 dong") {
 		t.Fatalf("read pages = %q err %v", text, err)
 	}

@@ -62,7 +62,7 @@ type Session struct {
 	Summary        string
 	Metadata       map[string]any
 	// CaseID binds the session to one case for its whole life (§8.1): the
-	// document and wiki tools only see that case. nil = no case, no tools.
+	// document tools only see that case. nil = no case, no tools.
 	CaseID    *uuid.UUID
 	CreatedAt time.Time
 	UpdatedAt time.Time

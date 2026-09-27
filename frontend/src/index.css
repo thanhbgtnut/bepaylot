@@ -179,11 +179,6 @@ a { color: var(--accent); text-decoration: none; }
   font: 500 11.5px/20px var(--font-sans); border: 0; cursor: pointer; vertical-align: 1px;
 }
 .cite:hover { box-shadow: var(--shadow-1); }
-.cite.fn { height: 16px; min-width: 16px; padding: 0 4px; margin: 0 1px; border-radius: 8px; justify-content: center; font-size: 10.5px; line-height: 16px; vertical-align: 0; }
-.cite.fn.stale { background: var(--warn-soft); color: var(--warn); text-decoration: line-through; }
-sup.fn.missing { color: var(--subtle); }
-.wikilink { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 0 4px; border-radius: 4px; }
-.wikilink.dead { color: var(--err); background: var(--err-soft); }
 .caret::after { content: "▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
 

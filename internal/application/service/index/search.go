@@ -32,7 +32,7 @@ var (
 	errNoTree     = errors.New("document has no tree yet")
 )
 
-// Search implements interfaces.Searcher (§6.10).
+// Search implements interfaces.Searcher (§6.6).
 func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	start := time.Now()
 	if req.OwnerID == uuid.Nil {
@@ -62,7 +62,7 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 		defer cancel()
 	}
 
-	// Step 1: scope by SQL — case, metadata, status (§6.10).
+	// Step 1: scope by SQL — case, metadata, status (§6.6).
 	filter, err := s.scope(ctx, req)
 	if err != nil {
 		return nil, err
@@ -92,7 +92,7 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 		return resp, nil
 	}
 	codes := s.caseCodes(ctx, cands)
-	key := s.cacheKey(ctx, mode, req, cands)
+	key := s.cacheKey(mode, req, cands)
 	if v, ok := s.cache.get(key); ok {
 		out := *(v.(*types.SearchResponse))
 		out.Trace.Cached = true
@@ -136,7 +136,7 @@ func (s *Service) Search(ctx context.Context, req types.SearchRequest) (*types.S
 func (s *Service) scope(ctx context.Context, req types.SearchRequest) (postgres.DocumentFilter, error) {
 	f := postgres.DocumentFilter{
 		OwnerID: req.OwnerID, KBIDs: req.KBIDs, CaseIDs: req.CaseIDs, DocumentIDs: req.DocumentIDs,
-		Statuses: []string{types.DocCompleted, types.DocPartial, types.DocEnriching},
+		Statuses: []string{types.DocCompleted, types.DocPartial},
 	}
 	for _, id := range req.CaseIDs {
 		c, err := s.cases.GetCaseOwned(ctx, req.OwnerID, id)
@@ -180,10 +180,10 @@ func (s *Service) caseCodes(ctx context.Context, docs []types.Document) map[uuid
 	return out
 }
 
-// cacheKey covers the request, the owner, the generation of every document in
-// scope and the wiki version of every case: scopes always name their cases,
-// so two cases never share a cached result (§6.10).
-func (s *Service) cacheKey(ctx context.Context, mode string, req types.SearchRequest, docs []types.Document) string {
+// cacheKey covers the request, the owner and the generation of every
+// document in scope: scopes always name their cases, so two cases never
+// share a cached result (§6.6).
+func (s *Service) cacheKey(mode string, req types.SearchRequest, docs []types.Document) string {
 	h := sha1.New()
 	b, _ := json.Marshal(struct {
 		M string
@@ -191,15 +191,8 @@ func (s *Service) cacheKey(ctx context.Context, mode string, req types.SearchReq
 		O uuid.UUID
 	}{mode, req, req.OwnerID})
 	h.Write(b)
-	seen := map[uuid.UUID]bool{}
 	for _, d := range docs {
 		fmt.Fprintf(h, "%s:%d;", d.ID, d.Gen)
-		if !seen[d.CaseID] {
-			seen[d.CaseID] = true
-			if c, err := s.cases.GetCase(ctx, d.CaseID); err == nil {
-				fmt.Fprintf(h, "case:%s:%d;", c.ID, c.WikiVersion)
-			}
-		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -207,7 +200,7 @@ func (s *Service) cacheKey(ctx context.Context, mode string, req types.SearchReq
 func briefs(docs []types.Document) []types.DocumentBrief {
 	out := make([]types.DocumentBrief, len(docs))
 	for i, d := range docs {
-		out[i] = types.DocumentBrief{ID: d.ID, KBID: d.KBID, CaseID: d.CaseID, FileName: d.FileName, Status: d.Status, WikiStatus: d.WikiStatus,
+		out[i] = types.DocumentBrief{ID: d.ID, KBID: d.KBID, CaseID: d.CaseID, FileName: d.FileName, Status: d.Status,
 			PageCount: d.PageCount, Title: d.Title, Summary: d.Summary, Metadata: d.Metadata}
 	}
 	return out
@@ -331,119 +324,26 @@ func ParseCitation(c string) (uuid.UUID, int, int, int, error) {
 
 // ---- reasoning mode ----
 
+// budget caps the LLM calls of one request and counts their input tokens.
 type budget struct {
-	used, max atomic.Int64
+	used, max, tokens atomic.Int64
 }
 
 func (s *Service) call(ctx context.Context, b *budget, system, user string, out any) error {
 	if b.used.Add(1) > b.max.Load() {
 		return errBudget
 	}
+	b.tokens.Add(int64(textutil.EstimateTokens(system) + textutil.EstimateTokens(user)))
 	return s.searchLLM.CompleteJSON(ctx, system, user, out)
 }
 
+// docSel is what step 3 reads of one document: pages of the chosen nodes.
 type docSel struct {
 	doc   types.Document
 	short string
 	pages []int
 	nodes []string
 	paths map[int][]string // page → node path
-	wiki  []string         // wiki pages that led here
-}
-
-// selectPages walks the tree with the LLM from node start ("" = the root,
-// §6.10 step 4a). A branch within the read budget (a whole file within
-// full_doc_token_budget) is read without walking.
-func (s *Service) selectPages(ctx context.Context, b *budget, req types.SearchRequest, d types.Document, start string) (*docSel, error) {
-	cfg := s.cfg.Search
-	nodes, err := s.st.Index.Tree(ctx, d.ID, d.Gen)
-	if err != nil {
-		return nil, err
-	}
-	if len(nodes) == 0 {
-		return nil, errNoTree
-	}
-	t := newTreeView(nodes)
-	top, direct := t.root, cfg.FullDocTokenBudget
-	if n, ok := t.byShort[start]; ok && start != "" && n.ParentID != nil {
-		top, direct = n, max(cfg.NodeReadBudget, 1)
-	}
-	sel := &docSel{doc: d, paths: map[int][]string{}}
-	inRange := func(p int) bool {
-		return (req.PageFrom <= 0 || p >= req.PageFrom) && (req.PageTo <= 0 || p <= req.PageTo)
-	}
-	if top.TokenCount <= direct || len(t.children[top.ID]) == 0 {
-		for p := top.PageStart; p <= top.PageEnd; p++ {
-			if inRange(p) {
-				sel.pages = append(sel.pages, p)
-				sel.paths[p] = t.pathForPage(p)
-			}
-		}
-		sel.nodes = []string{top.ShortID}
-		return sel, nil
-	}
-
-	shown := t.initialView(top.ID, cfg.TreeTokenBudget)
-	var picked []string
-	for hop := 0; hop <= cfg.MaxHops; hop++ {
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "Question: %s\n\nDocument: %s — %s\n%s\n\nTable of contents:\n", req.Query, d.FileName, t.root.Title, textutil.Truncate(t.root.Summary, 600))
-		t.render(&sb, top.ID, shown)
-		var out struct {
-			Select []struct {
-				NodeID string `json:"node_id"`
-			} `json:"select"`
-			Expand     []string `json:"expand"`
-			Answerable *bool    `json:"answerable"`
-		}
-		if err := s.call(ctx, b, promptSelectNodes, sb.String(), &out); err != nil {
-			return nil, err
-		}
-		for _, x := range out.Select {
-			if _, ok := t.byShort[x.NodeID]; ok {
-				picked = append(picked, x.NodeID)
-			}
-		}
-		if out.Answerable != nil && !*out.Answerable && len(picked) == 0 {
-			return sel, nil
-		}
-		grew := false
-		for _, id := range out.Expand {
-			if n, ok := t.byShort[id]; ok && len(t.children[n.ID]) > 0 && !shown[id+"+open"] {
-				shown[id+"+open"] = true
-				for _, c := range t.children[n.ID] {
-					shown[c.ShortID] = true
-				}
-				grew = true
-			}
-		}
-		if !grew || hop == cfg.MaxHops {
-			break
-		}
-	}
-	// Selected nodes → pages, within the page budget.
-	budgetTokens := cfg.PageTokenBudget * 2
-	used := 0
-	seen := map[int]bool{}
-	for _, id := range picked {
-		n := t.byShort[id]
-		perPage := n.TokenCount / max(1, n.PageEnd-n.PageStart+1)
-		for p := n.PageStart; p <= n.PageEnd; p++ {
-			if seen[p] || !inRange(p) {
-				continue
-			}
-			if used+perPage > budgetTokens && len(sel.pages) > 0 {
-				break
-			}
-			seen[p] = true
-			used += perPage
-			sel.pages = append(sel.pages, p)
-			sel.paths[p] = t.path(n)
-		}
-		sel.nodes = append(sel.nodes, id)
-	}
-	sort.Ints(sel.pages)
-	return sel, nil
 }
 
 type locHit struct {
@@ -456,7 +356,8 @@ type locHit struct {
 }
 
 // locate reads the selected pages as numbered lines and asks the LLM for the
-// exact lines, then verifies each quote against the stored lines (§6.5 4–5).
+// exact lines, then verifies each quote against the stored lines (§6.6
+// steps 3–5).
 func (s *Service) locate(ctx context.Context, b *budget, req types.SearchRequest, sels []*docSel) ([]types.SearchHit, int, bool, error) {
 	cfg := s.cfg.Search
 	type pageText struct {
@@ -569,7 +470,7 @@ func (s *Service) locate(ctx context.Context, b *budget, req types.SearchRequest
 				continue
 			}
 			hit := hitFromLine(pt.sel.doc, pt.page, lines, h.Quote, boxes, clamp01(h.Relevance), "", pt.sel.paths[pt.page])
-			hit.Reason, hit.Via, hit.WikiPages = h.Reason, "raw", pt.sel.wiki
+			hit.Reason, hit.Via = h.Reason, "tree"
 			if seen[hit.CitationID] {
 				continue
 			}
@@ -582,7 +483,7 @@ func (s *Service) locate(ctx context.Context, b *budget, req types.SearchRequest
 
 // verifyQuote accepts a hit only when its quote appears in the cited lines
 // (or, if the line numbers are off, in neighbouring lines of the same page),
-// which drops hallucinated answers (§6.5 step 5).
+// which drops hallucinated answers (§6.6 step 5).
 func verifyQuote(h locHit, lines map[int]postgres.PageLine, minSim float64) ([]int, []types.BBox, bool) {
 	q := textutil.Normalize(strings.TrimSuffix(h.Quote, " (?)"))
 	if q == "" {
@@ -638,116 +539,10 @@ func clamp01(v float64) float64 {
 	return min(v, 1)
 }
 
-// ---- tree view helpers ----
-
-type treeView struct {
-	root     types.TreeNode
-	byShort  map[string]types.TreeNode
-	byID     map[uuid.UUID]types.TreeNode
-	children map[uuid.UUID][]types.TreeNode
-}
-
-func newTreeView(nodes []types.TreeNode) *treeView {
-	t := &treeView{byShort: map[string]types.TreeNode{}, byID: map[uuid.UUID]types.TreeNode{}, children: map[uuid.UUID][]types.TreeNode{}}
-	for _, n := range nodes {
-		t.byShort[n.ShortID], t.byID[n.ID] = n, n
-		if n.ParentID == nil {
-			t.root = n
-		} else {
-			t.children[*n.ParentID] = append(t.children[*n.ParentID], n)
-		}
-	}
-	for k := range t.children {
-		c := t.children[k]
-		sort.Slice(c, func(i, j int) bool { return c[i].Ord < c[j].Ord })
-	}
-	return t
-}
-
-// initialView shows the levels under top breadth-first while the rendering
-// fits the budget.
-func (t *treeView) initialView(top uuid.UUID, budget int) map[string]bool {
-	shown := map[string]bool{}
-	level := t.children[top]
-	used := 0
-	for len(level) > 0 {
-		cost := 0
-		for _, n := range level {
-			cost += textutil.EstimateTokens(n.Title+n.Summary) + 8
-		}
-		if used > 0 && used+cost > budget {
-			break
-		}
-		used += cost
-		var next []types.TreeNode
-		for _, n := range level {
-			shown[n.ShortID] = true
-			next = append(next, t.children[n.ID]...)
-		}
-		level = next
-	}
-	return shown
-}
-
-func (t *treeView) render(sb *strings.Builder, top uuid.UUID, shown map[string]bool) {
-	var walk func(parent uuid.UUID, depth int)
-	walk = func(parent uuid.UUID, depth int) {
-		for _, n := range t.children[parent] {
-			if !shown[n.ShortID] {
-				continue
-			}
-			more := ""
-			if len(t.children[n.ID]) > 0 && !anyShown(t.children[n.ID], shown) {
-				more = " +"
-			}
-			fmt.Fprintf(sb, "%s[%s] %s (tr. %d–%d)%s — %s\n", strings.Repeat("  ", depth), n.ShortID, n.Title, n.PageStart, n.PageEnd, more, textutil.Truncate(n.Summary, 300))
-			walk(n.ID, depth+1)
-		}
-	}
-	walk(top, 0)
-}
-
-func anyShown(ns []types.TreeNode, shown map[string]bool) bool {
-	for _, n := range ns {
-		if shown[n.ShortID] {
-			return true
-		}
-	}
-	return false
-}
-
-func (t *treeView) path(n types.TreeNode) []string {
-	var p []string
-	for n.ParentID != nil {
-		p = append([]string{n.Title}, p...)
-		n = t.byID[*n.ParentID]
-	}
-	return p
-}
-
-// pathForPage returns the path of the deepest node containing page.
-func (t *treeView) pathForPage(page int) []string {
-	n := t.root
-	for {
-		var next *types.TreeNode
-		for _, c := range t.children[n.ID] {
-			if page >= c.PageStart && page <= c.PageEnd {
-				c := c
-				next = &c
-				break
-			}
-		}
-		if next == nil {
-			return t.path(n)
-		}
-		n = *next
-	}
-}
-
 // ---- other Searcher methods ----
 
 // FindInDocument searches one document, grouped by page, optionally within
-// pages from..to (§6.7).
+// pages from..to (§6.8).
 func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, query, mode string, from, to int) ([]types.PageSearchHit, error) {
 	d, err := s.st.Documents.GetOwned(ctx, docID, owner)
 	if err != nil {
@@ -767,7 +562,7 @@ func (s *Service) FindInDocument(ctx context.Context, owner, docID uuid.UUID, qu
 		ph.Score = max(ph.Score, score)
 	}
 	if mode == types.SearchReasoning && s.searchLLM != nil {
-		// Steps 3–5 on this file only: the wiki index is filtered to it.
+		// Steps 2–5 on the tree of this file only.
 		resp, err := s.Search(ctx, types.SearchRequest{Query: query, CaseIDs: []uuid.UUID{d.CaseID}, DocumentIDs: []uuid.UUID{d.ID}, Mode: mode,
 			PageFrom: from, PageTo: to, OwnerID: owner, TopK: 20})
 		if err != nil {

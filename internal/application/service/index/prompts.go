@@ -21,35 +21,20 @@ You get the first characters of each page. Group consecutive pages that belong t
 Reply with JSON only: {"toc": [{"title": "...", "page_start": <int>}, ...]} ordered by page_start, 3 to 30 entries, titles in the document's language.`
 
 const promptSelectCases = `You pick which cases (file sets identified by a code) most likely contain the answer to a question.
-You get the question and a list of cases: [c<n>] code — overview.
+You get the question and a list of cases: [c<n>] code (title) — number of files and their titles {case metadata}.
 Reply with JSON only: {"select": [{"case": "c<n>"}]} with at most %d cases, best first. Select none if nothing fits.`
 
-const promptWikiIndex = `You search a case wiki index to find where the answer to a question is.
-The index lists the wiki pages of one case by category, one line each: [w<n>] title — summary. Source pages (one per file) also list
-branches of the file's table of contents as [w<n>.n<k>] title (pages). Lines marked "(chưa vào wiki)" are files not yet
-compiled into the wiki: read them from source. "Keyword hints" show cheap full-text matches; they are hints, not answers.
-Reply with JSON only: {"wiki": ["w<n>", ...], "raw": [{"ref": "w<n>" | "w<n>.n<k>"}], "expand": ["w<n>", ...]}
-- wiki: wiki pages to read (at most %d), best first. Entity and topic pages summarize several files with footnotes.
-- raw: files or branches to read from source directly, e.g. when the question asks for an exact clause, number or table,
-  or when the file is not in the wiki yet. Prefer the most specific branch.
-- expand: source pages whose collapsed branches you need to see first (marked "+").
-Select nothing when the index clearly does not cover the question.`
-
-const promptWikiRead = `You answer a question from the wiki pages of a case. Every fact of a page carries footnotes [^n];
-the footnote list gives the file, page, lines and the verbatim quote each footnote points to.
-Reply with JSON only: {"hits": [{"page": "w<n>", "footnotes": [<n>, ...], "relevance": <0..1>}],
-                       "raw": [{"ref": "w<n>.n<k>" | "w<n>"} | {"footnote": "w<n>#<n>"}]}
-- hits: the footnotes whose quotes answer the question (cite the fewest).
-- raw: where to read the source instead: when footnotes are marked stale, an attribute is marked conflict, the answer
-  needs context around a footnote, or the pages do not contain it.
-Return {"hits": [], "raw": []} when neither the pages nor their sources help.`
-
-const promptSelectNodes = `You navigate a document's table of contents to find where the answer to a question is.
-Each line is: [node_id] title (pages) — summary. Indentation shows nesting.
-Reply with JSON only: {"select": [{"node_id": "..."}], "expand": ["node_id", ...], "answerable": true|false}
-- select: the most specific nodes that likely contain the answer (at most 5).
-- expand: nodes whose children you need to see before deciding (only nodes marked with +).
-- answerable: false if this document clearly does not contain the answer.`
+const promptTreeSearch = `You find where the answer to a question is in the files of one case by reading tables of contents, the way a reader
+uses the contents page of a binder. No page text is shown yet: only file cards and table-of-contents nodes.
+- A file line is: [d<n>] file name (pages) {metadata} — summary.
+- A node line is: [d<n>.n<k>] title (tr. pages) — summary. Indentation shows nesting; " +" or "(+k mục, expand X)" marks
+  children that are not shown yet.
+- "Keyword hints" show cheap full-text matches; they are hints, not answers.
+Reply with JSON only: {"select": [{"node": "d<n>.n<k>" | "d<n>"}], "expand": ["d<n>" | "d<n>.n<k>", ...]}
+- select: the most specific nodes (or a whole small file) whose pages likely hold the answer, at most %d, best first.
+  Their pages will be read next.
+- expand: files or nodes whose hidden children you must see before choosing. Do not expand what you can already select.
+Return {"select": [], "expand": []} when nothing fits.`
 
 const promptLocate = `You find the exact lines that answer a question in document pages.
 Pages are given as <page n="..." doc="..."> blocks; every line starts with its id [L<number>].
