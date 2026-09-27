@@ -1,5 +1,9 @@
-// Low-level HTTP client: connection settings, JSON requests, authenticated
-// blob URLs for page images, multipart upload with progress, and SSE parsing.
+// Low-level HTTP client: connection settings, the sign-in session (JWT access
+// + refresh token, refreshed transparently on 401 like WeKnora's web UI),
+// JSON requests, authenticated blob URLs for page images, multipart upload
+// with progress, and SSE parsing.
+
+import type { AuthTokens, AuthUser } from "./types";
 
 const store = {
   get(k: string, d = ""): string {
@@ -27,12 +31,6 @@ export const settings = {
   set base(v: string) {
     store.set("base", v.trim() || null);
   },
-  get key(): string {
-    return store.get("key", import.meta.env.VITE_API_KEY ?? "");
-  },
-  set key(v: string) {
-    store.set("key", v.trim() || null);
-  },
   get kb(): string {
     return store.get("kb");
   },
@@ -48,6 +46,68 @@ export const settings = {
   },
 };
 
+// The signed-in session, kept in localStorage like WeKnora's web UI.
+export const session = {
+  get token(): string {
+    return store.get("token");
+  },
+  get refresh(): string {
+    return store.get("refresh");
+  },
+  get user(): AuthUser | null {
+    try {
+      return JSON.parse(store.get("user", "null"));
+    } catch {
+      return null;
+    }
+  },
+  save(t: AuthTokens) {
+    store.set("token", t.access_token);
+    store.set("refresh", t.refresh_token);
+    store.set("user", JSON.stringify(t.user));
+  },
+  setUser(u: AuthUser) {
+    store.set("user", JSON.stringify(u));
+  },
+  clear() {
+    store.set("token", null);
+    store.set("refresh", null);
+    store.set("user", null);
+  },
+};
+
+// Fired when the session can no longer be refreshed; the app goes to /login.
+export const SIGNED_OUT_EVENT = "bp:signed-out";
+
+// One refresh at a time: parallel 401s wait for the same rotation (the
+// refresh token is single use).
+let refreshing: Promise<boolean> | null = null;
+export function refreshSession(): Promise<boolean> {
+  if (!session.refresh) return Promise.resolve(false);
+  refreshing ??= (async () => {
+    try {
+      const res = await fetch(url("/auth/refresh"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: session.refresh }),
+      });
+      if (!res.ok) return false;
+      session.save(await res.json());
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
+}
+
+function signedOut() {
+  session.clear();
+  window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -58,7 +118,7 @@ export class ApiError extends Error {
 
 function headers(extra?: Record<string, string>): Record<string, string> {
   const h: Record<string, string> = { ...extra };
-  if (settings.key) h["x-api-key"] = settings.key;
+  if (session.token) h["Authorization"] = "Bearer " + session.token;
   return h;
 }
 
@@ -71,7 +131,7 @@ async function errorOf(res: Response): Promise<ApiError> {
   } catch {
     /* not JSON */
   }
-  if (res.status === 401) msg = "API key không hợp lệ hoặc thiếu — mở phần Kết nối để nhập key. (" + msg + ")";
+  if (res.status === 401 && !res.url.includes("/auth/")) msg = "Phiên đăng nhập đã hết hạn — hãy đăng nhập lại.";
   return new ApiError(res.status, msg);
 }
 
@@ -82,20 +142,28 @@ export interface RequestOptions {
   body?: unknown;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  // Public sign-in calls: a 401 is a wrong password, not an expired session.
+  noRefresh?: boolean;
 }
 
 async function send(path: string, opt: RequestOptions = {}): Promise<Response> {
-  const init: RequestInit = { method: opt.method ?? (opt.body !== undefined ? "POST" : "GET"), headers: headers(opt.headers), signal: opt.signal };
-  if (opt.body !== undefined) {
-    init.body = JSON.stringify(opt.body);
-    (init.headers as Record<string, string>)["Content-Type"] = "application/json";
-  }
-  let res: Response;
-  try {
-    res = await fetch(url(path), init);
-  } catch (e) {
-    if ((e as Error).name === "AbortError") throw e;
-    throw new ApiError(0, `Không kết nối được máy chủ ${settings.base || location.origin} (${(e as Error).message})`);
+  const attempt = async () => {
+    const init: RequestInit = { method: opt.method ?? (opt.body !== undefined ? "POST" : "GET"), headers: headers(opt.headers), signal: opt.signal };
+    if (opt.body !== undefined) {
+      init.body = JSON.stringify(opt.body);
+      (init.headers as Record<string, string>)["Content-Type"] = "application/json";
+    }
+    try {
+      return await fetch(url(path), init);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") throw e;
+      throw new ApiError(0, `Không kết nối được máy chủ ${settings.base || location.origin} (${(e as Error).message})`);
+    }
+  };
+  let res = await attempt();
+  if (res.status === 401 && !opt.noRefresh && session.token) {
+    if (await refreshSession()) res = await attempt();
+    if (res.status === 401) signedOut();
   }
   if (!res.ok) throw await errorOf(res);
   return res;
@@ -139,13 +207,23 @@ export async function download(path: string, fileName: string) {
 }
 
 // Multipart upload with progress (fetch has no upload progress events).
-export function uploadForm<T>(path: string, form: FormData, onProgress?: (p: number) => void): Promise<T> {
+export function uploadForm<T>(path: string, form: FormData, onProgress?: (p: number) => void, retried = false): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url(path));
-    if (settings.key) xhr.setRequestHeader("x-api-key", settings.key);
+    if (session.token) xhr.setRequestHeader("Authorization", "Bearer " + session.token);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
     xhr.onload = () => {
+      if (xhr.status === 401 && !retried && session.token) {
+        refreshSession().then((ok) => {
+          if (ok) uploadForm<T>(path, form, onProgress, true).then(resolve, reject);
+          else {
+            signedOut();
+            reject(new ApiError(401, "Phiên đăng nhập đã hết hạn — hãy đăng nhập lại."));
+          }
+        });
+        return;
+      }
       let j: unknown = null;
       try {
         j = JSON.parse(xhr.responseText);

@@ -338,3 +338,40 @@ export interface WikiGraph {
   nodes: { slug: string; title: string; kind: WikiKind; entity_type?: string }[];
   edges: WikiLink[];
 }
+
+// ---------------------------------------------------------------- auth
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  auth_provider: string;
+  has_password: boolean;
+  is_admin: boolean;
+  last_login_at?: string;
+  created_at: string;
+}
+
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_at: string;
+  user: AuthUser;
+  is_new_user?: boolean;
+}
+
+export interface AuthConfig {
+  registration_enabled: boolean;
+  password_min_length: number;
+  oidc: { enabled: boolean; display_name?: string };
+  auth_bypass: boolean;
+}
+
+export interface APIKey {
+  id: string;
+  name: string;
+  prefix: string;
+  last_used_at?: string;
+  revoked_at?: string;
+  created_at: string;
+}

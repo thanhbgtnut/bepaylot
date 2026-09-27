@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -26,12 +25,8 @@ func (h *Handlers) isAdmin(c *app.RequestContext) bool {
 	if !ok {
 		return false
 	}
-	if h.Config != nil {
-		for _, e := range h.Config.HTTP.AdminEmails {
-			if strings.EqualFold(strings.TrimSpace(e), u.Email) {
-				return true
-			}
-		}
+	if h.adminEmail(u) {
+		return true
 	}
 	c.JSON(consts.StatusForbidden, dto.NewError("permission_error", "admin only (http.admin_emails)"))
 	return false

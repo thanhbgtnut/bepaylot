@@ -59,7 +59,7 @@ func (r *APIKeysRepo) Verify(ctx context.Context, plaintext string) (types.User,
 	prefix := plaintext[:min(len(plaintext), 16)]
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT k.id, k.key_hash, u.id, u.email, u.name, u.created_at
+		SELECT k.id, k.key_hash, u.id, u.email, u.name, u.auth_provider, u.password_hash <> '', u.is_active, u.last_login_at, u.created_at
 		FROM api_keys k JOIN users u ON u.id = k.user_id
 		WHERE k.key_prefix = $1 AND k.revoked_at IS NULL`, prefix)
 	if err != nil {
@@ -71,7 +71,7 @@ func (r *APIKeysRepo) Verify(ctx context.Context, plaintext string) (types.User,
 		var keyID uuid.UUID
 		var hash []byte
 		var u types.User
-		if err := rows.Scan(&keyID, &hash, &u.ID, &u.Email, &u.Name, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&keyID, &hash, &u.ID, &u.Email, &u.Name, &u.AuthProvider, &u.HasPassword, &u.IsActive, &u.LastLoginAt, &u.CreatedAt); err != nil {
 			return types.User{}, err
 		}
 		if subtle.ConstantTimeCompare(hash, sum[:]) == 1 {
@@ -99,4 +99,36 @@ func (r *APIKeysRepo) Get(ctx context.Context, id uuid.UUID) (types.APIKey, erro
 	}
 	k.LastUsedAt, k.RevokedAt = lastUsed, revoked
 	return k, nil
+}
+
+// List returns a user's keys, newest first (revoked ones included).
+func (r *APIKeysRepo) List(ctx context.Context, userID uuid.UUID) ([]types.APIKey, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_id, name, key_prefix, last_used_at, revoked_at, created_at
+		FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("apikeys.List: %w", err)
+	}
+	defer rows.Close()
+	out := []types.APIKey{}
+	for rows.Next() {
+		var k types.APIKey
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.Prefix, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// Revoke revokes one of a user's keys; a key of another user is ErrNotFound.
+func (r *APIKeysRepo) Revoke(ctx context.Context, userID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`, id, userID)
+	if err != nil {
+		return fmt.Errorf("apikeys.Revoke: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

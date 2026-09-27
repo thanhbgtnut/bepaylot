@@ -51,7 +51,12 @@ export function UploadDialog({
   const [result, setResult] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const add = (list: FileList | null) => list && setFiles((f) => [...f, ...Array.from(list)]);
+  // Copy the FileList now: it is live, and clearing the input (so the same
+  // file can be picked again) empties it before a deferred state update runs.
+  const add = (list: FileList | null) => {
+    const picked = list ? Array.from(list) : [];
+    if (picked.length) setFiles((f) => [...f, ...picked]);
+  };
   const setRow = (id: number, patch: Partial<MetaRow>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
   const submit = async () => {
@@ -153,18 +158,19 @@ export function UploadDialog({
           Kéo thả file vào đây hoặc <span className="font-medium text-accent">chọn từ máy</span>
         </div>
         <div className="text-xs text-subtle">PDF, ảnh scan (JPG, PNG, TIFF) · chọn được nhiều file</div>
-        <input
-          ref={input}
-          type="file"
-          multiple
-          hidden
-          accept=".pdf,image/*"
-          onChange={(e) => {
-            add(e.target.files);
-            e.target.value = "";
-          }}
-        />
       </div>
+      {/* Outside the drop zone, so its click does not bubble back into it. */}
+      <input
+        ref={input}
+        type="file"
+        multiple
+        hidden
+        accept=".pdf,image/*"
+        onChange={(e) => {
+          add(e.target.files);
+          e.target.value = "";
+        }}
+      />
 
       {files.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-line">

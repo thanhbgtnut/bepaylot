@@ -11,6 +11,7 @@ import (
 
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/wiki"
@@ -27,6 +28,7 @@ import (
 // Handlers bundles the dependencies for every HTTP handler.
 type Handlers struct {
 	Store    *postgres.Store
+	Auth     *auth.Service // sign-in (JWT + OIDC); nil makes /v1/auth answer 503
 	Agent    *agent.Agent
 	Registry *llm.Registry
 	Skills   *skills.Service

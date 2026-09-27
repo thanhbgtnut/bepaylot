@@ -1,9 +1,16 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.6 · Ngày: 2026-09-27 · Trạng thái: đã triển khai P0–P3, P5 (case), P6 (LLM Wiki, API hiển thị wiki) và giao diện wiki/graph/case trong `frontend/`, xem §13, §15
+> Phiên bản: 0.7 · Ngày: 2026-09-27 · Trạng thái: đã triển khai P0–P3, P5 (case), P6 (LLM Wiki, API hiển thị wiki), P7 (đăng nhập/đăng ký + OIDC) và giao diện wiki/graph/case trong `frontend/`, xem §13, §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless: LLM Wiki + PageIndex) → Hiển thị wiki hồ sơ (kiểu DeepWiki) → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
+>
+> Thay đổi so với 0.6 (U28):
+> - **Đăng nhập / đăng ký như WeKnora, có OIDC** (§10.8). Trang `/login` của frontend: đăng nhập email + mật khẩu, tự tạo tài khoản, nút "Đăng nhập bằng …" khi bật OIDC. Không còn phải chạy `make seed` để dùng giao diện web.
+> - Cơ chế xác thực theo WeKnora: mật khẩu bcrypt; access token JWT HS256 (24h) + refresh token (7 ngày, dùng một lần); mọi token đã cấp được ghi (dạng hash) vào `auth_tokens` để đăng xuất, đổi mật khẩu và xoay refresh token thu hồi được. Middleware thử `Authorization: Bearer <JWT>` trước, rồi tới API key.
+> - OIDC theo luồng redirect của WeKnora: backend đổi code, state ký HMAC + cookie nonce gắn với trình duyệt, kiểm ID token (issuer, audience, nonce), tìm user theo subject rồi email (tạo mới nếu chưa có), trả về frontend qua `#oidc_result=`.
+> - API key cho script tạo trong web (Tài khoản → API key) hoặc `POST /v1/auth/api-keys`; `cmd/seed` thành tuỳ chọn (thêm `-password`).
+> - Migration `0015_auth.sql` (§9.2); cấu hình `auth.*` (§11).
 >
 > Thay đổi so với 0.5 (U26):
 > - **Ingest wiki tiết kiệm LLM.** LLM chỉ còn một việc: **trích xuất** entity, thuộc tính và quan hệ dạng JSON ngắn, **1 lần gọi mỗi file** (file lớn: 1 lần mỗi phần). Mọi trang wiki (trang nguồn, trang entity, `overview`) được **dựng bằng code** từ cây mục lục đã có lúc index (§6.5) và từ kết quả trích xuất (§6.8). Trước đó mỗi file tốn khoảng 8–16 lần gọi vì LLM viết văn xuôi cho từng trang.
@@ -67,6 +74,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U25 | **Xoá dữ liệu graph/wiki cũ** để dựng lại theo cách mới | còn hiệu lực | §9.2 (migration `0014`) |
 | U26 | Tối ưu LLM Wiki theo đúng concept của Karpathy và **giảm số lần gọi LLM**: cây mục lục đã có sau khi index thì dùng luôn để hiển thị wiki theo nội dung, không để LLM dựng lại; LLM chỉ trích xuất entity/quan hệ (JSON có cấu trúc, không viết văn xuôi), code gộp theo định danh, kiểm với dòng gốc và dựng trang; gỡ file hay làm mới trang không gọi LLM | còn hiệu lực | §6.6–6.9 |
 | U27 | Index và tóm tắt theo đúng `index.md` của LLM Wiki (catalog mọi trang: link, tóm tắt một dòng, metadata như ngày hoặc số nguồn, nhóm theo loại; đọc index trước rồi mới đi vào trang), tóm tắt được làm ngay khi ingest; **tối ưu token**, tránh token thừa; dữ liệu vẫn lưu Postgres | còn hiệu lực | §6.6, §6.8, §6.10, §8.2 |
+| U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6 | §10.8, §9.2 (migration `0015`), §11, frontend `/login` |
 
 ## 1. Yêu cầu chung
 
@@ -87,6 +95,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R13 | Entity, quan hệ, schema cấu hình được | Wiki schema YAML theo loại case: loại entity + định danh, quan hệ có kiểu, quy ước viết (§6.7) |
 | R14 | Hiển thị wiki theo hồ sơ kiểu DeepWiki | Module 3: UI ba cột, chú thích tới trang gốc + bbox, sơ đồ liên kết, Nhật ký, Kiểm tra, "Hỏi về hồ sơ" (§7) |
 | R15 | Dữ liệu graph/wiki cũ bị xoá | Migration `0014` xoá bảng cũ và ingest lại mọi file (§9.2) |
+| R16 | Người dùng tự đăng ký / đăng nhập trên web, có OIDC, xác thực như WeKnora | `service/auth`: bcrypt + JWT access/refresh lưu vết trong `auth_tokens`, OIDC authorization code (backend đổi code, state ký + cookie nonce); middleware Bearer JWT → API key; trang `/login` hai cột; API key tự phục vụ (§10.8) |
 
 ### 1.1 Tech stack
 
@@ -101,6 +110,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | Render PDF | `klippa-app/go-pdfium` (PDFium), chế độ multi-process | render + encode JPEG trong process con, giới hạn CPU/RAM, lấy text layer có toạ độ (§5.7) |
 | Ảnh | Go stdlib `image/*`, `golang.org/x/image` (tiff, draw) | file ảnh upload trực tiếp |
 | OCR mặc định | TurboOCR (`POST /ocr/raw`) | engine built-in, cắm thêm engine khác qua interface |
+| Xác thực | `golang-jwt/jwt/v5` (HS256), `golang.org/x/crypto/bcrypt`, `coreos/go-oidc/v3` + `golang.org/x/oauth2` | JWT access/refresh, mật khẩu, OIDC (§10.8) |
 | OCR bằng VLM | endpoint OpenAI-compatible (`/v1/chat/completions`), mặc định `allenai/olmocr-2-7b` (vLLM, LM Studio…) | engine `turboocr_vlm`: TurboOCR cho layout, VLM đọc text từng vùng (§5.9) |
 
 ---
@@ -145,7 +155,7 @@ Phân lớp theo WeKnora. Mỗi module nghiệp vụ là **một package con** t
 cmd/
   server/              main: --role=api|worker|all, -migrate-only
   pdfium-worker/       process con của go-pdfium (multi_threaded), do pool render sinh ra
-  seed/                tạo user + API key (giữ nguyên)
+  seed/                (tuỳ chọn) tạo user + API key cho script/CI; -password đặt mật khẩu đăng nhập
   skills-sync/         đồng bộ skills (giữ nguyên)
 configs/
   config.yaml
@@ -166,11 +176,12 @@ internal/
     task.go            đăng ký asynq handler + khởi tạo các server theo pool
   handler/             HTTP handler mỏng: bind → gọi service → trả DTO
     dto/
-  middleware/          auth, request-id, recover, CORS; asynq: dead-letter, tracing, background ctx
+  middleware/          auth (Bearer JWT → API key), request-id, recover, CORS; asynq: dead-letter, tracing, background ctx
   types/               entity, enum, payload task, cấu hình queue
     interfaces/        interface của service & repository (hợp đồng giữa các module)
   application/
     service/
+      auth/            đăng ký, đăng nhập, JWT access/refresh, đổi mật khẩu, OIDC (§10.8)
       cases/           case và loại case (§6.2); tên `cases` vì `case` là từ khoá Go
       document/        Module 1: điều phối parse (split → page → assemble)
       index/           Module 2: section, cây mục lục + tóm tắt (PageIndex), FTS, metadata, search (index wiki → trang wiki → gốc)
@@ -1433,7 +1444,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 
 ### 9.2 DDL
 
-Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql` (cuối khối DDL); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
+Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql` (cuối khối DDL); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
 
 ```sql
 -- 0006_extensions.sql
@@ -1879,6 +1890,27 @@ CREATE TABLE wiki_lint_issues (
   resolved_at timestamptz, resolved_by uuid
 );
 CREATE INDEX wiki_lint_open_idx ON wiki_lint_issues (case_id, status, kind);
+
+-- 0015_auth.sql (§10.8): đăng nhập như WeKnora
+ALTER TABLE users
+  ADD COLUMN password_hash text NOT NULL DEFAULT '',   -- bcrypt; '' = không có mật khẩu (OIDC, seed)
+  ADD COLUMN auth_provider text NOT NULL DEFAULT 'local',  -- local | tên provider OIDC (auth.oidc.provider)
+  ADD COLUMN oidc_subject  text,                       -- claim sub của ID token
+  ADD COLUMN is_active     boolean NOT NULL DEFAULT true,
+  ADD COLUMN last_login_at timestamptz,
+  ADD COLUMN updated_at    timestamptz NOT NULL DEFAULT now();
+CREATE UNIQUE INDEX users_oidc_subject_idx ON users (auth_provider, oidc_subject) WHERE oidc_subject IS NOT NULL;
+
+CREATE TABLE auth_tokens (                              -- mọi JWT đã cấp; token chỉ hợp lệ khi dòng còn sống
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash bytea NOT NULL UNIQUE,                     -- sha256(JWT); không lưu JWT (WeKnora lưu nguyên văn)
+  token_type text NOT NULL CHECK (token_type IN ('access','refresh')),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz
+);
+
+CREATE TABLE app_secrets (name text PRIMARY KEY, value text NOT NULL);  -- khoá ký JWT khi auth.jwt_secret rỗng
 ```
 
 Ghi chú:
@@ -1892,7 +1924,7 @@ Ghi chú:
 
 ## 10. API (Hertz, prefix `/v1`)
 
-Auth giữ nguyên (`x-api-key` hoặc `Authorization: Bearer`). Lỗi trả theo dạng hiện có. Mọi endpoint đều có annotation swag (`make test` đang chặn route thiếu annotation).
+Mọi route `/v1/*` cần xác thực (§10.8): `Authorization: Bearer <access token JWT>` từ đăng nhập, hoặc API key (`x-api-key`, hay API key làm giá trị Bearer). Riêng các route đăng nhập công khai của §10.8 không cần. Lỗi trả theo dạng hiện có. Mọi endpoint đều có annotation swag (`make test` đang chặn route thiếu annotation).
 
 ### 10.1 Knowledge base và case
 
@@ -2001,6 +2033,53 @@ Chỉ user có email nằm trong `http.admin_emails` được gọi (rỗng = t�
 
 Các module tài liệu (§10.1–10.6) trả `503` nếu server chưa cấu hình được chúng (thiếu S3 hoặc Redis ở môi trường không phải development).
 
+### 10.8 Xác thực và tài khoản (theo WeKnora)
+
+Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, hoặc đăng nhập qua OIDC, thay cho việc tạo user + API key bằng `make seed`. Cơ chế bám theo WeKnora (`internal/application/service/user.go`, `internal/handler/auth.go`, `frontend/src/views/auth/Login.vue` của WeKnora).
+
+**Cơ chế** (`internal/application/service/auth`):
+
+- **Tài khoản local:** email (chuẩn hoá chữ thường, là định danh đăng nhập) + mật khẩu bcrypt, dài `auth.password_min_length`–72 byte. Đăng ký tắt được (`auth.registration: closed`). Sai email và sai mật khẩu trả cùng một thông báo, cùng thời gian xử lý.
+- **Token:** đăng ký, đăng nhập, refresh, đổi mật khẩu và OIDC đều trả một cặp JWT HS256: access token (`typ=access`, mặc định 24h) và refresh token (`typ=refresh`, mặc định 7 ngày). Claim `sub` = user id, `jti` ngẫu nhiên. Khoá ký là `auth.jwt_secret`; để trống thì server sinh một lần và giữ trong `app_secrets`, nên phiên không mất khi restart và mọi replica API dùng chung.
+- **Thu hồi:** mọi token đã cấp được ghi `sha256` vào `auth_tokens`. Token chỉ được chấp nhận khi chữ ký, hạn, `typ` đúng **và** dòng còn sống. Refresh token dùng một lần (xoay vòng). Đăng xuất thu hồi **mọi** token của user (như WeKnora), chấp nhận cả token đã hết hạn. Đổi mật khẩu thu hồi mọi token rồi cấp cặp mới cho phiên hiện tại. Token hết hạn quá một ngày bị dọn khi có người đăng nhập.
+- **Middleware:** `Authorization: Bearer` có dạng JWT → kiểm access token; không có thì dùng API key (`x-api-key`, hoặc API key làm giá trị Bearer). User bị khoá (`is_active=false`) bị từ chối. `http.auth_bypass` (dev) giữ nguyên.
+- **API key:** mỗi user tự tạo/thu hồi API key cho script (`sk-bepaylot-…`, lưu hash, plaintext chỉ trả một lần). WeKnora gắn API key theo tenant; bepaylot không có tenant nên gắn theo user (§15.2).
+- **OIDC** (authorization code, backend đổi code, như WeKnora):
+  1. Trang login điều hướng tới `GET /v1/auth/oidc/start?return_to=<origin>/login`. Server sinh nonce, đặt cookie `bp_oidc_nonce` (HttpOnly, SameSite=Lax, 10 phút, path `/v1/auth/oidc`) và `state = base64url(JSON{nonce, redirect_uri, return_to, iat}) "." HMAC-SHA256`, rồi `302` tới provider (scope mặc định `openid email profile`, kèm `nonce`).
+  2. Provider gọi `GET /v1/auth/oidc/callback?code&state`. Server kiểm chữ ký và tuổi của state (≤ 10 phút), so nonce với cookie (chặn chèn code của người khác), xoá cookie, đổi code, kiểm ID token (issuer, audience, chữ ký JWKS, nonce). Email lấy từ ID token, thiếu thì từ userinfo; `email_verified=false` bị từ chối.
+  3. User được tìm theo `(auth_provider, oidc_subject)`, rồi theo email (gắn subject vào tài khoản có sẵn), chưa có thì tạo mới không mật khẩu. OIDC luôn tạo được tài khoản kể cả khi `registration: closed` (như WeKnora; provider quyết định ai được vào).
+  4. Trình duyệt về `return_to` (hoặc `auth.oidc.frontend_url`, mặc định `/login`) với `#oidc_result=<base64url JSON giống /auth/login>` hoặc `#oidc_error=<mã>&oidc_error_description=…`. `return_to` chỉ được nhận khi cùng origin với request, nằm trong `http.cors_origins`, trùng `frontend_url`, hoặc là localhost ở môi trường development với `cors_origins` rỗng, để token không lộ ra site khác.
+  - Callback URL đăng ký ở provider là `auth.oidc.redirect_url`, rỗng thì suy từ `X-Forwarded-Proto/Host` (hoặc `Host`) của request. Khi dev, Vite proxy gửi `X-Forwarded-Host`, nên URL là `http://localhost:5174/v1/auth/oidc/callback`.
+
+**API** (không cần xác thực):
+
+| Method | Path | Mô tả |
+|---|---|---|
+| GET | `/auth/config` | `{registration_enabled, password_min_length, oidc: {enabled, display_name}, auth_bypass}` cho trang login |
+| POST | `/auth/register` | `{email, name?, password}` → `201` cặp token + `user` (`is_new_user=true`); email trùng → `409`; đăng ký tắt → `403`; mật khẩu ngắn/email sai → `400` |
+| POST | `/auth/login` | `{email, password}` → `{access_token, refresh_token, token_type: "Bearer", expires_at, user}`; sai → `401`; tài khoản khoá → `403` |
+| POST | `/auth/refresh` | `{refresh_token}` → cặp mới; token cũ bị thu hồi; dùng lại → `401` |
+| POST | `/auth/logout` | Bearer access token hoặc `{refresh_token}` → thu hồi mọi token của user |
+| GET | `/auth/oidc/start` | `?return_to=` → `302` tới provider; OIDC tắt → `404`; `return_to` không tin cậy → `400` |
+| GET | `/auth/oidc/callback` | `302` về frontend với `#oidc_result=` / `#oidc_error=` |
+
+**API** (cần xác thực):
+
+| Method | Path | Mô tả |
+|---|---|---|
+| GET | `/auth/me` | user hiện tại (`id, email, name, auth_provider, has_password, is_admin, last_login_at`) |
+| POST | `/auth/change-password` | `{current_password, new_password}`; tài khoản chưa có mật khẩu (OIDC, seed) để trống `current_password` để đặt mật khẩu → cặp token mới |
+| GET / POST | `/auth/api-keys` | danh sách key (không có plaintext) / tạo key `{name}` → `201 {key, api_key}` |
+| DELETE | `/auth/api-keys/:id` | thu hồi key của chính user; key của người khác → `404` |
+
+**Frontend** (`frontend/src/pages/auth/LoginPage.tsx`, `components/AuthContext.tsx`, `api/client.ts`):
+
+- Bố cục như trang login của WeKnora, theo phong cách Material 3 của app: nền có các nút tri thức trôi và đường nối; cột trái giới thiệu sản phẩm (tiêu đề, mô tả, thẻ tính năng, carousel tự chạy); cột phải là thẻ form chuyển giữa **Đăng nhập** và **Tạo tài khoản** (họ tên, email, mật khẩu, nhập lại), nút "Tạo tài khoản" (khi đăng ký mở), nút "Đăng nhập bằng <display_name>" (khi bật OIDC), danh sách tính năng. Màn hình hẹp chỉ còn thẻ form. Góc phải có nút đổi địa chỉ máy chủ API.
+- Token và user lưu ở `localStorage` (`bp.token`, `bp.refresh`, `bp.user`), gửi `Authorization: Bearer`. Gặp `401` thì gọi `/auth/refresh` một lần (các request song song chờ chung một lần refresh vì refresh token dùng một lần) rồi gửi lại; refresh hỏng thì xoá phiên và về `/login`, sau khi đăng nhập quay lại trang đang xem.
+- Mọi route trừ `/login` nằm sau `RequireAuth`; knowledge base chỉ được tải sau khi đăng nhập. Server chạy `auth_bypass` thì bỏ qua trang login.
+- Avatar góc phải: menu Tài khoản / Đăng xuất. Hộp thoại **Tài khoản**: thông tin user, đổi/đặt mật khẩu, tạo/thu hồi API key (plaintext hiện một lần, có nút sao chép), địa chỉ máy chủ API.
+- Tài khoản tạo trước khi có trang login (ví dụ `dev@bepaylot.local` của `make seed`) chưa có mật khẩu: đặt bằng `make seed EMAIL=… PASSWORD=…` để đăng nhập và giữ dữ liệu cũ.
+
 ---
 
 ## 11. Cấu hình (`configs/config.yaml`, phần bổ sung)
@@ -2008,6 +2087,23 @@ Các module tài liệu (§10.1–10.6) trả `503` nếu server chưa cấu hì
 Ngoài các khoá dưới đây, `http.admin_emails` (danh sách email) mở quyền gọi API admin §10.6. Mọi giá trị đều ghi đè được bằng biến môi trường `${...}` (xem `.env.example`).
 
 ```yaml
+auth:                               # đăng nhập (§10.8)
+  jwt_secret: ${BEPAYLOT_JWT_SECRET}        # rỗng = sinh một lần, lưu app_secrets
+  access_ttl: 24h
+  refresh_ttl: 168h
+  registration: ${BEPAYLOT_REGISTRATION}    # open (mặc định) | closed
+  password_min_length: 8
+  oidc:
+    enabled: ${BEPAYLOT_OIDC_ENABLED}
+    provider: oidc                          # ghi vào users.auth_provider
+    display_name: ${BEPAYLOT_OIDC_DISPLAY_NAME}   # nhãn nút, mặc định SSO
+    issuer_url: ${BEPAYLOT_OIDC_ISSUER_URL}       # discovery: <issuer>/.well-known/openid-configuration
+    client_id: ${BEPAYLOT_OIDC_CLIENT_ID}
+    client_secret: ${BEPAYLOT_OIDC_CLIENT_SECRET}
+    scopes: [openid, email, profile]        # BEPAYLOT_OIDC_SCOPES (phân cách dấu phẩy) ghi đè
+    redirect_url: ${BEPAYLOT_OIDC_REDIRECT_URL}   # rỗng = <origin của request>/v1/auth/oidc/callback
+    frontend_url: ${BEPAYLOT_OIDC_FRONTEND_URL}   # rỗng = /login cùng origin
+
 redis:
   addr: ${REDIS_ADDR}
   db: 0
@@ -2152,6 +2248,9 @@ wiki:                               # LLM Wiki của case (§6.6–6.9)
 | N23 | **Wiki không lọt case.** Hai case có cùng một công ty thì có hai trang riêng. `wiki_*` trong session case A không đọc được trang của case B; API trả `404` cho slug của case khác | integration test |
 | N24 | **Lint.** Phát hiện đủ 6 loại issue trên dữ liệu mẫu; chỉ tự sửa liên kết, index và đánh dấu stale, không sửa nội dung | integration test |
 | N25 | Migration `0014` chạy trên DB có dữ liệu 0.4: bảng graph/wiki cũ bị xoá, mọi file `completed` chuyển `wiki_status=pending` và được ingest lại | migration test trên `bepaylot_test` |
+| N26 | **Phiên đăng nhập.** Đăng ký → dùng ngay; email trùng `409`; sai mật khẩu `401`; refresh token dùng lại `401`; refresh token không dùng làm access token được; sau đổi mật khẩu và sau đăng xuất mọi token cũ bị từ chối; khoá JWT sinh tự động giống nhau giữa hai instance | `service/auth` test tích hợp |
+| N27 | **OIDC.** Với provider giả (discovery, JWKS, token endpoint): đăng nhập lần đầu tạo user `auth_provider=oidc` không mật khẩu, lần sau ra cùng user theo subject; callback thiếu/sai cookie nonce, state bị sửa hoặc quá 10 phút đều bị từ chối; `email_verified=false` bị từ chối; `return_to` ngoài origin tin cậy → `400` | `service/auth` test tích hợp + chạy tay qua Vite |
+| N28 | **Web không cần seed.** Trên DB mới: mở app → `/login` → tạo tài khoản → vào `/documents`; access token hỏng thì client tự refresh; đăng xuất về `/login`; nút OIDC đăng nhập được | chạy trình duyệt (Playwright) |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2159,7 +2258,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 
 ## 13. Lộ trình triển khai
 
-| Giai đoạn | Nội dung | Kết quả kiểm được | Trạng thái (2026-09-26) |
+| Giai đoạn | Nội dung | Kết quả kiểm được | Trạng thái (2026-09-27) |
 |---|---|---|---|
 | **P0** | Refactor cấu trúc theo §3 (không đổi hành vi), thêm Redis/asynq, S3 storage, container, dead-letter | toàn bộ test agent hiện có pass | ✅ xong |
 | **P1** | Module 1 Parser: S3 storage, go-pdfium render (multi-process), text layer/PDF/A, split → render → ocr → assemble, TurboOCR, locate, API §10.2 | N1–N5, N7, N7a–c | ✅ xong; chưa chạy với TurboOCR thật và PDFium native (§15.3) |
@@ -2168,6 +2267,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P4** | `pdf_mode=auto`, DOCX/XLSX qua convert sang PDF, TIFF nhiều trang, ParadeDB tuỳ chọn, UI highlight | — | chưa làm |
 | **P5** | Case (§6.2, §8.1): migration `0013_cases.sql` + chuyển dữ liệu cũ; package `service/cases` + repository; nạp `configs/case_types`; upload theo `case_code`, chống trùng theo case; search/`DocumentInCase` theo `case_id`; session gắn `case_id` (thay `kb_ids`/`kb_filter` trong `internal/agent/knowledge.go`, `internal/tools/knowledge.go`, `handler/session_kb.go`); prompt `<case>`; đính kèm chat vào case; kiểm tra citation theo case; API §10.1, §10.7; frontend chọn case | N11, N13, N16–N18 | ✅ backend + agent xong (test tích hợp N13, N16–N18); chưa có: kiểm citation trước khi stream, frontend chọn case |
 | **P6** | LLM Wiki theo case (§6.6–6.10): migration `0014` (xoá graph/wiki cũ), `wiki_schemas` + chuyển `ho_kinh_doanh`, `wiki:ingest` / `retract` / `lint` / `index`, search index → trang wiki → gốc, tool `wiki_*`, bỏ `service/graph` và tool `graph_*`. Module 3 (§7): API §10.4–10.5, UI ba cột kiểu DeepWiki + Nhật ký + Kiểm tra + sơ đồ liên kết trong `frontend/` | N19–N25 | ✅ backend, API §10.4–10.5 và tool `wiki_*` xong (test tích hợp N20–N23, một phần N24; N19 cần LLM thật); chưa có UI trong `frontend/` |
+| **P7** | Đăng nhập như WeKnora (§10.8): migration `0015_auth.sql`, `service/auth` (bcrypt, JWT access/refresh + `auth_tokens`, OIDC), middleware Bearer JWT → API key, API `/v1/auth/*`, trang `/login` + hộp thoại Tài khoản trong `frontend/`, `cmd/seed -password` | N26–N28 | ✅ xong (test tích hợp N26–N27, chạy trình duyệt N28 với provider OIDC giả); chưa thử với provider OIDC thật |
 
 ---
 
@@ -2189,7 +2289,9 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Q2 | TurboOCR có cần auth, và giới hạn concurrency/throughput thực tế là bao nhiêu? | Không auth; `ocr` pool = 8 |
 | Q3 | Có OCR cả trang PDF đã có text layer không? | Có (`ocr_all`), text layer dùng để sửa/bổ sung; `auto` (bỏ qua OCR) ở P4 |
 | Q10 | Môi trường chạy worker có cho phép cgo + `libpdfium` (Linux x64/arm64) không? | Có; chế độ WebAssembly chỉ cho dev/CI |
-| Q4 | Có cần multi-tenant/phân quyền KB giữa nhiều user không? | KB thuộc một `owner_id`, chưa có chia sẻ |
+| Q4 | Có cần multi-tenant/phân quyền KB giữa nhiều user không? | KB thuộc một `owner_id`, chưa có chia sẻ. WeKnora tạo một tenant cho mỗi người đăng ký; bepaylot giữ mô hình owner theo user (U28 không đổi phân quyền) |
+| Q19 | Có cần giới hạn tần suất đăng nhập/đăng ký, khoá tài khoản sau nhiều lần sai, xác minh email, quên mật khẩu không? | Chưa; đặt sau reverse proxy có rate limit. Khoá tài khoản bằng `users.is_active=false` (SQL) |
+| Q20 | OIDC có cần nhiều provider cùng lúc, hoặc ánh xạ nhóm/role từ provider sang `admin_emails` không? | Một provider; quyền admin vẫn theo `http.admin_emails` |
 | Q5 | ~~Graph chỉ dùng Postgres hay cần Cypher?~~ **Đã chốt** (0.5): không còn graph riêng; liên kết wiki trong Postgres (`wiki_links`) | — |
 | Q6 | Giữ ảnh trang đã render bao lâu? | Giữ vĩnh viễn (cần cho highlight/reparse); cấu hình TTL sau |
 | Q7 | Định dạng ngoài PDF/ảnh cần ngay ở P1 không? | Không, để P4 |
@@ -2211,9 +2313,10 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | LLM Wiki của case: ingest (1 lần gọi trích xuất mỗi file/phần, kiểm giá trị với dòng gốc, giải định danh bằng code, mâu thuẫn, đề xuất cho trang sửa tay), trang dựng bằng code (`render.go`), retract/refresh không gọi LLM, lint, index, log, schema, API Module 3 (sửa tay, ghi chú, lịch sử, xuất, SSE) | `internal/application/service/wiki`, `configs/wiki_schemas`, `repository/postgres/wiki.go` |
 | Tool agent `wiki_*`, `kb_*` theo `CaseScope`; session gắn `case_id`; section prompt `<case>` | `internal/tools/knowledge.go`, `internal/agent`, `internal/handler/session_case.go` |
 | Kiểm tra quy tắc module (§3.3) | `internal/archtest` |
-| Migrations `0006`–`0014` | `migrations/postgres` |
+| Migrations `0006`–`0015` | `migrations/postgres` |
 | Callback hoàn thành document (tuỳ chọn, retry + lưu trạng thái, §4.7) | `internal/webhook`, `internal/application/service/document/callback.go` |
 | Worker PDFium native (cgo, tag `pdfium_cgo`), Docker target `api` / `worker` | `cmd/pdfium-worker`, `deploy/Dockerfile` |
+| Đăng nhập / đăng ký / OIDC như WeKnora, API key tự phục vụ (§10.8) | `internal/application/service/auth`, `internal/handler/auth.go`, `internal/middleware`, `repository/postgres/{users,authtokens,apikeys}.go`, `migrations/postgres/0015_auth.sql`, `frontend/src/pages/auth`, `frontend/src/components/AuthContext.tsx` |
 
 ### 15.2 Khác biệt so với spec (có chủ đích, có thể bổ sung sau)
 
@@ -2236,6 +2339,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Reparse toàn bộ vẫn search được bản cũ (§9.2) | Trong lúc reparse, document không search được cho tới khi gen mới index xong (bảng `document_pages` khoá theo trang, không theo gen) |
 | `GET /sections/:id` (§10.3) | Thay bằng `GET /citations?id=` |
 | Metadata `bulk-update` dạng `metadata:bulk-update` | `metadata/bulk-update` (Hertz không định tuyến tốt dấu `:` trong path) |
+| Xác thực giống WeKnora (U28) | Khác WeKnora ở: không có tenant (dữ liệu và API key theo user); `auth_tokens` lưu hash thay vì JWT nguyên văn; đăng ký trả luôn cặp token (WeKnora trả user rồi bắt đăng nhập); khoá JWT rỗng thì lưu trong DB thay vì sinh ngẫu nhiên mỗi lần chạy; OIDC dùng `go-oidc` (kiểm ID token qua JWKS + nonce); chưa có rate limit, mật khẩu phức tạp, mời thành viên, `auto-setup` (Q19) |
 
 ### 15.3 Chưa kiểm được
 
@@ -2244,6 +2348,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 - **VLM (§5.9):** đã chạy thật với `allenai/olmocr-2-7b` qua LM Studio (`localhost:1234`) trên một trang dựng lại từ layout mẫu. Kết quả: 30 vùng, 0 lỗi, ≈ 59 s/trang ở `max_concurrency: 4`, 28 block được refine, 38/38 dòng VLM định vị được offset. Chưa chạy chung với TurboOCR thật và chưa đo trên bản scan thật.
 - **Chạy đầu-cuối (25/09/2026):** Postgres + Redis + MinIO (Docker), `role=all`, engine `turboocr_vlm`, VLM olmOCR-2-7B (LM Studio), LLM `inclusionai/ling-3.0-flash-fin:free` qua OpenRouter. TurboOCR không truy cập được, nên cả hai trang của một PDF scan đi nhánh `full_page` (≈ 70 s cho 2 trang). Cây mục lục dựng từ tiêu đề nhận diện được (Hợp đồng → Điều 1–4). Search `keyword` và `reasoning` (1 lần gọi LLM) trả đúng dòng bảng "Tiền thuê hằng tháng | 12.000.000" và dòng thời hạn thuê. Agent gọi `kb_list_documents` (lọc `ma_ho_so`), `kb_search`, `kb_read_pages` rồi trả lời có trích dẫn `p/l`. Model `inclusionai/ling-3.0-flash` (trả phí) chưa chạy được vì key hết hạn mức. Chế độ cả trang đọc kém hơn chế độ theo vùng (ví dụ "TÍNH" thay cho "TÌNH") vì ảnh bị thu về 1288 px.
 - **LLM thật:** tóm tắt cây, search `reasoning` qua wiki và ingest wiki mới chạy với LLM kịch bản (`testkit.ScriptLLM`) và LLM giả. Chưa đo N19 (token/câu hỏi) và N15. Ingest kiểu 0.5 (LLM viết từng trang) đã thử với `qwythos-9b` qua LM Studio: khoảng 12 token/s, 1–4 phút mỗi lần gọi, 8–16 lần gọi mỗi file, quá chậm; đây là lý do của U26. Ingest 0.6 (1 lần gọi trích xuất mỗi file) chưa đo với model thật.
+- **Đăng nhập (27/09/2026):** server thật + Vite trên DB dev: đăng ký, đăng nhập sai/đúng, `/auth/me`, gọi `/v1/kbs` bằng JWT và bằng API key (header và Bearer), thu hồi key, refresh xoay vòng, đổi mật khẩu, đăng xuất; OIDC với provider giả (tự duyệt) qua Vite cùng origin và khi API khác origin, replay callback bị chặn, `return_to` lạ → 400. Trình duyệt (Playwright): chặn route → `/login`, đăng ký, token hỏng → tự refresh, tạo API key, đăng xuất, đăng nhập OIDC. **Chưa thử với provider OIDC thật** (Keycloak, Google…).
 - **Chạy đầu-cuối bản 0.5 (27/09/2026):** server thật trên một database mới, LLM `fake`, OCR không truy cập được: tạo KB, upload theo `case_code= rt112233` + `case_type=thanh_toan` (case `RT112233` tự tạo, mã sai → 422, thiếu `case_code` → 422), PDF có text layer xong ở `completed`; ingest bằng LLM giả lỗi 5 lần rồi rơi về trang nguồn mẫu; index wiki, trang có slug chứa `/`, lịch sử, log, xuất zip, search `keyword` theo case, session gắn case qua `metadata.case_id`, `kb_ids` → 422, slug của case khác → 404. Migration `0014` chưa chạy trên DB dev có dữ liệu thật (sẽ xoá dữ liệu graph/wiki cũ theo U25).
 
 ### 15.4 Môi trường dev và test
@@ -2251,4 +2356,5 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 - `make up` chạy Postgres, Redis, MinIO (`deploy/docker-compose.yml`). Cổng mặc định: Postgres 5433 (đổi bằng `BEPAYLOT_PG_PORT`), Redis 6380, MinIO 9110/9111.
 - Test tích hợp **chỉ** chạy trên database riêng `bepaylot_test` (`make test-db`), không bao giờ trỏ `TEST_DATABASE_URL` vào DB dev.
 - Mẫu biến môi trường: `.env.example`.
+- Không cần `make seed` để dùng web: tạo tài khoản ở `/login`. `make seed` còn dùng cho script/CI; `make seed EMAIL=… PASSWORD=…` đặt mật khẩu cho tài khoản có sẵn.
 

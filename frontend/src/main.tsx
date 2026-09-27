@@ -4,9 +4,11 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import "./index.css";
 import { AppProvider } from "./components/AppContext";
+import { AuthProvider, RequireAuth } from "./components/AuthContext";
 import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/toast";
 import { Loading } from "./components/ui";
+import { LoginPage } from "./pages/auth/LoginPage";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { DocumentDetail } from "./pages/documents/DocumentDetail";
 import { DocumentsPage } from "./pages/documents/DocumentsPage";
@@ -16,8 +18,16 @@ import { WikiPage } from "./pages/wiki/WikiPage";
 const GraphPage = lazy(() => import("./pages/graph/GraphPage").then((m) => ({ default: m.GraphPage })));
 
 const router = createBrowserRouter([
+  { path: "/login", element: <LoginPage /> },
   {
-    element: <Layout />,
+    // Everything else needs a session; knowledge bases load only after sign-in.
+    element: (
+      <RequireAuth>
+        <AppProvider>
+          <Layout />
+        </AppProvider>
+      </RequireAuth>
+    ),
     children: [
       { index: true, element: <Navigate to="/documents" replace /> },
       { path: "documents", element: <DocumentsPage /> },
@@ -42,9 +52,9 @@ const router = createBrowserRouter([
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ToastProvider>
-      <AppProvider>
+      <AuthProvider>
         <RouterProvider router={router} />
-      </AppProvider>
+      </AuthProvider>
     </ToastProvider>
   </StrictMode>,
 );

@@ -1,10 +1,12 @@
 // Package middleware holds the Hertz middleware: request id, structured access
-// logging, panic recovery, permissive CORS, and x-api-key authentication.
+// logging, panic recovery, permissive CORS, and authentication (JWT access
+// tokens from the login page, or API keys).
 package middleware
 
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -99,7 +101,7 @@ func CORS(origins []string) app.HandlerFunc {
 			c.Header("Vary", "Origin")
 		}
 		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, x-api-key, anthropic-version, X-Request-Id")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, anthropic-version, X-Request-Id")
 		if string(c.Method()) == consts.MethodOptions {
 			c.AbortWithStatus(consts.StatusNoContent)
 			return
@@ -108,14 +110,26 @@ func CORS(origins []string) app.HandlerFunc {
 	}
 }
 
-// Auth resolves the x-api-key header (falling back to Authorization: Bearer) to
-// a user and stores it in the request context.
+// TokenAuthenticator resolves a JWT access token (issued by /v1/auth/login,
+// /register, /refresh or the OIDC callback) to its user.
+type TokenAuthenticator interface {
+	Authenticate(ctx context.Context, token string) (types.User, error)
+}
+
+// looksLikeJWT tells a JWT from an API key in an Authorization header.
+func looksLikeJWT(s string) bool {
+	return strings.HasPrefix(s, "eyJ") && strings.Count(s, ".") == 2
+}
+
+// Auth authenticates a request the way WeKnora does: an `Authorization:
+// Bearer <JWT>` access token first, else an API key (`x-api-key`, or an API
+// key sent as the Bearer value). The user is stored in the request context.
 //
 // When bypass is true (BEPAYLOT_AUTH_BYPASS=true), the check is skipped
 // entirely: every request is treated as a fixed local dev user, created once
 // on first use. This is a local-development convenience only — never enable
 // it in a deployed environment, since it removes all request authentication.
-func Auth(keys *postgres.APIKeysRepo, users *postgres.UsersRepo, bypass bool) app.HandlerFunc {
+func Auth(tokens TokenAuthenticator, keys *postgres.APIKeysRepo, users *postgres.UsersRepo, bypass bool) app.HandlerFunc {
 	var (
 		once    sync.Once
 		devUser types.User
@@ -133,19 +147,36 @@ func Auth(keys *postgres.APIKeysRepo, users *postgres.UsersRepo, bypass bool) ap
 			return
 		}
 
+		var bearer string
+		if b := string(c.GetHeader("Authorization")); len(b) > 7 && strings.EqualFold(b[:7], "Bearer ") {
+			bearer = strings.TrimSpace(b[7:])
+		}
+		if bearer != "" && looksLikeJWT(bearer) && tokens != nil {
+			user, err := tokens.Authenticate(ctx, bearer)
+			if err != nil {
+				c.AbortWithStatusJSON(consts.StatusUnauthorized, dto.NewError("authentication_error", "invalid or expired access token"))
+				return
+			}
+			c.Set(string(keyUser), user)
+			c.Next(ctx)
+			return
+		}
+
 		raw := string(c.GetHeader("x-api-key"))
 		if raw == "" {
-			if b := string(c.GetHeader("Authorization")); len(b) > 7 && b[:7] == "Bearer " {
-				raw = b[7:]
-			}
+			raw = bearer
 		}
 		if raw == "" {
-			c.AbortWithStatusJSON(consts.StatusUnauthorized, dto.NewError("authentication_error", "missing x-api-key header"))
+			c.AbortWithStatusJSON(consts.StatusUnauthorized, dto.NewError("authentication_error", "sign in, or send an x-api-key header"))
 			return
 		}
 		user, err := keys.Verify(ctx, raw)
 		if err != nil {
 			c.AbortWithStatusJSON(consts.StatusUnauthorized, dto.NewError("authentication_error", "invalid api key"))
+			return
+		}
+		if !user.IsActive {
+			c.AbortWithStatusJSON(consts.StatusForbidden, dto.NewError("permission_error", "account disabled"))
 			return
 		}
 		c.Set(string(keyUser), user)

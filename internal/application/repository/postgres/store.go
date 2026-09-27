@@ -20,6 +20,7 @@ type Store struct {
 	Pool     *pgxpool.Pool
 	Users    *UsersRepo
 	APIKeys  *APIKeysRepo
+	Tokens   *AuthTokensRepo
 	Sessions *SessionsRepo
 	Messages *MessagesRepo
 	Skills   *SkillsRepo
@@ -71,6 +72,7 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		Pool:     pool,
 		Users:    &UsersRepo{pool},
 		APIKeys:  &APIKeysRepo{pool},
+		Tokens:   &AuthTokensRepo{pool},
 		Sessions: &SessionsRepo{pool},
 		Messages: &MessagesRepo{pool},
 		Skills:   &SkillsRepo{pool},

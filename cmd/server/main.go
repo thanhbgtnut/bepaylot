@@ -25,7 +25,7 @@ import (
 // @securityDefinitions.apikey  ApiKeyAuth
 // @in                          header
 // @name                        x-api-key
-// @description                 An API key issued by `cmd/seed`. `Authorization: Bearer <key>` is also accepted.
+// @description                 An API key (created in the web UI under Tài khoản → API key, via POST /v1/auth/api-keys, or by `cmd/seed`). Alternatively send `Authorization: Bearer <access token>` from POST /v1/auth/login; an API key is also accepted as the Bearer value.
 
 func main() {
 	cfgPath := flag.String("config", "configs/config.yaml", "path to config file")

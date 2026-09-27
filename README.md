@@ -24,12 +24,13 @@ wiki, rồi trang gốc. Agent làm việc trong đúng một case, trích dẫn
 4. [Tìm kiếm](#tìm-kiếm)
 5. [Case và wiki](#case-và-wiki)
 6. [Agent](#agent)
-7. [API](#api)
-8. [Cấu hình](#cấu-hình)
-9. [Triển khai](#triển-khai)
-10. [Phát triển](#phát-triển)
-11. [Cấu trúc thư mục](#cấu-trúc-thư-mục)
-12. [Giới hạn hiện tại](#giới-hạn-hiện-tại)
+7. [Tích hợp từ backend khác (ví dụ BPM Payment)](#tích-hợp-từ-backend-khác-ví-dụ-bpm-payment)
+8. [API](#api)
+9. [Cấu hình](#cấu-hình)
+10. [Triển khai](#triển-khai)
+11. [Phát triển](#phát-triển)
+12. [Cấu trúc thư mục](#cấu-trúc-thư-mục)
+13. [Giới hạn hiện tại](#giới-hạn-hiện-tại)
 
 ---
 
@@ -57,11 +58,15 @@ cp .env.example .env     # xem mục Cấu hình để sửa
 make up                  # Postgres :5433, Redis :6380, MinIO :9110 (console :9111)
 make migrate             # tạo schema
 make skills-sync         # nạp skills/ vào Postgres
-make seed                # in ra một API key, copy lại
 make run                 # API + worker trên :8080
+make run-web             # (tuỳ chọn) API + giao diện web :5174
 ```
 
 `make dev` gộp `up`, `migrate` và `run`. Swagger UI ở `http://localhost:8080/docs`.
+
+**Đăng nhập** giống WeKnora: mở `http://localhost:5174/login`, bấm **Tạo tài khoản** (email + mật khẩu) rồi dùng luôn; không cần `make seed` nữa. Server cấp access token JWT (24h) và refresh token (7 ngày, dùng một lần), web tự làm mới khi hết hạn. Bật OIDC (Keycloak, Google, Azure AD…) bằng các biến `BEPAYLOT_OIDC_*` trong `.env`; trang đăng nhập sẽ hiện nút "Đăng nhập bằng …". `BEPAYLOT_REGISTRATION=closed` tắt tự đăng ký.
+
+API key cho script/curl tạo trong web (**Tài khoản → API key**) hoặc `POST /v1/auth/api-keys`. `make seed` vẫn còn cho CI; `make seed EMAIL=dev@bepaylot.local PASSWORD='…'` đặt mật khẩu cho một tài khoản có sẵn (ví dụ dữ liệu tạo trước khi có trang đăng nhập) để đăng nhập được.
 
 > Nếu cổng 5433 đã bị dùng (ví dụ bởi WeKnora), đặt `BEPAYLOT_PG_PORT=5434` khi `make up`
 > và sửa cổng trong `DATABASE_URL` tương ứng.
@@ -69,7 +74,7 @@ make run                 # API + worker trên :8080
 ### Thử với tài liệu
 
 ```bash
-KEY=sk-bepaylot-...      # từ make seed
+KEY=sk-bepaylot-...      # tạo ở Tài khoản → API key (hoặc make seed)
 H=(-H "x-api-key: $KEY")
 
 # 1. Tạo knowledge base
@@ -316,9 +321,199 @@ X-Bepaylot-Signature: sha256=…           # HMAC-SHA256(secret, timestamp + "."
 - Reparse cũng gửi callback khi xong; có thể đổi URL bằng `callback_url` trong body reparse.
 - URL phải là `http(s)`. Mặc định chặn đích nội bộ (localhost, IP private) để tránh SSRF. Khi dev, đặt `BEPAYLOT_CALLBACK_ALLOW_PRIVATE=true`.
 
+## Tích hợp từ backend khác (ví dụ BPM Payment)
+
+Ví dụ: hệ thống **BPM Payment** cần kiểm tra tuân thủ giữa các tài liệu trong cùng một bộ hồ sơ
+thanh toán (hợp đồng, hoá đơn, uỷ nhiệm chi…). Kiểm tra tuân thủ ở đây chỉ là **đặt câu hỏi cho
+agent**: agent tự tìm đúng tài liệu và thông tin trong bộ hồ sơ đó rồi trả lời, kèm trích dẫn tới
+trang và dòng gốc. BePaylot không giữ danh sách rule: BPM tự viết rule trong câu hỏi.
+
+Mỗi bộ hồ sơ của BPM là một **case** trong BePaylot, định danh bằng mã hồ sơ của BPM (ví dụ
+`RT112233`). Agent chỉ tìm trong đúng case được chỉ định, không bao giờ lấy nhầm tài liệu của hồ sơ khác.
+
+```mermaid
+sequenceDiagram
+  participant BPM as BPM Payment
+  participant BP as BePaylot API
+  participant W as Worker (OCR, index, wiki)
+  Note over BPM,BP: Làm một lần: tài khoản dịch vụ, API key, knowledge base
+  BPM->>BP: POST /v1/kbs/{kb}/documents (case_code, file…, callback_url)
+  BP-->>BPM: 202 {case.id, documents[]}
+  BP->>W: parse → index → ingest wiki
+  W-->>BPM: POST callback_url (document.completed) cho từng file
+  Note over BPM: Đủ callback cho mọi file của hồ sơ → gọi kiểm tra
+  BPM->>BP: POST /v1/messages (metadata.case = {kb_id, code}, câu hỏi tuân thủ)
+  BP-->>BPM: câu trả lời (JSON do BPM yêu cầu) + citation_id
+```
+
+Trong các ví dụ dưới đây, `BP=https://bepaylot.example.com` là địa chỉ API.
+
+### Bước 1. Lấy key tích hợp (làm một lần)
+
+BPM gọi API bằng **API key** gửi trong header `x-api-key` (hoặc `Authorization: Bearer <key>`).
+Key gắn với một tài khoản, và **dữ liệu thuộc về tài khoản đó**: knowledge base, hồ sơ và phiên hỏi đáp
+mà BPM tạo chỉ tài khoản đó nhìn thấy. Vì vậy nên dùng một **tài khoản dịch vụ riêng** cho BPM, ví dụ
+`bpm-payment@congty.vn`. Muốn xem hồ sơ của BPM trên web thì đăng nhập bằng chính tài khoản này.
+
+**Cách 1 — trên web:** mở `/login`, **Tạo tài khoản** `bpm-payment@congty.vn` (hoặc đăng nhập bằng
+tài khoản đó), vào avatar → **Tài khoản & API key** → **Tạo key**, đặt tên `bpm-payment`. Key
+`sk-bepaylot-…` chỉ hiện **một lần**; lưu vào kho secret của BPM.
+
+**Cách 2 — bằng API:**
+
+```bash
+# Tạo tài khoản dịch vụ (khi auth.registration=open); tài khoản đã có thì dùng /v1/auth/login
+TOKEN=$(curl -s $BP/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"email":"bpm-payment@congty.vn","name":"BPM Payment","password":"<mật-khẩu-mạnh>"}' | jq -r .access_token)
+
+# Tạo API key; api_key chỉ trả về một lần
+curl -s $BP/v1/auth/api-keys -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"bpm-payment"}' | jq -r .api_key
+```
+
+Nếu đăng ký đang tắt (`BEPAYLOT_REGISTRATION=closed`), quản trị viên tạo tài khoản và key bằng
+`make seed EMAIL=bpm-payment@congty.vn PASSWORD='…'`.
+
+- Xoay key: tạo key mới, cập nhật BPM, rồi thu hồi key cũ (`DELETE /v1/auth/api-keys/{id}`, hoặc nút **Thu hồi** trên web).
+- Key sai hoặc đã thu hồi → `401`.
+
+**Tạo knowledge base** (một lần) và lưu `kb_id` vào cấu hình BPM:
+
+```bash
+KEY=sk-bepaylot-...
+curl -s $BP/v1/kbs -H "x-api-key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"BPM Payment"}' | jq -r .id          # → KB
+```
+
+### Bước 2. Upload file của bộ hồ sơ
+
+Upload vào `POST /v1/kbs/{kb_id}/documents` (multipart). Mỗi lần gọi có thể gửi một hoặc nhiều file;
+bổ sung file sau này thì gọi lại với cùng `case_code`.
+
+| Field | Bắt buộc | Ý nghĩa |
+|---|---|---|
+| `case_code` | có | mã hồ sơ của BPM. Hồ sơ chưa có thì được tạo; đã có thì file được thêm vào |
+| `case_type` | không | loại hồ sơ (`GET /v1/case-types`). `thanh_toan` yêu cầu mã dạng `RT` + 6 số, mã sai → `422`. Mã của BPM khác mẫu này thì bỏ trống (loại `default`, mã tự do) hoặc thêm loại mới trong `configs/case_types/` |
+| `file` | có | lặp lại cho từng file (PDF, JPG, PNG, TIFF) |
+| `files_metadata` | không | JSON theo tên file, ví dụ `{"hd.pdf":{"loai_giay_to":"HOP_DONG"}}`. Giúp agent lọc tài liệu nhanh hơn, nhưng không bắt buộc |
+| `metadata` | không | JSON áp cho mọi file của lần gọi, ví dụ `{"ma_giao_dich_bpm":"TX-9981"}` |
+| `callback_url` | nên có | URL của BPM nhận `POST` khi **từng file** xử lý xong (xem Bước 3) |
+
+```bash
+curl -s $BP/v1/kbs/$KB/documents -H "x-api-key: $KEY" \
+  -F 'case_code=RT112233' -F 'case_type=thanh_toan' \
+  -F 'files_metadata={"hd.pdf":{"loai_giay_to":"HOP_DONG"},"hoadon.pdf":{"loai_giay_to":"HOA_DON"},"unc.pdf":{"loai_giay_to":"UNC"}}' \
+  -F 'callback_url=https://bpm.congty.vn/hooks/bepaylot' \
+  -F file=@hd.pdf -F file=@hoadon.pdf -F file=@unc.pdf
+```
+
+Trả về `202` ngay, file được xử lý ở nền:
+
+```json
+{"batch_id": "…",
+ "case": {"id": "5b0c…", "code": "RT112233", "case_type": "thanh_toan", "created": true},
+ "documents": [{"document_id": "a1f…", "file_name": "hd.pdf", "status": "queued", "callback_url": "https://bpm…"}, …],
+ "rejected": []}
+```
+
+BPM nên lưu `case.id` và danh sách `document_id` theo hồ sơ.
+
+- Gửi lại cùng một file vào cùng hồ sơ không tạo bản sao: document trả về có `duplicate: true`.
+- Hồ sơ đã đóng (`PATCH /v1/cases/{id}` với `{"status":"closed"}`) không nhận thêm file → `409`.
+- Thay một file: `DELETE /v1/documents/{id}` rồi upload file mới.
+
+### Bước 3. Biết khi nào hồ sơ sẵn sàng để kiểm tra
+
+Mỗi file đi qua OCR → index → wiki (vài giây đến vài phút tuỳ số trang). Nên gọi kiểm tra tuân thủ khi
+**mọi file của hồ sơ đã xử lý xong**. Có hai cách để biết:
+
+**Cách A — callback (khuyến nghị).** BePaylot gửi `POST callback_url` cho **từng file** khi file kết
+thúc, *sau khi* file đã được đưa vào wiki của hồ sơ (chi tiết body và chữ ký ở mục
+[Callback khi hoàn thành](#callback-khi-hoàn-thành)):
+
+```json
+{"event": "document.completed",
+ "document": {"id": "a1f…", "case_id": "5b0c…", "case_code": "RT112233", "file_name": "hd.pdf",
+              "status": "completed", "wiki_status": "done", "pages_failed": 0, …}}
+```
+
+BPM đánh dấu file đã xong theo `document.id`. Khi **mọi** `document_id` của hồ sơ đã nhận callback thì
+gọi Bước 4.
+
+| `event` | Xử lý ở BPM |
+|---|---|
+| `document.completed` | file xong, dùng được |
+| `document.partial` | một số trang lỗi (`pages_failed > 0`), phần còn lại vẫn dùng được; có thể vẫn kiểm tra và ghi chú, hoặc gọi `POST /v1/documents/{id}/reparse` |
+| `document.failed` | file không đọc được (file hỏng, OCR lỗi…): báo người dùng tải lại, không nên kết luận tuân thủ khi thiếu file |
+| `document.cancelled` | file bị huỷ |
+
+- Endpoint của BPM phải trả **2xx**; lỗi khác sẽ được gửi lại theo backoff, tối đa 8 lần. Chống trùng bằng header `X-Bepaylot-Delivery`.
+- Khi đặt `BEPAYLOT_CALLBACK_SECRET`, xác thực bằng `X-Bepaylot-Signature = sha256=HMAC-SHA256(secret, X-Bepaylot-Timestamp + "." + body)`.
+- Mất callback thì xem lại bằng `GET /v1/documents/{id}/callbacks`, gửi lại bằng `POST /v1/documents/{id}/callbacks/retry`.
+
+**Cách B — hỏi trạng thái (polling).** Khi BPM không nhận được callback (mạng nội bộ một chiều), gọi
+định kỳ (ví dụ 10–30 s):
+
+```bash
+curl -s $BP/v1/cases/$CASE -H "x-api-key: $KEY" | jq '{documents, wiki_status, wiki_docs_covered}'
+# {"documents": {"completed": 3}, "wiki_status": "ready", "wiki_docs_covered": 3}
+```
+
+Hồ sơ sẵn sàng khi `documents` chỉ còn các trạng thái kết thúc (`completed`, `partial`, `failed`,
+`cancelled`; không còn `queued`, `parsing`, `indexing`, `enriching`…) **và** `wiki_status` khác
+`building`. Tra trạng thái theo mã, không cần `case.id`: `GET /v1/kbs/{kb_id}/cases/by-code/RT112233`.
+
+### Bước 4. Hỏi agent để kiểm tra tuân thủ
+
+Gọi `POST /v1/messages` (định dạng Anthropic Messages API) và chỉ định hồ sơ bằng
+`metadata.case = {kb_id, code}` (hoặc `metadata.case_id`). Agent chỉ thấy tài liệu của hồ sơ này: nó
+tự đọc wiki của hồ sơ, tìm đúng tài liệu và trang, đọc dòng gốc rồi trả lời. `model` và `max_tokens`
+không bắt buộc (mặc định theo cấu hình server).
+
+```bash
+curl -s $BP/v1/messages -H "x-api-key: $KEY" -H 'Content-Type: application/json' --max-time 300 -d '{
+  "metadata": {"case": {"kb_id": "'$KB'", "code": "RT112233"}},
+  "messages": [{"role": "user", "content": "Kiểm tra tuân thủ bộ hồ sơ thanh toán này theo các rule sau:\n1. Số tiền trên uỷ nhiệm chi bằng số tiền trên hoá đơn.\n2. Bên thụ hưởng trên uỷ nhiệm chi trùng với bên bán trên hợp đồng.\n3. Số tài khoản thụ hưởng trên uỷ nhiệm chi trùng với số tài khoản trên hợp đồng.\n4. Ngày hoá đơn nằm trong thời hạn hợp đồng.\nChỉ trả về JSON, không giải thích thêm: {\"results\":[{\"rule\":1,\"status\":\"PASS|FAIL|NOT_FOUND\",\"reason\":\"...\",\"values\":{},\"citations\":[\"citation_id\"]}],\"overall\":\"PASS|FAIL|NEED_REVIEW\"}"}]
+}'
+```
+
+Câu trả lời (rút gọn):
+
+```json
+{"id": "msg_…", "type": "message", "role": "assistant", "stop_reason": "end_turn",
+ "content": [
+   {"type": "text", "text": "{\"results\":[{\"rule\":1,\"status\":\"PASS\",\"reason\":\"UNC 125.000.000 = hoá đơn 125.000.000\",\"values\":{\"unc\":125000000,\"hoa_don\":125000000},\"citations\":[\"doc:a1f…:p1:l12\",\"doc:c3d…:p1:l20\"]}, …],\"overall\":\"PASS\"}"}],
+ "session": {"id": "9e2…", "case_id": "5b0c…", …}}
+```
+
+- **Lấy kết quả:** nối các block `type: "text"` trong `content` rồi parse JSON theo định dạng BPM đã yêu cầu. Nên yêu cầu thêm trạng thái `NOT_FOUND` / `NEED_REVIEW` cho trường hợp agent không tìm thấy thông tin, thay vì để agent đoán.
+- **Trích dẫn:** mỗi `citation_id` (`doc:<document_id>:p<trang>:l<dòng>`) giải được ra nguyên văn dòng gốc và toạ độ bằng `GET /v1/citations?id=…`, ảnh trang ở `GET /v1/documents/{id}/pages/{n}/image`. BPM dùng chúng để hiện bằng chứng cho người duyệt.
+- **Phiên hỏi đáp:** mỗi lần gọi không có `metadata.session_id` tạo một phiên mới gắn với hồ sơ (`session.id`). Muốn hỏi tiếp trong cùng ngữ cảnh (ví dụ "giải thích rule 2") thì gửi lại `metadata.session_id`. Mỗi lần kiểm tra độc lập nên dùng phiên mới. Xem lại phiên bằng `GET /v1/sessions?case_id=…` và `GET /v1/sessions/{id}/messages`.
+- **Thời gian:** một lượt có thể mất từ vài chục giây đến vài phút (agent đọc nhiều tài liệu). Đặt timeout HTTP của BPM đủ dài (ví dụ 5 phút), hoặc gửi `"stream": true` để nhận SSE (`content_block_delta` chứa text, `message_stop` khi xong).
+- **Chỉ trích xuất trường thông tin:** cùng cách gọi, chỉ đổi câu hỏi, ví dụ "Lấy số hợp đồng, bên thụ hưởng, số tài khoản, số tiền. Trả JSON có citation_id."
+- **Tìm kiếm không qua agent** (nhanh hơn, không lập luận): `POST /v1/cases/{id}/search {"query":"…"}` trả các đoạn khớp kèm `citation_id`.
+
+### Tóm tắt API BPM cần dùng
+
+| Việc | API |
+|---|---|
+| Tạo tài khoản dịch vụ, lấy token (một lần) | `POST /v1/auth/register`, `POST /v1/auth/login` |
+| Tạo / thu hồi API key (một lần, khi xoay key) | `POST /v1/auth/api-keys`, `GET /v1/auth/api-keys`, `DELETE /v1/auth/api-keys/{id}` |
+| Tạo knowledge base (một lần) | `POST /v1/kbs` |
+| Upload file vào hồ sơ | `POST /v1/kbs/{kb_id}/documents` (multipart, `case_code`, `callback_url`) |
+| Nhận kết quả xử lý từng file | `POST <callback_url>` do BePaylot gọi |
+| Kiểm tra trạng thái hồ sơ (polling) | `GET /v1/cases/{id}`, `GET /v1/kbs/{kb_id}/cases/by-code/{code}` |
+| Kiểm tra tuân thủ / trích xuất | `POST /v1/messages` với `metadata.case` |
+| Xem bằng chứng | `GET /v1/citations?id=`, `GET /v1/documents/{id}/pages/{n}/image` |
+| Sửa hồ sơ | `DELETE /v1/documents/{id}`, `POST /v1/documents/{id}/reparse`, `PATCH /v1/cases/{id}` |
+
+Mã lỗi thường gặp: `401` key sai/thu hồi; `409` hồ sơ đã đóng, hoặc session đã gắn hồ sơ khác; `422` mã
+hồ sơ sai mẫu của `case_type`, hoặc thiếu `case_code`; `503` server chưa cấu hình S3/Redis. Chi tiết
+từng endpoint ở Swagger `/docs`.
+
 ## API
 
-Tất cả nằm dưới `/v1` và cần `x-api-key` (hoặc `Authorization: Bearer`). Tài liệu đầy đủ
+Tất cả nằm dưới `/v1` và cần `Authorization: Bearer <access token>` (từ `/v1/auth/login`) hoặc `x-api-key`; riêng `/v1/auth/config|register|login|refresh|logout|oidc/*` không cần. Tài liệu đầy đủ
 có ở Swagger `/docs` và `/openapi.yaml`.
 
 | Nhóm | Endpoint |

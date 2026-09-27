@@ -1,5 +1,7 @@
 // Command seed creates (or reuses) a user and issues a fresh API key, printing
-// the plaintext key exactly once. Use it to bootstrap local development.
+// the plaintext key exactly once. It is optional since the web UI has a
+// sign-up page (/login); use it for scripts/CI, or with -password to give an
+// existing account (e.g. data created before sign-in existed) a password.
 package main
 
 import (
@@ -7,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/config"
@@ -17,6 +21,7 @@ func main() {
 	email := flag.String("email", "dev@bepaylot.local", "user email")
 	name := flag.String("name", "Local Dev", "user display name")
 	keyName := flag.String("key-name", "local", "api key label")
+	password := flag.String("password", "", "set this password so the user can sign in on the login page")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -37,6 +42,18 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "create user:", err)
 		os.Exit(1)
+	}
+	if *password != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(*password), bcrypt.DefaultCost)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "hash password:", err)
+			os.Exit(1)
+		}
+		if err := st.Users.SetPassword(ctx, user.ID, string(hash)); err != nil {
+			fmt.Fprintln(os.Stderr, "set password:", err)
+			os.Exit(1)
+		}
+		fmt.Println("password set: sign in at /login with this email")
 	}
 	plaintext, key, err := st.APIKeys.Issue(ctx, user.ID, *keyName)
 	if err != nil {

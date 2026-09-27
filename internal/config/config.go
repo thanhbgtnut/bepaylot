@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,6 +15,7 @@ import (
 type Config struct {
 	Env    string    `yaml:"env"`
 	HTTP   HTTP      `yaml:"http"`
+	Auth   Auth      `yaml:"auth"`
 	DB     DB        `yaml:"db"`
 	LLM    LLM       `yaml:"llm"`
 	Embd   Embedding `yaml:"embedding"`
@@ -130,6 +132,51 @@ type HTTP struct {
 	// Empty disables them.
 	AdminEmails []string `yaml:"admin_emails"`
 }
+
+// Auth configures sign-in for the web UI, modelled on WeKnora: email +
+// password accounts and optional OIDC, both issuing a short-lived JWT access
+// token and a longer-lived refresh token. API keys keep working for scripts.
+type Auth struct {
+	// JWTSecret signs the tokens (HS256). Empty = a random secret generated
+	// once and kept in the database (app_secrets), so sessions survive restarts
+	// and are shared by every API replica.
+	JWTSecret  string        `yaml:"jwt_secret"`
+	AccessTTL  time.Duration `yaml:"access_ttl"`
+	RefreshTTL time.Duration `yaml:"refresh_ttl"`
+	// Registration is "open" (anyone can sign up on the login page) or
+	// "closed" (accounts come from OIDC, cmd/seed or an existing account).
+	Registration      string `yaml:"registration"`
+	PasswordMinLength int    `yaml:"password_min_length"`
+	OIDC              OIDC   `yaml:"oidc"`
+}
+
+// OIDC configures sign-in through an OpenID Connect provider (Keycloak,
+// Google, Azure AD, Authentik…) with the authorization code flow.
+type OIDC struct {
+	Enabled bool `yaml:"enabled"`
+	// Provider is the stable id stored on users created through it.
+	Provider string `yaml:"provider"`
+	// DisplayName labels the login button ("Đăng nhập bằng <DisplayName>").
+	DisplayName  string   `yaml:"display_name"`
+	IssuerURL    string   `yaml:"issuer_url"`
+	ClientID     string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	Scopes       []string `yaml:"scopes"`
+	// RedirectURL is the callback registered at the provider
+	// (…/v1/auth/oidc/callback). Empty = derived from the request's
+	// (forwarded) scheme and host.
+	RedirectURL string `yaml:"redirect_url"`
+	// FrontendURL is where the browser returns after the callback; the
+	// result is appended as #oidc_result=… or #oidc_error=…. Empty = "/login"
+	// on the same origin.
+	FrontendURL string `yaml:"frontend_url"`
+}
+
+// Auth registration modes.
+const (
+	RegistrationOpen   = "open"
+	RegistrationClosed = "closed"
+)
 
 // DB holds Postgres connection settings.
 type DB struct {
@@ -252,6 +299,12 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("BEPAYLOT_DEFAULT_PROVIDER"); v != "" {
 		c.LLM.DefaultProvider = v
 	}
+	if v := os.Getenv("BEPAYLOT_OIDC_SCOPES"); v != "" {
+		c.Auth.OIDC.Scopes = nil
+		for _, sc := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }) {
+			c.Auth.OIDC.Scopes = append(c.Auth.OIDC.Scopes, sc)
+		}
+	}
 	if v := os.Getenv("REDIS_ADDR"); v != "" {
 		c.Redis.Addr = v
 	}
@@ -266,6 +319,16 @@ func (c *Config) applyDefaults() {
 	setDuration(&c.HTTP.ReadTimeout, 30*time.Second)
 	setDuration(&c.HTTP.WriteTimeout, 0) // 0 = no write timeout, required for SSE
 	setDuration(&c.HTTP.ShutdownTimeout, 20*time.Second)
+
+	setDuration(&c.Auth.AccessTTL, 24*time.Hour)
+	setDuration(&c.Auth.RefreshTTL, 7*24*time.Hour)
+	setString(&c.Auth.Registration, RegistrationOpen)
+	setInt(&c.Auth.PasswordMinLength, 8)
+	setString(&c.Auth.OIDC.Provider, "oidc")
+	setString(&c.Auth.OIDC.DisplayName, "SSO")
+	if len(c.Auth.OIDC.Scopes) == 0 {
+		c.Auth.OIDC.Scopes = []string{"openid", "email", "profile"}
+	}
 
 	setInt32(&c.DB.MaxConns, 10)
 	setInt32(&c.DB.MinConns, 1)
@@ -311,6 +374,12 @@ func (c *Config) applyDefaults() {
 func (c *Config) validate() error {
 	if c.DB.DSN == "" {
 		return fmt.Errorf("db.dsn (or DATABASE_URL) is required")
+	}
+	if c.Auth.Registration != RegistrationOpen && c.Auth.Registration != RegistrationClosed {
+		return fmt.Errorf("auth.registration %q is not supported (want open | closed)", c.Auth.Registration)
+	}
+	if c.Auth.OIDC.Enabled && (c.Auth.OIDC.IssuerURL == "" || c.Auth.OIDC.ClientID == "") {
+		return fmt.Errorf("auth.oidc.issuer_url and auth.oidc.client_id are required when auth.oidc.enabled is true")
 	}
 	if len(c.LLM.Providers) == 0 {
 		return fmt.Errorf("llm.providers must contain at least one provider")

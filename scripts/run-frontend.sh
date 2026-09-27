@@ -11,6 +11,8 @@ if [ ! -d node_modules ]; then
   npm install
 fi
 
+# The Vite proxy (/v1) must reach the backend started by run-backend.sh.
+export BEPAYLOT_API="${BEPAYLOT_API:-http://localhost:9090}"
 export VITE_AGENT_URL="${VITE_AGENT_URL:-http://localhost:9090/v1/ag-ui/run}"
 
 echo "==> frontend dev server starting (agent: ${VITE_AGENT_URL})"

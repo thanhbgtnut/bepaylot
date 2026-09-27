@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "reac
 
 import { settings } from "../api/client";
 import { useApp } from "./AppContext";
+import { useAuth } from "./AuthContext";
 import { CitationProvider } from "./Citation";
 import { Empty, Icon, Menu } from "./ui";
 
@@ -14,7 +15,7 @@ const NAV: [string, string, string][] = [
 ];
 
 // BePaylot's own mark (same as the favicon): a "b" monogram on a rounded tile.
-function Logo() {
+export function Logo() {
   return (
     <svg viewBox="0 0 32 32" className="size-9" aria-hidden>
       <rect width="32" height="32" rx="9" className="fill-accent" />
@@ -25,6 +26,7 @@ function Logo() {
 
 export function Layout() {
   const { kbs, kb, selectKB, connected, connError, openSettings, openCreateKB } = useApp();
+  const { user, signOut } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const [sp] = useSearchParams();
@@ -147,12 +149,27 @@ export function Layout() {
           )}
         </form>
         <div className="flex-1 max-md:hidden" />
-        <button className="btn-icon" title="Kết nối backend" onClick={openSettings}>
+        <button className="btn-icon" title="Tài khoản, API key và máy chủ" onClick={openSettings}>
           <Icon name="settings" />
         </button>
-        <div className="grid size-8 flex-none place-items-center rounded-full bg-accent text-sm font-medium text-on-accent" title="Tài khoản API key">
-          B
-        </div>
+        <Menu
+          align="right"
+          trigger={(open) => (
+            <button
+              onClick={open}
+              className="grid size-8 flex-none cursor-pointer place-items-center rounded-full bg-accent text-sm font-medium text-on-accent ring-offset-2 ring-offset-bg hover:ring-4 hover:ring-fg/8"
+              title={user ? `${user.name}\n${user.email}` : "Tài khoản"}
+            >
+              {initial(user?.name || user?.email)}
+            </button>
+          )}
+          items={[
+            { icon: "account_circle", label: user?.email ?? "Tài khoản", disabled: true },
+            { divider: true, label: "" },
+            { icon: "manage_accounts", label: "Tài khoản & API key", onClick: openSettings },
+            { icon: "logout", label: "Đăng xuất", onClick: signOut },
+          ]}
+        />
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -174,6 +191,8 @@ export function Layout() {
     </div>
   );
 }
+
+const initial = (s?: string) => (s?.trim()[0] ?? "B").toUpperCase();
 
 // Page header inside the content panel.
 export function TopBar({ title, subtitle, children }: { title: ReactNode; subtitle?: ReactNode; kbSelector?: boolean; children?: ReactNode }) {

@@ -51,8 +51,30 @@ func New(cfg appcfg.HTTP, h *handler.Handlers, log *slog.Logger) *server.Hertz {
 	hz.GET("/openapi.yaml", h.OpenAPISpec)
 	hz.GET("/docs", h.DocsRedirect)
 
-	v1 := hz.Group("/v1", middleware.Auth(h.Store.APIKeys, h.Store.Users, cfg.AuthBypass))
+	// Sign-in (no auth): the login page, token refresh and the OIDC flow.
+	pub := hz.Group("/v1/auth")
 	{
+		pub.GET("/config", h.AuthConfig)
+		pub.POST("/register", h.Register)
+		pub.POST("/login", h.Login)
+		pub.POST("/refresh", h.RefreshToken)
+		pub.POST("/logout", h.Logout)
+		pub.GET("/oidc/start", h.OIDCStart)
+		pub.GET("/oidc/callback", h.OIDCCallback)
+	}
+
+	var tokens middleware.TokenAuthenticator
+	if h.Auth != nil {
+		tokens = h.Auth
+	}
+	v1 := hz.Group("/v1", middleware.Auth(tokens, h.Store.APIKeys, h.Store.Users, cfg.AuthBypass))
+	{
+		v1.GET("/auth/me", h.Me)
+		v1.POST("/auth/change-password", h.ChangePassword)
+		v1.GET("/auth/api-keys", h.ListAPIKeys)
+		v1.POST("/auth/api-keys", h.CreateAPIKey)
+		v1.DELETE("/auth/api-keys/:id", h.RevokeAPIKey)
+
 		v1.POST("/messages", h.Messages)
 
 		// AG-UI protocol surface for client SDKs (CopilotKit et al.).

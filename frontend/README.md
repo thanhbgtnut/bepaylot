@@ -11,7 +11,9 @@ npm run dev          # http://localhost:5174
 
 Khi dev, Vite proxy `/v1` sang backend `http://localhost:8080`, nên trình duyệt coi như cùng origin và không cần CORS. Đổi backend bằng `BEPAYLOT_API=http://host:port npm run dev`.
 
-Lần đầu mở, nhập **API key** trong hộp thoại "Kết nối" (tạo key bằng `make seed` ở thư mục gốc). Key được lưu trong `localStorage`. Có thể đặt sẵn bằng biến `VITE_API_KEY`, còn `VITE_API_BASE` dùng khi frontend không chạy sau proxy.
+Lần đầu mở sẽ vào trang **/login** (bố cục như WeKnora): đăng nhập, **Tạo tài khoản**, hoặc "Đăng nhập bằng …" khi server bật OIDC. Access token và refresh token lưu trong `localStorage`; gặp `401` thì client tự gọi `/v1/auth/refresh` một lần rồi gửi lại request, hết hạn hẳn thì quay về `/login`. Hộp thoại **Tài khoản** (avatar góc phải) để đổi mật khẩu, tạo/thu hồi API key cho script và đổi địa chỉ máy chủ. `VITE_API_BASE` dùng khi frontend không chạy sau proxy.
+
+OIDC khi dev: đăng ký callback `http://localhost:5174/v1/auth/oidc/callback` ở nhà cung cấp; Vite gửi `X-Forwarded-Host` nên backend tự suy ra URL này.
 
 ```bash
 npm run build        # typecheck + build vào dist/

@@ -199,3 +199,22 @@ sup.fn.missing { color: var(--subtle); }
 .pagebox.low { stroke: #e37400; stroke-dasharray: 4 2; }
 .pagebox.hl, .pagebox:hover { fill: rgba(251, 188, 4, 0.35); stroke: #f9ab00; stroke-width: 2.5; }
 .nobox .pagebox:not(.hl) { opacity: 0; }
+
+/* Login page (like WeKnora's): drifting knowledge nodes and a fading showcase. */
+@theme {
+  --animate-drift: bp-drift 14s ease-in-out infinite;
+  --animate-fade-up: bp-fade-up 0.5s ease-out both;
+  @keyframes bp-drift {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(var(--dx, 12px), var(--dy, -16px)); }
+  }
+  @keyframes bp-fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+@keyframes bp-dash { to { stroke-dashoffset: -40; } }
+.login-line { stroke-dasharray: 4 6; animation: bp-dash 3s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-drift, .login-line, .animate-fade-up { animation: none; }
+}

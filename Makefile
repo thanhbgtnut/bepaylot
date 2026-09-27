@@ -67,8 +67,8 @@ migrate: ## Apply database migrations
 	go run ./cmd/server -config $(CONFIG) -migrate-only
 
 .PHONY: seed
-seed: ## Create a dev user and print a fresh API key
-	go run ./cmd/seed -config $(CONFIG)
+seed: ## Optional: create/reuse a user, print an API key (EMAIL=… PASSWORD=… to set a login password)
+	go run ./cmd/seed -config $(CONFIG) $(if $(EMAIL),-email '$(EMAIL)') $(if $(PASSWORD),-password '$(PASSWORD)')
 
 .PHONY: skills-sync
 skills-sync: ## Sync skills/ into Postgres + embeddings

@@ -25,10 +25,17 @@ const (
 
 // User is an authenticated principal that owns sessions.
 type User struct {
-	ID        uuid.UUID
-	Email     string
-	Name      string
-	CreatedAt time.Time
+	ID    uuid.UUID
+	Email string
+	Name  string
+	// AuthProvider is "local" (email + password) or the OIDC provider name
+	// the account was created through.
+	AuthProvider string
+	// HasPassword reports whether the user can sign in with a local password.
+	HasPassword bool
+	IsActive    bool
+	LastLoginAt *time.Time
+	CreatedAt   time.Time
 }
 
 // APIKey is a hashed credential bound to a User. The plaintext key is only ever

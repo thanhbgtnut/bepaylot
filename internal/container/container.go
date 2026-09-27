@@ -18,6 +18,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/agent/prompt"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
@@ -107,6 +108,13 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	handlers := &handler.Handlers{
 		Store: st, Agent: ag, Registry: registry, Skills: skillSvc, MCP: mcpMgr,
 		LLM: cfg.LLM, Agentcfg: cfg.Agent, Log: log, Config: cfg,
+	}
+	if cfg.Workers.RunsAPI() {
+		authSvc, err := auth.New(ctx, st, cfg.Auth, log)
+		if err != nil {
+			return nil, fmt.Errorf("auth: %w", err)
+		}
+		handlers.Auth = authSvc
 	}
 
 	// ---- document modules (1–3) ----

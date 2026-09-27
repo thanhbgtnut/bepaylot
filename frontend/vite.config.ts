@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
 
 // In dev, /v1 is proxied to the bepaylot API so the browser stays same-origin
-// (no CORS, and the API key never leaves localhost). Override the target with
+// (no CORS, and the session tokens never leave localhost). Override the target with
 // BEPAYLOT_API=http://host:port npm run dev.
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -15,7 +15,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5174,
       proxy: {
-        "/v1": { target, changeOrigin: true },
+        // xfwd: the API sees the browser's host (X-Forwarded-Host), so the
+        // OIDC callback URL it derives points back at this dev server.
+        "/v1": { target, changeOrigin: true, xfwd: true },
         "/healthz": { target, changeOrigin: true },
       },
     },

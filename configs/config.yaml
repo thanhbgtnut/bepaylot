@@ -11,9 +11,34 @@ http:
   write_timeout: 0s          # keep 0 for SSE
   shutdown_timeout: 20s
   cors_origins: []           # empty = allow any origin
-  # DEV ONLY: skips x-api-key verification entirely when true. Never enable
+  # DEV ONLY: skips authentication entirely when true. Never enable
   # this in a deployed environment.
   auth_bypass: ${BEPAYLOT_AUTH_BYPASS}   # empty/false = auth required (default)
+
+# Sign-in for the web UI, like WeKnora: email + password (register/login on
+# /login) and optional OIDC. Both issue a JWT access token (Authorization:
+# Bearer) and a single-use refresh token; issued tokens are recorded so logout
+# and password changes revoke them. API keys (x-api-key) keep working for
+# scripts — create them in the UI (Tài khoản → API key) instead of make seed.
+auth:
+  jwt_secret: ${BEPAYLOT_JWT_SECRET}      # empty = generated once, kept in the DB (app_secrets)
+  access_ttl: 24h
+  refresh_ttl: 168h
+  registration: ${BEPAYLOT_REGISTRATION}  # open (default) | closed
+  password_min_length: 8
+  oidc:
+    enabled: ${BEPAYLOT_OIDC_ENABLED}     # empty/false = no OIDC button
+    provider: oidc                        # stored on users created through OIDC
+    display_name: ${BEPAYLOT_OIDC_DISPLAY_NAME}   # button label, e.g. Keycloak; default SSO
+    issuer_url: ${BEPAYLOT_OIDC_ISSUER_URL}       # e.g. https://sso.example.com/realms/main
+    client_id: ${BEPAYLOT_OIDC_CLIENT_ID}
+    client_secret: ${BEPAYLOT_OIDC_CLIENT_SECRET}
+    # scopes default to [openid, email, profile]; BEPAYLOT_OIDC_SCOPES overrides (comma separated)
+    # Callback registered at the provider; empty = <request origin>/v1/auth/oidc/callback
+    # (in dev through Vite: http://localhost:5174/v1/auth/oidc/callback).
+    redirect_url: ${BEPAYLOT_OIDC_REDIRECT_URL}
+    # Where the browser lands after the callback; empty = /login on the same origin.
+    frontend_url: ${BEPAYLOT_OIDC_FRONTEND_URL}
 
 db:
   dsn: ${DATABASE_URL}
