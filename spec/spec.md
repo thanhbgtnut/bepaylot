@@ -1,13 +1,17 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.12 · Ngày: 2026-09-28 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM gom vùng qua agent, JSON trang trong Postgres); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
+> Phiên bản: 0.13 · Ngày: 2026-09-28 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM gom vùng qua agent, JSON trang trong Postgres), dựng cây theo trang (U37); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
 >
-> Thay đổi so với 0.11 (U36): **VLM gom vùng, gọi qua agent; ảnh trang; JSON trang trong Postgres**
+> Thay đổi so với 0.12 (U37): **dựng cây theo trang**
+> - Cây cũ gọi LLM tuần tự theo từng tầng (batch ~12k token), thêm lần đề xuất mục lục cho cả file; file nhiều heading (OCR nhận nhầm) sinh rất nhiều node nên index rất lâu và dễ vượt hạn mức token/phút.
+> - Nay: gộp nhóm theo layout trước (code), rồi **mỗi trang một lần gọi** với ngữ cảnh trang trước/trang sau lấy từ layout, chạy song song (`index.tree.concurrency`), rồi code ghép cây; không còn tóm tắt bottom-up (§6.5). Cấu hình: bỏ `index.tree.flat_max_pages`, thêm `concurrency`, `page_tokens`, `min_node_tokens` (§11).
+>
+> Thay đổi của 0.12 (U36): **VLM gom vùng, gọi qua agent; ảnh trang; JSON trang trong Postgres**
 > - **Gom vùng cùng loại trên một trang:** các vùng cùng nhóm class (`text`, `abstract`, `content`… là nhóm `text`; chú thích; header/footer/footnote; công thức) được ghép thành **một ảnh có đánh số** và đọc bằng **một lần gọi** cho mỗi trang và nhóm. Tiêu đề (`doc_title`, `paragraph_title`) và bảng vẫn gọi riêng từng vùng. Con dấu (`seal`) được **gắn nhãn thẳng** từ layout, không gọi VLM (§5.3, §5.9).
 > - **Gọi qua agent, dạng streaming:** engine không còn HTTP client riêng (đẩy prompt + tin nhắn lên `/chat/completions`). Mọi yêu cầu bóc tách đi qua `agent.Extract`, gọi model bằng `Stream` trên registry provider của agent (`llm.providers`, retry chung). Cấu hình `parser.engines.vlm.provider` thay cho `base_url`/`api_key`/`timeout` (§5.9, §11).
 > - **Ảnh trang:** `GET /documents/:id/pages/:n/image` stream ảnh qua API. Trước đây API trả `302` tới presigned URL của MinIO/S3 khác origin; trình duyệt gọi bằng `fetch` + header xác thực nên bị chặn và báo lỗi không kết nối được. `302` chỉ còn khi client xin `?redirect=1` (§9.1, §10.2).
@@ -73,6 +77,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U34 | bepaylot phải theo **đúng giải pháp vectorless** (PageIndex + LLM Wiki): sửa toàn bộ spec cho đúng | **được thay bởi U35** | — |
 | U36 | Sửa bốn điểm: (1) **Layout:** các text box cùng class trên cùng một trang phải **gom lại gọi agent bóc tách một lần**, vì ảnh từng vùng rất nhỏ, gọi đi gọi lại tốn lần gọi và token; gom các nhãn cùng class và tương tự nhau, mỗi trang mỗi nhóm một lần gọi. **Title vẫn gọi riêng.** Layout là **con dấu thì gắn nhãn luôn, không gọi VLM**. (2) Yêu cầu bóc tách gọi sang **agent hiện có trong source code, dạng streaming**, không gọi riêng kiểu LLM base đẩy prompt + user message lên. (3) Sửa lỗi **xem ảnh trang báo không kết nối được**. (4) **Lưu JSON kết quả của trang vào database**, không lưu S3, vì đó là dữ liệu có cấu trúc | còn hiệu lực; **làm rõ U15, U17** | §0 (bản 0.12), §5.3, §5.9, §9.1, §9.2 (migration `0017`), §10.2, §11 |
 | U35 | **Không đưa quá nhiều cho LLM vì tốn token; chỉ search theo index tree.** Luồng: cần hỏi thông tin thì duyệt index tree, tìm đúng trang, nạp trang vào context để trả lời. Xoá nội dung thừa trong spec (chỉ phần LLM Wiki); Module 3 hiển thị theo cây | còn hiệu lực; **thay U24, U26, U27, U34**, làm rõ U7, U8, U10, U22, U23 | §6.1, §6.5, §6.6, §7, §8.2, §9.2 (migration `0016`), §10.3, §11, §16 |
+| U37 | **Index quá lâu vì gọi LLM nhiều lần.** Trước hết **gộp tree node theo kết quả layout**; sau đó dựng node **theo trang như PageIndex**, không dùng cả file: mỗi trang chỉ cần thông tin chung của trang trước, nội dung trang hiện tại và thông tin tổng hợp của trang sau | còn hiệu lực; thay cách dựng cây cũ (khung heading/nhóm trang + LLM đề xuất mục lục + tóm tắt bottom-up theo tầng) | §6.5, §11 |
 
 ## 1. Yêu cầu chung
 
@@ -1051,12 +1056,13 @@ Mọi API list/search nhận chung một bộ lọc `metadata`. Bộ lọc luôn
 
 ### 6.5 Dựng cây tài liệu (`index:tree`)
 
-0. **Bookmark/outline của PDF** (nếu có, §5.8): dùng làm khung cây ưu tiên cao nhất (tiêu đề + trang đích).
-1. **Khung từ cấu trúc**: các block `title`/`heading` theo thứ tự đọc tạo thành cây. Cấp heading suy từ kiểu đánh số ("I.", "1.", "1.1", "a)") và kích thước bbox.
-2. **Mục lục trong file**: nếu phát hiện trang "Mục lục" (bảng hoặc danh sách có số trang), dùng nó để hiệu chỉnh tên node và khoảng trang.
-3. **Không có heading rõ** (giấy tờ scan, file vài trang): LLM nhận tóm tắt ngắn của từng nhóm trang và đề xuất cây. Với file ≤ `index.tree.flat_max_pages` (mặc định 5), cây chỉ có một cấp: **mỗi trang là một node**.
-4. **Ràng buộc**: `page_start ≤ page_end` và nằm trong file; các node con phủ kín node cha, không chồng lấn. Cây LLM đề xuất mà vi phạm thì được sửa tự động hoặc bị loại, khi đó dùng lại khung ở bước 1.
-5. **Tóm tắt node** (bottom-up, LLM): lá được tóm tắt từ nội dung section, node cha từ tóm tắt của con. Tóm tắt dài ≤ `index.tree.summary_words` (mặc định 60 từ), ưu tiên giữ **thực thể, số hiệu, ngày tháng, số tiền** (thứ người dùng hay hỏi). Tóm tắt là thứ LLM dựa vào để suy luận khi duyệt cây, nên đây là phần **bắt buộc** của PageIndex. `index.tree.llm: false` chỉ dành cho dev/test: khi đó tóm tắt là vài dòng đầu của node (trích nguyên văn), và search kém chính xác hơn.
+Cây được dựng **theo từng trang** (kiểu PageIndex), không gửi cả file cho LLM và không có lượt tóm tắt từ lá lên gốc:
+
+1. **Gộp theo layout (code, không gọi LLM).** Trên mỗi trang, block `title`/`heading` (≤ 25 từ) mở một nhóm, các block sau nó là thân nhóm; nội dung trước heading đầu tiên là **nhóm dẫn** (tiếp nối trang trước). Bỏ furniture, header/footer, số trang. Hai heading liền nhau cùng cấp là một heading xuống dòng (trừ khi heading trước là nhãn kết thúc bằng `:` hoặc heading sau tự đánh số "I.", "1.", "1.1", "a)"). Heading có nội dung dưới nó < `index.tree.min_node_tokens` (mặc định 40) và còn heading khác sau nó trên trang (nhãn form, chú thích bị nhận nhầm là tiêu đề) được **gộp vào nhóm trước**. Kết quả là **bản nháp** node của trang: mỗi nhóm có heading là một node, cấp heading suy từ kiểu block và số `#`.
+2. **Mỗi trang một lần gọi LLM** (`index.tree.concurrency` trang song song, mặc định 4). Đầu vào gồm: **trang trước** (các mục còn mở ở cuối trang theo bản nháp + khoảng 200 ký tự cuối), **trang hiện tại** (các nhóm layout, cắt trong `index.tree.page_tokens`, mặc định 1.500 token), **trang sau** (các heading + khoảng 200 ký tự đầu). Ngữ cảnh trang trước/sau lấy từ layout nên các trang không phải chờ nhau. LLM trả `{"lead", "nodes": [{"from": "g<k>", "title", "level", "summary"}]}`: nhóm nào thật sự mở một node (bỏ heading giả, thêm node cho giấy tờ mới không có tiêu đề), cấp của node, tóm tắt ≤ `index.tree.summary_words` (mặc định 60 từ, giữ **thực thể, số hiệu, ngày tháng, số tiền**), và `lead` tóm tắt phần tiếp nối. Trả lời sai định dạng hoặc gọi lỗi thì trang dùng bản nháp. Trang trống không gọi.
+3. **Ghép cây (code).** Đi theo thứ tự trang: node mở cho tới khi có node cùng cấp hoặc cấp cao hơn; nhóm dẫn nối vào node đang mở (mở rộng `page_end`, cộng token, nối tóm tắt; node trải nhiều trang giữ tóm tắt ≤ 2 × `summary_words`). **Bookmark/outline của PDF** (§5.8), nếu có, là các cấp trên cùng; node theo trang nằm dưới bookmark sâu nhất đang mở, và node trùng tên bookmark bắt đầu trên cùng trang được gộp vào bookmark đó. Node chưa có tóm tắt (bookmark không có nội dung riêng) lấy danh sách tiêu đề con. Section (§6.4) được gắn vào node sâu nhất chứa trang đầu của nó.
+4. **Ràng buộc**: `page_start ≤ page_end`, nằm trong file; node con nằm trong khoảng trang của node cha. Hai node liền nhau có thể chung một trang (node trước kết thúc, node sau bắt đầu giữa trang).
+5. Số lần gọi LLM khi index một file = số trang có nội dung + 1 (thẻ tài liệu). `index.tree.llm: false` chỉ dành cho dev/test: cây là bản nháp layout, tóm tắt là vài dòng đầu (trích nguyên văn), search kém chính xác hơn.
 6. **Thẻ tài liệu** (document card, node gốc): `title`, `summary` ≤ 120 từ (mô tả nội dung theo khoảng trang nếu file gộp nhiều giấy tờ), `page_count` và metadata. Thẻ không có `doc_type`: loại giấy tờ là Classification theo dải trang, chạy ở task riêng sau cây (§6.9.4), và không đưa vào thẻ hay mục lục hồ sơ. Thẻ là dòng của file trong mục lục hồ sơ (§6.6).
 7. Ghi `token_count` cho từng node (nội dung) và `tree_tokens` cho cây dạng mục lục (tiêu đề + tóm tắt của mọi node), để search và tool biết có nạp **nguyên cây** vào context được không (§6.6 bước 2, §8.2).
 
@@ -2148,7 +2154,7 @@ parser:
 index:
   section: { max_tokens: 1500 }
   keyword_engine: pg_fts            # pg_fts | paradedb
-  tree: { llm: true, flat_max_pages: 5, summary_words: 60, card_summary_words: 120, model: "" }   # llm: false chỉ cho dev/test (§6.5)
+  tree: { llm: true, concurrency: 4, page_tokens: 1500, min_node_tokens: 40, summary_words: 60, card_summary_words: 120, model: "" }   # dựng cây theo trang; llm: false chỉ cho dev/test (§6.5)
 
 search:                             # luồng hỏi đáp duyệt cây (§6.6)
   model: ""                         # rỗng = llm.default_model; nên chọn model nhanh

@@ -256,7 +256,9 @@ index:
   section: { max_tokens: 1500 }
   tree:
     llm: true                       # false = extractive summaries, no LLM
-    flat_max_pages: 5
+    concurrency: 4                  # page calls in flight per document (mind the provider's tokens/minute)
+    page_tokens: 1500               # page text per call
+    min_node_tokens: 40             # a heading with less content under it joins the group before it
     summary_words: 60
     card_summary_words: 120
     provider: ""                    # "" = llm.default_provider

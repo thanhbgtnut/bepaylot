@@ -13,8 +13,10 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/config"
@@ -122,8 +124,10 @@ func (s *Service) build(ctx context.Context, d types.Document) error {
 		queue.Opts{TaskID: fmt.Sprintf("tree:%s:%d", d.ID, d.Gen), Interactive: d.Interactive})
 }
 
-// tree builds the document tree, node summaries and the document card; the
-// document is searchable once it is stored (§6.5).
+// tree builds the document tree page by page (§6.5): layout groups of each
+// page, one LLM call per page (in parallel) that decides which groups start
+// a node and summarizes them, then the page results are joined in code. The
+// document is searchable once the tree is stored.
 func (s *Service) tree(ctx context.Context, d types.Document) error {
 	secs, err := s.st.Index.Sections(ctx, d.ID, d.Gen)
 	if err != nil {
@@ -133,30 +137,27 @@ func (s *Service) tree(ctx context.Context, d types.Document) error {
 	if err != nil {
 		return err
 	}
-	titles := map[int]string{}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].PageNo < pages[j].PageNo })
+	cfg := s.cfg.Index.Tree
+	pageCount := d.PageCount
+	firstLines := map[int]string{}
+	groups := map[int][]layoutGroup{}
+	results := map[int]*pageResult{}
 	for _, p := range pages {
-		titles[p.PageNo] = firstLine(p.Markdown)
+		pageCount = max(pageCount, p.PageNo)
+		firstLines[p.PageNo] = firstLine(p.Markdown)
+		groups[p.PageNo] = PageGroups(p, cfg.MinNodeTokens)
+		results[p.PageNo] = draftResult(groups[p.PageNo], cfg.SummaryWords)
 	}
-	bms := bookmarksOf(d.PDFInfo)
-	root, origin := BuildSkeleton(d.PageCount, bms, secs, titles, SkeletonOptions{FlatMaxPages: s.cfg.Index.Tree.FlatMaxPages})
 	useLLM := s.treeLLM != nil && s.cfg.Index.TreeLLMEnabled()
-	if origin == "page" && d.PageCount > s.cfg.Index.Tree.FlatMaxPages && useLLM && d.PageCount <= 400 {
-		if toc := s.proposeTOC(ctx, pages); len(toc) >= 2 {
-			root.children = toc
-			for _, c := range root.children {
-				c.sections = nil
-			}
-			assignByPage(root, secs)
-			root = finish(root, secs)
+	if useLLM {
+		if err := s.readPages(ctx, pages, groups, results); err != nil {
+			return err
 		}
 	}
-	root.title = firstNonEmpty(d.Title, strFrom(d.PDFInfo, "Title"), d.FileName)
-
-	pageText := map[int]string{}
-	for _, p := range pages {
-		pageText[p.PageNo] = stripMD(p.Markdown)
-	}
-	s.summarize(ctx, root, secs, pageText, useLLM)
+	root := BuildTree(pageCount, bookmarksOf(d.PDFInfo), results, firstLines, cfg.SummaryWords)
+	assignByPage(root, secs)
+	finish(root)
 	card := s.card(ctx, d, root, pages, useLLM)
 	root.title, root.summary = card.Title, card.Summary
 
@@ -168,98 +169,183 @@ func (s *Service) tree(ctx context.Context, d types.Document) error {
 	return s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil)
 }
 
-func (s *Service) proposeTOC(ctx context.Context, pages []*types.ParsedPage) []*node {
-	var sb strings.Builder
-	for _, p := range pages {
-		fmt.Fprintf(&sb, "[page %d] %s\n", p.PageNo, textutil.Truncate(textutil.CollapseSpace(stripMD(p.Markdown)), 160))
-	}
-	var out struct {
-		TOC []TOCEntry `json:"toc"`
-	}
-	if err := s.treeLLM.CompleteJSON(ctx, promptTOC, sb.String(), &out); err != nil {
-		s.log.Warn("toc proposal failed", "err", err)
-		return nil
-	}
-	return FromTOC(out.TOC, len(pages))
-}
-
-// summarize fills node summaries bottom-up; leaves from their text, parents
-// from their children. LLM calls are batched; failures fall back to
-// extractive summaries.
-func (s *Service) summarize(ctx context.Context, root *node, secs []types.Section, pageText map[int]string, useLLM bool) {
-	words := s.cfg.Index.Tree.SummaryWords
-	levels := [][]*node{}
-	var walk func(n *node, depth int)
-	walk = func(n *node, depth int) {
-		if len(levels) <= depth {
-			levels = append(levels, nil)
-		}
-		levels[depth] = append(levels[depth], n)
-		for _, c := range n.children {
-			walk(c, depth+1)
-		}
-	}
-	walk(root, 0)
-	for depth := len(levels) - 1; depth >= 1; depth-- {
-		type item struct {
-			n    *node
-			text string
-		}
-		var items []item
-		for _, n := range levels[depth] {
-			text := nodeText(n, secs, 1500)
-			if declaredRange(n.origin) && len(n.children) == 0 {
-				// A page-range leaf reads its own pages: its sections may
-				// start earlier and span several leaves.
-				var parts []string
-				for p := n.pageStart; p <= n.pageEnd && textutil.EstimateTokens(strings.Join(parts, "\n")) < 1500; p++ {
-					parts = append(parts, pageText[p])
-				}
-				text = strings.Join(parts, "\n")
-			}
-			if len(n.children) > 0 {
-				var parts []string
-				for _, c := range n.children {
-					parts = append(parts, fmt.Sprintf("- %s: %s", c.title, c.summary))
-				}
-				text = strings.Join(parts, "\n") + "\n" + textutil.Truncate(text, 1500)
-			}
-			items = append(items, item{n, text})
-		}
-		if !useLLM {
-			for _, it := range items {
-				it.n.summary = extractiveSummary(it.text, words)
-			}
+// readPages makes one LLM call per page with groups, index.tree.concurrency
+// at a time. The context of a page comes from the layout drafts of its
+// neighbours (open sections and last words of the previous page, headings
+// and first words of the next), so pages do not wait for each other. A page
+// whose call fails keeps its draft.
+func (s *Service) readPages(ctx context.Context, pages []*types.ParsedPage, groups map[int][]layoutGroup, results map[int]*pageResult) error {
+	cfg := s.cfg.Index.Tree
+	open := openSections(pages, results)
+	var mu sync.Mutex
+	eg, ectx := errgroup.WithContext(ctx)
+	eg.SetLimit(max(1, cfg.Concurrency))
+	for i, p := range pages {
+		gs := groups[p.PageNo]
+		if len(gs) == 0 {
 			continue
 		}
-		// Batch up to ~12k tokens per call.
-		for start := 0; start < len(items); {
-			end, budget := start, 0
-			for end < len(items) && (end == start || budget+textutil.EstimateTokens(items[end].text) < 12000) {
-				budget += textutil.EstimateTokens(items[end].text)
-				end++
+		var prev, next *types.ParsedPage
+		if i > 0 {
+			prev = pages[i-1]
+		}
+		if i+1 < len(pages) {
+			next = pages[i+1]
+		}
+		prompt := pagePrompt(p.PageNo, gs, prev, groups, open, next, cfg.PageTokens)
+		eg.Go(func() error {
+			var out pageReply
+			if err := s.treeLLM.CompleteJSON(ectx, fmt.Sprintf(promptPageNodes, cfg.SummaryWords), prompt, &out); err != nil {
+				s.log.Warn("page nodes failed, using layout draft", "page", p.PageNo, "err", err)
+				return nil
 			}
-			var sb strings.Builder
-			for _, it := range items[start:end] {
-				fmt.Fprintf(&sb, "<part id=%q title=%q pages=\"%d-%d\">\n%s\n</part>\n", it.n.shortID, it.n.title, it.n.pageStart, it.n.pageEnd, it.text)
+			r, ok := out.result(gs, cfg.SummaryWords)
+			if !ok {
+				s.log.Warn("page nodes invalid, using layout draft", "page", p.PageNo)
+				return nil
 			}
-			var out struct {
-				Summaries map[string]string `json:"summaries"`
+			mu.Lock()
+			results[p.PageNo] = r
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = eg.Wait()
+	return ctx.Err()
+}
+
+// openSections is, per page, the path of headings still open at its end
+// according to the layout drafts.
+func openSections(pages []*types.ParsedPage, drafts map[int]*pageResult) map[int]string {
+	out := map[int]string{}
+	var stack []pageNode
+	for _, p := range pages {
+		for _, n := range drafts[p.PageNo].nodes {
+			for len(stack) > 0 && stack[len(stack)-1].level >= n.level {
+				stack = stack[:len(stack)-1]
 			}
-			err := s.treeLLM.CompleteJSON(ctx, fmt.Sprintf(promptSummarize, words), sb.String(), &out)
-			for _, it := range items[start:end] {
-				if sum := strings.TrimSpace(out.Summaries[it.n.shortID]); err == nil && sum != "" {
-					it.n.summary = sum
-				} else {
-					it.n.summary = extractiveSummary(it.text, words)
-				}
-			}
-			if err != nil {
-				s.log.Warn("summaries failed, using extractive", "err", err)
-			}
-			start = end
+			stack = append(stack, n)
+		}
+		titles := make([]string, len(stack))
+		for i, n := range stack {
+			titles[i] = textutil.Truncate(n.title, 80)
+		}
+		out[p.PageNo] = strings.Join(titles, " > ")
+	}
+	return out
+}
+
+// pagePrompt renders one page for promptPageNodes; the page text is cut to
+// budget tokens shared between its groups.
+func pagePrompt(pageNo int, gs []layoutGroup, prev *types.ParsedPage, groups map[int][]layoutGroup, open map[int]string, next *types.ParsedPage, budget int) string {
+	var sb strings.Builder
+	if prev == nil {
+		sb.WriteString("Previous page: none (first page)\n")
+	} else {
+		fmt.Fprintf(&sb, "Previous page %d. Open sections: %s\n", prev.PageNo, firstNonEmpty(open[prev.PageNo], "(none)"))
+		fmt.Fprintf(&sb, "It ends: %q\n", tail(groupsText(groups[prev.PageNo]), 200))
+	}
+	share := max(80, budget/len(gs)) * 3 // tokens → runes
+	fmt.Fprintf(&sb, "<page n=\"%d\">\n", pageNo)
+	for _, g := range gs {
+		body := textutil.Truncate(textutil.CollapseSpace(stripMD(g.body)), share)
+		if g.heading == "" {
+			fmt.Fprintf(&sb, "<g id=%q>%s</g>\n", g.id, body)
+		} else {
+			fmt.Fprintf(&sb, "<g id=%q heading=%q level=\"%d\">%s</g>\n", g.id, g.heading, g.level, body)
 		}
 	}
+	sb.WriteString("</page>\n")
+	if next == nil {
+		sb.WriteString("Next page: none (last page)\n")
+	} else {
+		var hs []string
+		for _, g := range groups[next.PageNo] {
+			if g.heading != "" && len(hs) < 5 {
+				hs = append(hs, textutil.Truncate(g.heading, 80))
+			}
+		}
+		fmt.Fprintf(&sb, "Next page %d. Headings: %s\n", next.PageNo, firstNonEmpty(strings.Join(hs, "; "), "(none)"))
+		fmt.Fprintf(&sb, "It starts: %q\n", textutil.Truncate(groupsText(groups[next.PageNo]), 200))
+	}
+	return sb.String()
+}
+
+func groupsText(gs []layoutGroup) string {
+	var parts []string
+	for _, g := range gs {
+		parts = append(parts, g.text())
+	}
+	return textutil.CollapseSpace(stripMD(strings.Join(parts, " ")))
+}
+
+func tail(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return "…" + string(r[len(r)-n:])
+}
+
+// pageReply is the answer to promptPageNodes.
+type pageReply struct {
+	Lead  string `json:"lead"`
+	Nodes []struct {
+		From    string `json:"from"`
+		Title   string `json:"title"`
+		Level   int    `json:"level"`
+		Summary string `json:"summary"`
+	} `json:"nodes"`
+}
+
+// result checks the reply against the page's groups: nodes must start at
+// known groups in page order. Groups before the first node are the lead;
+// each node covers the groups up to the next one.
+func (r pageReply) result(gs []layoutGroup, words int) (*pageResult, bool) {
+	idx := map[string]int{}
+	for i, g := range gs {
+		idx[g.id] = i
+	}
+	starts := make([]int, len(r.Nodes))
+	for k, n := range r.Nodes {
+		i, ok := idx[strings.TrimSpace(n.From)]
+		if !ok || (k > 0 && i <= starts[k-1]) {
+			return nil, false
+		}
+		starts[k] = i
+	}
+	span := func(from, to int) (int, string) {
+		tok, parts := 0, []string{}
+		for _, g := range gs[from:to] {
+			tok += g.tokens
+			parts = append(parts, g.text())
+		}
+		return tok, strings.Join(parts, "\n")
+	}
+	out := &pageResult{}
+	first := len(gs)
+	if len(starts) > 0 {
+		first = starts[0]
+	}
+	if first > 0 {
+		tok, text := span(0, first)
+		out.leadTokens = tok
+		out.leadSummary = firstNonEmpty(firstWords(r.Lead, words), extractiveSummary(text, words))
+	}
+	for k, n := range r.Nodes {
+		to := len(gs)
+		if k+1 < len(starts) {
+			to = starts[k+1]
+		}
+		tok, text := span(starts[k], to)
+		g := gs[starts[k]]
+		title := firstNonEmpty(strings.TrimSpace(n.Title), g.heading, firstWords(text, 12))
+		out.nodes = append(out.nodes, pageNode{
+			title: textutil.Truncate(textutil.CollapseSpace(title), 120), level: min(max(n.Level, 1), 6), tokens: tok,
+			summary: firstNonEmpty(firstWords(n.Summary, words), extractiveSummary(text, words)),
+		})
+	}
+	return out, true
 }
 
 // card builds the document card from children summaries and metadata.

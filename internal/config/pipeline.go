@@ -193,8 +193,14 @@ type Index struct {
 		MaxTokens int `yaml:"max_tokens"`
 	} `yaml:"section"`
 	Tree struct {
-		LLM              *bool  `yaml:"llm"`
-		FlatMaxPages     int    `yaml:"flat_max_pages"`
+		LLM *bool `yaml:"llm"`
+		// Concurrency is the number of page calls in flight per document.
+		Concurrency int `yaml:"concurrency"`
+		// PageTokens caps the page text sent in one page call.
+		PageTokens int `yaml:"page_tokens"`
+		// MinNodeTokens: a heading with less content under it joins the
+		// group before it (layout merge).
+		MinNodeTokens    int    `yaml:"min_node_tokens"`
 		SummaryWords     int    `yaml:"summary_words"`
 		CardSummaryWords int    `yaml:"card_summary_words"`
 		Provider         string `yaml:"provider"`
@@ -330,7 +336,9 @@ func (c *Config) applyPipelineDefaults() {
 	}
 
 	setInt(&c.Index.Section.MaxTokens, 1500)
-	setInt(&c.Index.Tree.FlatMaxPages, 5)
+	setInt(&c.Index.Tree.Concurrency, 4)
+	setInt(&c.Index.Tree.PageTokens, 1500)
+	setInt(&c.Index.Tree.MinNodeTokens, 40)
 	setInt(&c.Index.Tree.SummaryWords, 60)
 	setInt(&c.Index.Tree.CardSummaryWords, 120)
 

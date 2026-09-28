@@ -46,7 +46,6 @@ func locateWithFabrication(user string) map[string]any {
 func TestIndexAndReasoningSearch(t *testing.T) {
 	h := testkit.New(t, func(c *config.Config) {
 		c.Search.FullDocTokenBudget = 5 // force tree navigation
-		c.Index.Tree.FlatMaxPages = 5
 	})
 	h.LLM.Locate = locateWithFabrication
 	kb := h.KB(types.KBConfig{}, nil)
