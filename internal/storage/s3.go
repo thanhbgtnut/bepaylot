@@ -128,27 +128,36 @@ func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, er
 	return out.Body, ObjectInfo{Key: key, Size: aws.ToInt64(out.ContentLength), ETag: strings.Trim(aws.ToString(out.ETag), `"`), ContentType: aws.ToString(out.ContentType)}, nil
 }
 
-// Download implements ObjectStore with a concurrent ranged download.
+// Download implements ObjectStore with a single streamed GET. The
+// transfermanager's ranged download parses Content-Range as "bytes a-b/n"
+// and panics on stores that answer "bytes=a-b/n", so it is not used here.
 func (s *S3) Download(ctx context.Context, key, path string) (int64, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key})
+	if err != nil {
+		return 0, wrap(key, err)
+	}
+	defer out.Body.Close()
 	tmp := path + ".part"
 	f, err := os.Create(tmp)
 	if err != nil {
 		return 0, err
 	}
-	out, err := s.tm.DownloadObject(ctx, &transfermanager.DownloadObjectInput{Bucket: &s.bucket, Key: &key, WriterAt: f})
-	cerr := f.Close()
+	n, err := io.Copy(f, out.Body)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && out.ContentLength != nil && n != *out.ContentLength {
+		err = fmt.Errorf("short read: got %d of %d bytes", n, *out.ContentLength)
+	}
 	if err != nil {
 		os.Remove(tmp)
-		return 0, wrap(key, err)
-	}
-	if cerr != nil {
-		os.Remove(tmp)
-		return 0, cerr
+		return 0, fmt.Errorf("storage: download %s: %w", key, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
 		return 0, err
 	}
-	return aws.ToInt64(out.ContentLength), nil
+	return n, nil
 }
 
 // Stat implements ObjectStore.
