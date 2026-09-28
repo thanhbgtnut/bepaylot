@@ -2003,6 +2003,8 @@ auth:                               # đăng nhập (§10.6)
 
 redis:
   addr: ${REDIS_ADDR}
+  username: ${REDIS_USERNAME}     # ACL user; rỗng = "default"
+  password: ${REDIS_PASSWORD}     # env REDIS_USERNAME/REDIS_PASSWORD/REDIS_DB ghi đè
   db: 0
 
 storage:                          # S3 (bắt buộc; dev dùng MinIO)

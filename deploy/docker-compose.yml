@@ -23,13 +23,15 @@ services:
   redis:
     image: redis:7.4-alpine
     container_name: bepaylot-redis
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-bepaylot}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-bepaylot}   # lets redis-cli in the healthcheck authenticate
     ports:
       - "${BEPAYLOT_REDIS_PORT:-6380}:6379"
     volumes:
       - bepaylot_redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 3s
       timeout: 3s
       retries: 20

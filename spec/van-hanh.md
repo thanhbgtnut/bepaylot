@@ -94,7 +94,7 @@ Cấu hình đầy đủ ở `configs/config.yaml`; mọi `${VAR}` lấy từ m�
 | `DATABASE_URL` | có | Postgres |
 | `BEPAYLOT_ENV` | có | `production` ở môi trường thật (khác `development` thì thiếu S3/Redis là lỗi, không lặng lẽ dùng RAM) |
 | `BEPAYLOT_ROLE` | có | `api` hoặc `worker` |
-| `REDIS_ADDR`, `REDIS_PASSWORD` | có | rỗng = chạy task trong process, **chỉ dev** |
+| `REDIS_ADDR`, `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_DB` | có | rỗng = chạy task trong process, **chỉ dev** |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | có | bucket rỗng = lưu trong RAM, **chỉ dev** |
 | `TURBOOCR_URL` | có | |
 | `BEPAYLOT_DEFAULT_PROVIDER`, `BEPAYLOT_DEFAULT_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` (hoặc `ANTHROPIC_API_KEY`) | có | provider `fake` chỉ dùng cho test |
@@ -196,7 +196,7 @@ Probe Kubernetes gợi ý: liveness `GET /healthz` (period 10 s, fail 3), readin
 
 ```bash
 pg_isready -d "$DATABASE_URL"
-redis-cli -h <host> -p <port> ${REDIS_PASSWORD:+-a $REDIS_PASSWORD} ping           # PONG
+redis-cli -h <host> -p <port> ${REDIS_USERNAME:+--user $REDIS_USERNAME} ${REDIS_PASSWORD:+-a $REDIS_PASSWORD} ping           # PONG
 curl -s -o /dev/null -w '%{http_code}\n' "$S3_ENDPOINT/minio/health/live"          # 200 (MinIO)
 curl -s -X POST "$TURBOOCR_URL/ocr/raw" -H 'Content-Type: application/octet-stream' \
      --data-binary @trang-mau.jpg | head -c 300                                    # JSON có results[]

@@ -5,7 +5,7 @@
 #   BP_URL          địa chỉ API, mặc định http://localhost:8080
 #   BP_ADMIN_KEY    API key của một tài khoản có trong BEPAYLOT_ADMIN_EMAILS
 #                   (không có thì bỏ qua phần queue / dead-letter / engine)
-#   REDIS_ADDR, REDIS_PASSWORD, S3_ENDPOINT, TURBOOCR_URL, VLM_BASE_URL,
+#   REDIS_ADDR, REDIS_USERNAME, REDIS_PASSWORD, S3_ENDPOINT, TURBOOCR_URL, VLM_BASE_URL,
 #   OPENAI_BASE_URL  lấy từ cấu hình của dịch vụ
 #
 # Mã thoát: 0 = mọi kiểm tra OK, 1 = có kiểm tra FAIL (WARN không làm fail).
@@ -47,7 +47,7 @@ echo "2. Phụ thuộc"
 if [ -n "${REDIS_ADDR:-}" ]; then
   if command -v redis-cli >/dev/null; then
     host=${REDIS_ADDR%:*}; port=${REDIS_ADDR##*:}
-    if [ "$(redis-cli -h "$host" -p "$port" ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} --no-auth-warning ping 2>/dev/null)" = PONG ]; then ok "Redis $REDIS_ADDR"; else fail "Redis $REDIS_ADDR không trả PONG"; fi
+    if [ "$(redis-cli -h "$host" -p "$port" ${REDIS_USERNAME:+--user "$REDIS_USERNAME"} ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} --no-auth-warning ping 2>/dev/null)" = PONG ]; then ok "Redis $REDIS_ADDR"; else fail "Redis $REDIS_ADDR không trả PONG"; fi
   else
     if (exec 3<>"/dev/tcp/${REDIS_ADDR%:*}/${REDIS_ADDR##*:}") 2>/dev/null; then ok "Redis $REDIS_ADDR (mở cổng TCP; cài redis-cli để kiểm tra PING)"; else fail "Redis $REDIS_ADDR không kết nối được"; fi
   fi

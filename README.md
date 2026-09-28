@@ -547,6 +547,7 @@ Cấu hình nằm trong `configs/config.yaml`; mọi giá trị `${VAR}` đượ
 | `BEPAYLOT_HTTP_ADDR` | địa chỉ API | `:8080` |
 | `BEPAYLOT_ROLE` | `api` \| `worker` \| `all` | `all` |
 | `REDIS_ADDR` | Redis cho asynq | rỗng = chạy task trong process (chỉ dev, 1 instance) |
+| `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_DB` | tài khoản Redis (ACL user, mật khẩu) và số DB | container dev dùng mật khẩu `REDIS_PASSWORD` (mặc định `bepaylot`); username rỗng = `default`; DB `0` |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` | S3 / MinIO | bucket rỗng = lưu trong RAM (chỉ `development`) |
 | `TURBOOCR_URL` | engine OCR mặc định (`POST /ocr/raw`) | |
 | `BEPAYLOT_CALLBACK_SECRET` | secret ký HMAC cho callback | rỗng = không ký |

@@ -137,7 +137,8 @@ log:
 # single instance only).
 redis:
   addr: ${REDIS_ADDR}
-  password: ${REDIS_PASSWORD}
+  username: ${REDIS_USERNAME}     # ACL user (Redis 6+); rỗng = user "default"
+  password: ${REDIS_PASSWORD}     # REDIS_USERNAME/REDIS_PASSWORD/REDIS_DB trong env ghi đè
   db: 0
 
 # Original files, rendered page images and raw parser output live in S3;

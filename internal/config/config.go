@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -314,6 +315,19 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("REDIS_ADDR"); v != "" {
 		c.Redis.Addr = v
+	}
+	// Credentials are read straight from the env so passwords with YAML
+	// special characters (#, :, quotes) survive ${VAR} expansion.
+	if v := os.Getenv("REDIS_USERNAME"); v != "" {
+		c.Redis.Username = v
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		c.Redis.Password = v
+	}
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.Redis.DB = n
+		}
 	}
 	if v := os.Getenv("BEPAYLOT_ROLE"); v != "" {
 		c.Workers.Role = v
