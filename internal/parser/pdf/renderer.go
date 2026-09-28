@@ -112,6 +112,11 @@ func New(cfg Config) (*Renderer, error) {
 	var pool pdfium.Pool
 	switch cfg.Mode {
 	case "multi_threaded":
+		bin, err := findWorkerBin(cfg.WorkerBin)
+		if err != nil {
+			return nil, err
+		}
+		cfg.WorkerBin = bin
 		pool = multi_threaded.Init(multi_threaded.Config{
 			MinIdle: cfg.Workers, MaxIdle: cfg.Workers, MaxTotal: cfg.Workers,
 			Command:     multi_threaded.Command{BinPath: cfg.WorkerBin, StartTimeout: 30 * time.Second},
@@ -244,16 +249,17 @@ func (r *Renderer) Probe(ctx context.Context, path string) (*DocInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, killed, err := call(r, s, func(p pdfium.Pdfium) (*DocInfo, error) { return probe(p, path) })
+	info, killed, err := call(r, s, func(p pdfium.Pdfium) (*DocInfo, error) { return r.probe(p, path) })
 	r.release(s, killed)
 	return info, err
 }
 
-func probe(p pdfium.Pdfium, path string) (*DocInfo, error) {
-	doc, err := p.OpenDocument(&requests.OpenDocument{FilePath: &path})
+func (r *Renderer) probe(p pdfium.Pdfium, path string) (*DocInfo, error) {
+	doc, done, err := r.openDocument(p, path)
 	if err != nil {
 		return nil, fmt.Errorf("pdf: open: %w", err)
 	}
+	defer done()
 	defer p.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
 
 	cnt, err := p.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
@@ -319,8 +325,11 @@ func (r *Renderer) RenderBatch(ctx context.Context, path string, pages []int, op
 	killed := false
 	defer func() { r.release(s, killed) }()
 
+	done := func() {}
 	doc, k, err := call(r, s, func(p pdfium.Pdfium) (*responses.OpenDocument, error) {
-		return p.OpenDocument(&requests.OpenDocument{FilePath: &path})
+		d, rel, err := r.openDocument(p, path)
+		done = rel
+		return d, err
 	})
 	if err != nil {
 		killed = k
@@ -330,6 +339,7 @@ func (r *Renderer) RenderBatch(ctx context.Context, path string, pages []int, op
 		if !killed {
 			_, _ = s.inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
 		}
+		done()
 	}()
 
 	for _, pageNo := range pages {

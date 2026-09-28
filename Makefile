@@ -46,7 +46,7 @@ run-worker: ## Run only the task workers (needs REDIS_ADDR)
 
 .PHONY: pdfium-worker
 pdfium-worker: ## Build the cgo PDFium worker (needs libpdfium + pkg-config pdfium)
-	CGO_ENABLED=1 go build -tags pdfium_cgo -o bin/pdfium-worker ./cmd/pdfium-worker
+	CGO_ENABLED=1 go build -tags pdfium_cgo -o bin/pdfium-worker$(if $(filter Windows_NT,$(OS)),.exe,) ./cmd/pdfium-worker
 
 .PHONY: up
 up: ## Start Postgres (pgvector), Redis and MinIO
