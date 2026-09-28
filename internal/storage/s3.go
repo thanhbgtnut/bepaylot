@@ -47,6 +47,13 @@ func NewS3(ctx context.Context, cfg config.S3Cfg) (*S3, error) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
 		}
 		o.UsePathStyle = cfg.UsePathStyle
+		// Only send CRC32 checksums when an operation requires them; the
+		// default aws-chunked trailing checksums are not understood by many
+		// S3-compatible stores. Content-MD5 is added on every body instead, and
+		// the payload is signed with its real SHA-256 (not UNSIGNED-PAYLOAD).
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		o.APIOptions = append(o.APIOptions, addContentMD5, signPayloadSHA256)
 	})
 	partSize := cfg.PartSizeMB << 20
 	if partSize < 5<<20 {
@@ -61,6 +68,7 @@ func NewS3(ctx context.Context, cfg config.S3Cfg) (*S3, error) {
 		tm: transfermanager.New(client, func(o *transfermanager.Options) {
 			o.PartSizeBytes = partSize
 			o.Concurrency = conc
+			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		}),
 		presign: s3.NewPresignClient(client),
 		bucket:  cfg.Bucket,
