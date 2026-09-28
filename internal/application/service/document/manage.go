@@ -426,8 +426,10 @@ func (s *Service) Page(ctx context.Context, owner, id uuid.UUID, pageNo int) (*P
 	return &PageView{DocumentPage: pg, Blocks: blocks, Lines: lines}, nil
 }
 
-// PageImage returns a presigned URL (presign on) or a stream of the image.
-func (s *Service) PageImage(ctx context.Context, owner, id uuid.UUID, pageNo int) (url string, body io.ReadCloser, size int64, err error) {
+// PageImage streams the page image. With redirect (and storage.presign on)
+// it returns a presigned URL instead, for clients that can follow a
+// cross-origin redirect; the web app cannot (§9.1).
+func (s *Service) PageImage(ctx context.Context, owner, id uuid.UUID, pageNo int, redirect bool) (url string, body io.ReadCloser, size int64, err error) {
 	d, err := s.GetOwned(ctx, owner, id)
 	if err != nil {
 		return "", nil, 0, err
@@ -436,7 +438,7 @@ func (s *Service) PageImage(ctx context.Context, owner, id uuid.UUID, pageNo int
 	if err != nil || pg.ImageKey == "" {
 		return "", nil, 0, ErrNotFound
 	}
-	if s.cfg.Storage.PresignEnabled() {
+	if redirect && s.cfg.Storage.PresignEnabled() {
 		u, err := s.objects.PresignGet(ctx, pg.ImageKey, s.cfg.Storage.PresignTTL)
 		return u, nil, 0, err
 	}

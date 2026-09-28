@@ -3,14 +3,15 @@ package vlm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -40,49 +41,11 @@ func TestSplitFrontMatter(t *testing.T) {
 	}
 }
 
-func TestClientTranscribe(t *testing.T) {
-	var got chatRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer k" {
-			http.Error(w, "bad", http.StatusBadRequest)
-			return
-		}
-		_ = json.NewDecoder(r.Body).Decode(&got)
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"---\nprimary_language: vi\n---\nXin chào"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3}}`)
-	}))
-	defer srv.Close()
-	c := NewClient(ClientConfig{BaseURL: srv.URL + "/v1/", APIKey: "k", Model: "allenai/olmocr-2-7b"})
-	tr, err := c.Transcribe(context.Background(), []byte{0xff, 0xd8})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tr.Text != "Xin chào" || tr.Meta["primary_language"] != "vi" || tr.PromptTokens != 10 {
-		t.Fatalf("transcription = %+v", tr)
-	}
-	parts := got.Messages[0].Content
-	if got.Model != "allenai/olmocr-2-7b" || len(parts) != 2 || parts[0].Text != DefaultPrompt ||
-		!strings.HasPrefix(parts[1].ImageURL.URL, "data:image/jpeg;base64,") {
-		t.Fatalf("request = %+v", got)
-	}
-}
-
-func TestClientStatusErrors(t *testing.T) {
-	code := http.StatusServiceUnavailable
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "busy", code) }))
-	defer srv.Close()
-	c := NewClient(ClientConfig{BaseURL: srv.URL})
-	_, err := c.Transcribe(context.Background(), nil)
-	if !Retryable(err) {
-		t.Fatalf("503 should be retryable: %v", err)
-	}
-	code = http.StatusBadRequest
-	if _, err = c.Transcribe(context.Background(), nil); Retryable(err) {
-		t.Fatalf("400 should not be retryable: %v", err)
-	}
-}
-
 // fakeLayout serves the TurboOCR sample.
-type fakeLayout struct{ calls atomic.Int32 }
+type fakeLayout struct {
+	calls  atomic.Int32
+	sealID int // >0: that region becomes a seal
+}
 
 func (f *fakeLayout) Name() string                 { return turboocr.Name }
 func (f *fakeLayout) Health(context.Context) error { return nil }
@@ -100,24 +63,33 @@ func (f *fakeLayout) ParsePage(_ context.Context, in parser.PageImage, _ parser.
 		return nil, err
 	}
 	p.Width, p.Height = in.Width, in.Height
+	for i := range p.Regions {
+		if f.sealID > 0 && p.Regions[i].ID == f.sealID {
+			p.Regions[i].Class = "seal"
+		}
+	}
 	return p, nil
 }
 
-// fakeVLM recognizes the region from the crop size and returns its OCR text
-// with accents fixed, a HTML table for the table region, and fails one region.
+// fakeVLM answers from the region ids of the request: each region's OCR
+// text with accents fixed, a HTML table for the table region; one region
+// fails when read alone, and one is left out of batch answers.
 type fakeVLM struct {
 	page     *parser.RawPage
-	pad      int
 	inflight atomic.Int32
 	peak     atomic.Int32
+	calls    atomic.Int32
+	batches  atomic.Int32
 	mu       sync.Mutex
 	seen     map[int]bool
 	failID   int
+	dropID   int // missing from batch answers → read again alone
+	noMarks  bool
 }
 
 func (f *fakeVLM) Model() string                { return "fake-olmocr" }
 func (f *fakeVLM) Health(context.Context) error { return nil }
-func (f *fakeVLM) Transcribe(ctx context.Context, img []byte) (*Transcription, error) {
+func (f *fakeVLM) Transcribe(ctx context.Context, req Request) (*Transcription, error) {
 	n := f.inflight.Add(1)
 	defer f.inflight.Add(-1)
 	for {
@@ -126,35 +98,54 @@ func (f *fakeVLM) Transcribe(ctx context.Context, img []byte) (*Transcription, e
 			break
 		}
 	}
+	f.calls.Add(1)
 	time.Sleep(5 * time.Millisecond)
-	cfg, err := jpeg.DecodeConfig(bytes.NewReader(img))
-	if err != nil {
+	if _, err := jpeg.DecodeConfig(bytes.NewReader(req.JPEG)); err != nil {
 		return nil, err
 	}
-	for _, r := range f.page.Regions {
-		b := r.Quad.BBox()
-		w, h := int(b.X1+float64(f.pad)+0.5)-int(b.X0-float64(f.pad)), int(b.Y1+float64(f.pad)+0.5)-int(b.Y0-float64(f.pad))
-		if w != cfg.Width || h != cfg.Height {
-			continue
-		}
-		f.mu.Lock()
-		f.seen[r.ID] = true
-		f.mu.Unlock()
-		if r.ID == f.failID {
-			return nil, &StatusError{Code: 400, Body: "bad image"}
-		}
-		if r.Class == "table" {
-			return &Transcription{Text: "---\nis_table: True\n---\n<table><tr><th>STT</th><th>Tên ngành</th></tr><tr><td>1</td><td>Gia công cơ khí<br>Chi tiết: Gia công tôn</td></tr></table>"}, nil
+	text := func(id int) string {
+		for _, r := range f.page.Regions {
+			if r.ID != id {
+				continue
+			}
+			if r.Class == "table" {
+				return "<table><tr><th>STT</th><th>Tên ngành</th></tr><tr><td>1</td><td>Gia công cơ khí<br>Chi tiết: Gia công tôn</td></tr></table>"
+			}
 		}
 		var parts []string
 		for _, l := range f.page.Lines {
-			if l.LayoutID == r.ID {
+			if l.LayoutID == id {
 				parts = append(parts, strings.ReplaceAll(l.Text, "BẢNGỐC", "BẢN GỐC"))
 			}
 		}
-		return &Transcription{Text: "---\nprimary_language: vi\n---\n" + strings.Join(parts, " ")}, nil
+		return strings.Join(parts, " ")
 	}
-	return nil, errors.New("unknown crop")
+	f.mu.Lock()
+	for _, id := range req.Regions {
+		f.seen[id] = true
+	}
+	f.mu.Unlock()
+	if len(req.Regions) == 1 {
+		if req.Regions[0] == f.failID {
+			return nil, &PermanentError{Err: errors.New("bad image")}
+		}
+		return &Transcription{Text: "---\nprimary_language: vi\n---\n" + text(req.Regions[0])}, nil
+	}
+	f.batches.Add(1)
+	if !strings.Contains(req.Prompt, fmt.Sprintf("stacks %d regions", len(req.Regions))) {
+		return nil, fmt.Errorf("batch prompt = %q", req.Prompt)
+	}
+	var sb strings.Builder
+	for k, id := range req.Regions {
+		if id == f.dropID {
+			continue
+		}
+		if !f.noMarks {
+			fmt.Fprintf(&sb, "<<<%d>>>\n", k+1)
+		}
+		sb.WriteString(text(id) + "\n\n")
+	}
+	return &Transcription{Text: sb.String(), PromptTokens: 100}, nil
 }
 
 func pageJPEG(t *testing.T, w, h int) []byte {
@@ -171,14 +162,14 @@ func pageJPEG(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
-func TestEngineRefinesRegionsConcurrently(t *testing.T) {
-	layout := &fakeLayout{}
+func TestEngineBatchesGroupsAndTagsSeals(t *testing.T) {
+	layout := &fakeLayout{sealID: 17}
 	sample, err := layout.ParsePage(context.Background(), parser.PageImage{Body: strings.NewReader("")}, parser.PageOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fv := &fakeVLM{page: sample, pad: 0, seen: map[int]bool{}, failID: 3}
-	e, err := New(Config{Layout: layout, Client: fv, MaxConcurrency: 3, Padding: 0})
+	fv := &fakeVLM{page: sample, seen: map[int]bool{}, failID: 5, dropID: 3}
+	e, err := New(Config{Layout: layout, Client: fv, MaxConcurrency: 3, Padding: 0, BatchMaxRegions: 100, BatchMaxHeight: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,9 +178,6 @@ func TestEngineRefinesRegionsConcurrently(t *testing.T) {
 	raw, err := e.ParsePage(context.Background(), in, parser.PageOptions{Layout: true, ReadingOrder: true, Tables: true, Refine: true})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if p := fv.peak.Load(); p < 2 || p > 3 {
-		t.Errorf("peak concurrency = %d, want 2..3", p)
 	}
 	selected := 0
 	for _, r := range raw.Regions {
@@ -200,19 +188,35 @@ func TestEngineRefinesRegionsConcurrently(t *testing.T) {
 	// Regions 30 and 33 hold no lines and enclose 26/27 and 21/24; region 31
 	// holds no line and lies inside 9, which has its line. All are skipped.
 	selected -= 3
-	if len(fv.seen) != selected || fv.seen[30] || fv.seen[33] || fv.seen[31] {
-		t.Errorf("VLM saw %d regions %v, want %d without nested 30, 31, 33", len(fv.seen), fv.seen, selected)
+	if len(fv.seen) != selected || fv.seen[30] || fv.seen[33] || fv.seen[31] || fv.seen[17] {
+		t.Errorf("VLM saw %d regions %v, want %d without nested 30, 31, 33 and seal 17", len(fv.seen), fv.seen, selected)
+	}
+	// One call per group (text, furniture), one per title/table, plus region
+	// 3 read again because the batch answer left it out.
+	if c, b := fv.calls.Load(), fv.batches.Load(); b != 2 || c != 2+2+1 {
+		t.Errorf("calls = %d (batches %d), want 5 (2 batches)", c, b)
 	}
 
 	var env rawEnvelope
-	if err := json.Unmarshal(raw.Raw, &env); err != nil || env.Engine != Name || len(env.Regions) != selected || len(env.Layout) == 0 {
-		t.Fatalf("raw envelope: %v %+v", err, env.Engine)
+	if err := json.Unmarshal(raw.Raw, &env); err != nil || env.Engine != Name || len(env.Regions) != selected+1 || len(env.Layout) == 0 || len(env.Calls) != 5 {
+		t.Fatalf("raw envelope: %v regions=%d calls=%d", err, len(env.Regions), len(env.Calls))
+	}
+	for _, r := range env.Regions {
+		switch {
+		case r.LayoutID == 17 && (!r.Tagged || r.Call != -1):
+			t.Errorf("seal not tagged: %+v", r)
+		case r.LayoutID == 3 && (r.Error != "" || env.Calls[r.Call].Group != ""):
+			t.Errorf("dropped region not re-read alone: %+v", r)
+		case r.LayoutID != 17 && r.Call < 0:
+			t.Errorf("region without call: %+v", r)
+		}
 	}
 
-	page := assemble.Build(raw, assemble.Options{PageNo: 1, DPI: 300, Engine: Name, ReadingOrderFix: true})
+	page := assemble.Build(raw, assemble.Options{PageNo: 1, DPI: 300, Engine: Name, ReadingOrderFix: true,
+		AssetKey: func(pg, b int) string { return "fig.jpg" }})
 	assemble.Render(page)
 	md := page.Markdown
-	for _, want := range []string{"ĐÃ ĐỐI CHIẾU BẢN GỐC", "| STT | Tên ngành |", "| 1 | Gia công cơ khí Chi tiết: Gia công tôn |", "GIẤY CHỨNG NHẬN ĐĂNG KÝ HỘ KINH DOANH"} {
+	for _, want := range []string{"ĐÃ ĐỐI CHIẾU BẢN GỐC", "| STT | Tên ngành |", "| 1 | Gia công cơ khí Chi tiết: Gia công tôn |", "GIẤY CHỨNG NHẬN ĐĂNG KÝ HỘ KINH DOANH", "![con dấu p1-"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown lacks %q:\n%s", want, md)
 		}
@@ -222,7 +226,7 @@ func TestEngineRefinesRegionsConcurrently(t *testing.T) {
 		if b.TextSource == types.TextSourceVLM {
 			refined++
 		}
-		if b.SourceID == 3 && b.TextSource == "" && b.Text != "" {
+		if b.SourceID == 5 && b.TextSource == "" && b.Text != "" {
 			failedKept = true // failed region keeps OCR text
 		}
 	}
@@ -234,6 +238,69 @@ func TestEngineRefinesRegionsConcurrently(t *testing.T) {
 		if l.MdStart >= 0 && string(runes[l.MdStart:l.MdEnd]) != l.Text {
 			t.Errorf("line %d offsets point at %q, text %q", l.LineNo, string(runes[l.MdStart:l.MdEnd]), l.Text)
 		}
+	}
+}
+
+func TestEngineBatchLimitsAndConcurrency(t *testing.T) {
+	layout := &fakeLayout{}
+	sample, _ := layout.ParsePage(context.Background(), parser.PageImage{Body: strings.NewReader("")}, parser.PageOptions{})
+	fv := &fakeVLM{page: sample, seen: map[int]bool{}, failID: -1}
+	e, _ := New(Config{Layout: layout, Client: fv, MaxConcurrency: 3, BatchMaxRegions: 4})
+	img := pageJPEG(t, 3319, 4939)
+	if _, err := e.ParsePage(context.Background(), parser.PageImage{Body: bytes.NewReader(img), Width: 3319, Height: 4939}, parser.PageOptions{Refine: true}); err != nil {
+		t.Fatal(err)
+	}
+	if p := fv.peak.Load(); p < 2 || p > 3 {
+		t.Errorf("peak concurrency = %d, want 2..3", p)
+	}
+	if fv.batches.Load() < 5 {
+		t.Errorf("batches = %d: 20+ text regions must be cut by batch_max_regions=4", fv.batches.Load())
+	}
+
+	// A model that ignores the markers costs extra calls, never text.
+	fv2 := &fakeVLM{page: sample, seen: map[int]bool{}, failID: -1, noMarks: true}
+	e2, _ := New(Config{Layout: layout, Client: fv2, BatchMaxHeight: 1 << 20})
+	raw, err := e2.ParsePage(context.Background(), parser.PageImage{Body: bytes.NewReader(img), Width: 3319, Height: 4939}, parser.PageOptions{Refine: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env rawEnvelope
+	_ = json.Unmarshal(raw.Raw, &env)
+	for _, r := range env.Regions {
+		if r.Error != "" || r.Text == "" && r.Class != "table" {
+			t.Errorf("region %d lost its text: %+v", r.LayoutID, r)
+		}
+	}
+}
+
+func TestSplitBatch(t *testing.T) {
+	got := splitBatch("---\nprimary_language: vi\n---\n<<<1>>>\nCỘNG HÒA\n\n<<< 2 >>>\nĐộc lập\n[3]\n<table><tr><td>1</td></tr></table>\n<<<2>>>\ndup")
+	if got[1] != "CỘNG HÒA" || got[2] != "Độc lập" || got[3] != "<table><tr><td>1</td></tr></table>" || len(got) != 3 {
+		t.Fatalf("splitBatch = %#v", got)
+	}
+	if len(splitBatch("no markers at all")) != 0 {
+		t.Fatal("text without markers must not be assigned")
+	}
+}
+
+func TestStitchLayout(t *testing.T) {
+	src := image.NewGray(image.Rect(0, 0, 400, 300))
+	img := stitch(src, []image.Rectangle{image.Rect(0, 0, 200, 50), image.Rect(10, 100, 310, 140)})
+	b := img.Bounds()
+	if b.Dx() != 300+2*margin || b.Dy() != 2*barHeight+50+40+2*gap {
+		t.Fatalf("stitched size = %v", b)
+	}
+	// The first bar is black with a white label.
+	white := 0
+	for x := 0; x < b.Dx(); x++ {
+		for y := 0; y < barHeight; y++ {
+			if r, _, _, _ := img.At(x, y).RGBA(); r > 0xf000 {
+				white++
+			}
+		}
+	}
+	if white == 0 || white > b.Dx()*barHeight/4 {
+		t.Fatalf("label pixels = %d", white)
 	}
 }
 
@@ -250,7 +317,7 @@ func TestEngineSkipsVLMWhenRefineOff(t *testing.T) {
 func TestEngineOnErrorFail(t *testing.T) {
 	layout := &fakeLayout{}
 	sample, _ := layout.ParsePage(context.Background(), parser.PageImage{Body: strings.NewReader("")}, parser.PageOptions{})
-	fv := &fakeVLM{page: sample, seen: map[int]bool{}, failID: 3}
+	fv := &fakeVLM{page: sample, seen: map[int]bool{}, failID: 5}
 	e, _ := New(Config{Layout: layout, Client: fv, OnError: OnErrorFail})
 	img := pageJPEG(t, 3319, 4939)
 	_, err := e.ParsePage(context.Background(), parser.PageImage{Body: bytes.NewReader(img), Width: 3319, Height: 4939}, parser.PageOptions{Refine: true})
@@ -281,10 +348,7 @@ func TestLiveVLM(t *testing.T) {
 	if model == "" {
 		model = "allenai/olmocr-2-7b"
 	}
-	client := NewClient(ClientConfig{BaseURL: base, Model: model, Temperature: 0.1})
-	if err := client.Health(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	client := &httpVLM{base: strings.TrimRight(base, "/"), model: model}
 	e, _ := New(Config{Layout: &fakeLayout{}, Client: client, MaxConcurrency: 4, Padding: 12, MaxSide: 1288, Retries: 1})
 	t0 := time.Now()
 	raw, err := e.ParsePage(context.Background(), parser.PageImage{PageNo: 1, Body: bytes.NewReader(img), Width: cfg.Width, Height: cfg.Height},
@@ -296,7 +360,7 @@ func TestLiveVLM(t *testing.T) {
 	_ = json.Unmarshal(raw.Raw, &env)
 	failed := 0
 	for _, r := range env.Regions {
-		t.Logf("region %2d %-15s %5dms %q%s", r.LayoutID, r.Class, r.Ms, trim(r.Text, 80), r.Error)
+		t.Logf("region %2d %-15s call %2d %q%s", r.LayoutID, r.Class, r.Call, trim(r.Text, 80), r.Error)
 		if r.Error != "" {
 			failed++
 		}
@@ -317,11 +381,42 @@ func TestLiveVLM(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d regions (%d failed) in %s; %d blocks refined; %d/%d VLM lines located\n%s",
-		len(env.Regions), failed, time.Since(t0).Round(time.Millisecond), refined, located, vlmLines, page.Markdown)
+	t.Logf("%d regions (%d failed), %d calls in %s; %d blocks refined; %d/%d VLM lines located\n%s",
+		len(env.Regions), failed, len(env.Calls), time.Since(t0).Round(time.Millisecond), refined, located, vlmLines, page.Markdown)
 	if refined == 0 || failed == len(env.Regions) {
 		t.Fatal("no region was refined")
 	}
+}
+
+// httpVLM is a minimal OpenAI-compatible client for the live test only; in
+// production the engine reads through the agent (agent.Extract).
+type httpVLM struct{ base, model string }
+
+func (h *httpVLM) Model() string                { return h.model }
+func (h *httpVLM) Health(context.Context) error { return nil }
+func (h *httpVLM) Transcribe(ctx context.Context, req Request) (*Transcription, error) {
+	body, _ := json.Marshal(map[string]any{"model": h.model, "temperature": 0.1, "max_tokens": 4096,
+		"messages": []any{map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": req.Prompt},
+			map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(req.JPEG)}},
+		}}}})
+	hr, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.base+"/chat/completions", bytes.NewReader(body))
+	hr.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(hr)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var cr struct {
+		Choices []struct {
+			Message struct{ Content string } `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil || len(cr.Choices) == 0 {
+		return nil, fmt.Errorf("status %d: %v", resp.StatusCode, err)
+	}
+	meta, text := SplitFrontMatter(cr.Choices[0].Message.Content)
+	return &Transcription{Text: text, Meta: meta}, nil
 }
 
 func trim(s string, n int) string {
@@ -392,7 +487,7 @@ type pageVLM struct{ calls atomic.Int32 }
 
 func (p *pageVLM) Model() string                { return "fake-olmocr" }
 func (p *pageVLM) Health(context.Context) error { return nil }
-func (p *pageVLM) Transcribe(context.Context, []byte) (*Transcription, error) {
+func (p *pageVLM) Transcribe(context.Context, Request) (*Transcription, error) {
 	p.calls.Add(1)
 	meta, text := SplitFrontMatter(fullPageMD)
 	return &Transcription{Text: text, Meta: meta}, nil

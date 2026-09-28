@@ -76,6 +76,13 @@ llm:
       # /chat/completions suffix is trimmed automatically.
       api_key: ${OPENAI_API_KEY}
       base_url: ${OPENAI_BASE_URL}
+    # Vision model for engine turboocr_vlm (OpenAI-compatible, e.g. LM Studio /
+    # vLLM serving allenai/olmocr-2-7b). Page regions reach it through the
+    # agent (streaming), like any other model call.
+    vlm:
+      kind: openai
+      api_key: ${VLM_API_KEY}
+      base_url: ${VLM_BASE_URL}
     # Deterministic, network-free provider for local development and tests.
     fake:
       kind: fake
@@ -214,23 +221,32 @@ parser:
       timeout: 120s
       options: { layout: true, reading_order: true, tables: true, formulas: false }
       breaker: { failures: 5, open_for: 30s }
-    # turboocr_vlm: TurboOCR layout → crop each region → VLM transcribes the
-    # crops concurrently → text aligned back to OCR lines per page (§5.9).
-    # Registered when base_url is set; pick it with default_engine or the
-    # per-upload `engine` field.
+    # turboocr_vlm: TurboOCR layout → regions read by a vision model through
+    # the agent (streaming, llm.providers) → text aligned back to OCR lines per
+    # page (§5.9). Regions of one page whose classes share a group are stitched
+    # into one numbered image = one call; titles and tables are one call each;
+    # seals are tagged without a call. Registered when provider is set (or
+    # when llm.providers.vlm has a base_url); pick it with default_engine or
+    # the per-upload `engine` field.
     vlm:
-      base_url: ${VLM_BASE_URL}     # e.g. http://localhost:1234/v1 (LM Studio), http://vllm:8000/v1
-      api_key: ${VLM_API_KEY}
-      model: allenai/olmocr-2-7b
+      provider: ${BEPAYLOT_VLM_PROVIDER}   # "" + VLM_BASE_URL set = "vlm"; or the chat provider (vision model)
+      model: ${BEPAYLOT_VLM_MODEL}         # "" = llm.default_model
       max_tokens: 4096
       temperature: 0.1
-      timeout: 180s
-      max_concurrency: 4            # in-flight VLM requests per worker process
+      max_concurrency: 4            # in-flight VLM calls per worker process
       classes: []                   # [] = text-like classes (text, titles, table, formula, header/footer…)
+      groups:                       # one call per page and group; classes outside every group = one call per region
+        text: [text, abstract, content, reference, aside_text, algorithm]
+        caption: [figure_title, table_title, chart_title]
+        furniture: [header, footer, footnote]
+        formula: [formula]
+      tag_classes: [seal]           # tagged from the layout, never sent to the VLM
+      batch_max_regions: 20         # regions per batch call
+      batch_max_height: 2400        # px of a stitched batch before downscaling to max_side
       padding: 12
       max_side: 1288                # olmOCR is trained on 1288 px pages
       jpeg_quality: 90
-      retries: 1
+      retries: 0                    # extra attempts on top of the provider's own retries
       on_error: fallback            # fallback = keep OCR text for that region | fail = retry the page
       full_page: true               # no layout region → send the whole page
       min_coverage: 0.3             # share of OCR words that must agree with the VLM text

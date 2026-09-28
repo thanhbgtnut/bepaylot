@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,32 +33,49 @@ var DefaultClasses = []string{
 	"table", "formula", "figure_title", "table_title", "chart_title", "header", "footer", "footnote",
 }
 
+// DefaultGroups batch similar classes: the regions of one page whose classes
+// share a group are read in one call. Classes outside every group (titles,
+// tables) are read one region per call.
+var DefaultGroups = map[string][]string{
+	"text":      {"text", "abstract", "content", "reference", "aside_text", "algorithm"},
+	"caption":   {"figure_title", "table_title", "chart_title"},
+	"furniture": {"header", "footer", "footnote"},
+	"formula":   {"formula"},
+}
+
+// DefaultTagClasses are tagged from the layout alone, without a VLM call.
+var DefaultTagClasses = []string{"seal"}
+
 // Error policies when a region cannot be transcribed.
 const (
 	OnErrorFallback = "fallback" // keep the OCR text of that region
 	OnErrorFail     = "fail"     // fail the page (the task retries it)
 )
 
-// Transcriber reads one cropped image; *Client is the production one.
-type Transcriber interface {
-	Transcribe(ctx context.Context, jpeg []byte) (*Transcription, error)
-	Health(ctx context.Context) error
-	Model() string
-}
-
 // Config configures the engine.
 type Config struct {
 	// Layout is the engine that finds regions and lines (TurboOCR).
 	Layout parser.Engine
 	Client Transcriber
-	// MaxConcurrency bounds in-flight VLM requests across all pages of this
+	// MaxConcurrency bounds in-flight VLM calls across all pages of this
 	// process; the per-page fan-out waits on it.
 	MaxConcurrency int
 	Classes        []string
+	// Groups maps a group name to the classes it batches (DefaultGroups when
+	// nil; an empty map turns batching off).
+	Groups     map[string][]string
+	TagClasses []string
+	// Prompt reads one region, BatchPrompt a stitched batch (with %d).
+	Prompt      string
+	BatchPrompt string
+	// BatchMaxRegions and BatchMaxHeight (px of the stitched image before
+	// downscaling) cut a group into several calls.
+	BatchMaxRegions int
+	BatchMaxHeight  int
 	// Padding in pixels added around each region before cropping.
 	Padding int
-	// MaxSide downscales crops whose longer side exceeds it (olmOCR is
-	// trained on 1288 px pages); 0 keeps the crop size.
+	// MaxSide downscales images whose longer side exceeds it (olmOCR is
+	// trained on 1288 px pages); 0 keeps the size.
 	MaxSide     int
 	MinSide     int // regions thinner than this are skipped
 	JPEGQuality int
@@ -74,6 +92,8 @@ type Config struct {
 type Engine struct {
 	cfg     Config
 	classes map[string]bool
+	groupOf map[string]string
+	tagged  map[string]bool
 	sem     chan struct{}
 }
 
@@ -87,6 +107,24 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if len(cfg.Classes) == 0 {
 		cfg.Classes = DefaultClasses
+	}
+	if cfg.Groups == nil {
+		cfg.Groups = DefaultGroups
+	}
+	if cfg.TagClasses == nil {
+		cfg.TagClasses = DefaultTagClasses
+	}
+	if cfg.Prompt == "" {
+		cfg.Prompt = DefaultPrompt
+	}
+	if cfg.BatchPrompt == "" {
+		cfg.BatchPrompt = DefaultBatchPrompt
+	}
+	if cfg.BatchMaxRegions <= 0 {
+		cfg.BatchMaxRegions = 20
+	}
+	if cfg.BatchMaxHeight <= 0 {
+		cfg.BatchMaxHeight = 2400
 	}
 	if cfg.Padding < 0 {
 		cfg.Padding = 0
@@ -103,12 +141,23 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	e := &Engine{cfg: cfg, classes: map[string]bool{}, sem: make(chan struct{}, cfg.MaxConcurrency)}
+	e := &Engine{cfg: cfg, classes: map[string]bool{}, groupOf: map[string]string{}, tagged: map[string]bool{},
+		sem: make(chan struct{}, cfg.MaxConcurrency)}
 	for _, c := range cfg.Classes {
-		e.classes[strings.ToLower(strings.TrimSpace(c))] = true
+		e.classes[norm(c)] = true
+	}
+	for g, cs := range cfg.Groups {
+		for _, c := range cs {
+			e.groupOf[norm(c)] = g
+		}
+	}
+	for _, c := range cfg.TagClasses {
+		e.tagged[norm(c)] = true
 	}
 	return e, nil
 }
+
+func norm(c string) string { return strings.ToLower(strings.TrimSpace(c)) }
 
 // Name implements parser.Engine.
 func (e *Engine) Name() string { return Name }
@@ -123,35 +172,49 @@ func (e *Engine) Health(ctx context.Context) error {
 	return e.cfg.Client.Health(ctx)
 }
 
-// RegionResult records one region's VLM call (kept in RawPage.Raw).
+// RegionResult records one region (kept in RawPage.Raw).
 type RegionResult struct {
-	LayoutID         int               `json:"layout_id"`
-	Class            string            `json:"class"`
-	BBox             [4]int            `json:"bbox"`
-	Ms               int               `json:"ms"`
-	Text             string            `json:"text,omitempty"`
-	Meta             map[string]string `json:"meta,omitempty"`
-	PromptTokens     int               `json:"prompt_tokens,omitempty"`
-	CompletionTokens int               `json:"completion_tokens,omitempty"`
-	Truncated        bool              `json:"truncated,omitempty"`
-	Error            string            `json:"error,omitempty"`
+	LayoutID int    `json:"layout_id"`
+	Class    string `json:"class"`
+	BBox     [4]int `json:"bbox"`
+	// Call is the index of the call that read the region in rawEnvelope.Calls
+	// (-1 for a tagged region).
+	Call      int               `json:"call"`
+	Tagged    bool              `json:"tagged,omitempty"`
+	Text      string            `json:"text,omitempty"`
+	Meta      map[string]string `json:"meta,omitempty"`
+	Truncated bool              `json:"truncated,omitempty"`
+	Error     string            `json:"error,omitempty"`
+}
+
+// CallResult records one VLM call: a batch of one group or a single region.
+type CallResult struct {
+	Group            string `json:"group,omitempty"` // "" = single region
+	Regions          []int  `json:"regions"`
+	Ms               int    `json:"ms"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	Truncated        bool   `json:"truncated,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // rawEnvelope is what RawPage.Raw holds for this engine.
 type rawEnvelope struct {
 	Engine string `json:"engine"`
 	Model  string `json:"model"`
-	// Mode is "regions" (layout + one VLM call per region) or "full_page"
-	// (no layout: the whole page went to the VLM).
+	// Mode is "regions" (layout + grouped VLM calls) or "full_page" (no
+	// layout: the whole page went to the VLM).
 	Mode        string          `json:"mode"`
 	LayoutError string          `json:"layout_error,omitempty"`
 	Layout      json.RawMessage `json:"layout,omitempty"`
 	Regions     []RegionResult  `json:"regions"`
+	Calls       []CallResult    `json:"calls"`
 	Ms          int             `json:"ms"`
 }
 
-// ParsePage runs the layout engine, then transcribes the selected regions
-// concurrently and attaches the text to them.
+// ParsePage runs the layout engine, tags seals, reads the selected regions
+// with as few VLM calls as possible (one per group batch, one per title or
+// table), and attaches the text to the regions.
 //
 // With FullPage, a page the layout engine cannot handle (error, circuit open,
 // or nothing found) is sent whole to the VLM and its markdown is split into
@@ -181,7 +244,16 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 		return e.fullPage(ctx, img, in, "layout engine found no region and no line")
 	}
 	targets := e.selectRegions(page)
+	var results []RegionResult
+	for _, r := range page.Regions {
+		if e.tagged[norm(r.Class)] {
+			b := r.Quad.BBox()
+			results = append(results, RegionResult{LayoutID: r.ID, Class: r.Class, Call: -1, Tagged: true,
+				BBox: [4]int{int(b.X0), int(b.Y0), int(b.X1 + 0.5), int(b.Y1 + 0.5)}})
+		}
+	}
 	if len(targets) == 0 {
+		e.envelope(page, "regions", "", results, nil, 0)
 		return page, nil
 	}
 	src, _, err := image.Decode(bytes.NewReader(img))
@@ -190,13 +262,15 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 	}
 
 	t0 := time.Now()
-	results := make([]RegionResult, len(targets))
+	batches := e.plan(src, page, targets)
+	out := make([][]RegionResult, len(batches))
+	calls := make([][]CallResult, len(batches))
 	var wg sync.WaitGroup
-	for i, ri := range targets {
+	for i, b := range batches {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = e.transcribe(ctx, src, page.Regions[ri])
+			out[i], calls[i] = e.read(ctx, src, page, b)
 		}()
 	}
 	wg.Wait()
@@ -204,30 +278,46 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 		return nil, err
 	}
 
-	failed := 0
-	for i, ri := range targets {
-		r := results[i]
-		if r.Error != "" {
-			failed++
-			continue
-		}
-		apply(&page.Regions[ri], r.Text)
+	byID := map[int]int{}
+	for i, r := range page.Regions {
+		byID[r.ID] = i
 	}
-	env := rawEnvelope{Engine: Name, Model: e.cfg.Client.Model(), Mode: "regions", Layout: json.RawMessage(page.Raw), Regions: results,
-		Ms: int(time.Since(t0).Milliseconds())}
-	if !json.Valid(page.Raw) {
-		env.Layout = nil
+	var allCalls []CallResult
+	failed, total := 0, 0
+	for i := range batches {
+		for _, r := range out[i] {
+			if r.Call >= 0 {
+				r.Call += len(allCalls)
+			}
+			total++
+			if r.Error != "" {
+				failed++
+			} else {
+				apply(&page.Regions[byID[r.LayoutID]], r.Text)
+			}
+			results = append(results, r)
+		}
+		allCalls = append(allCalls, calls[i]...)
+	}
+	e.envelope(page, "regions", "", results, allCalls, int(time.Since(t0).Milliseconds()))
+	if failed > 0 {
+		e.cfg.Log.Warn("vlm: regions failed", "page", in.PageNo, "failed", failed, "total", total, "first_err", firstErr(results))
+		if e.cfg.OnError == OnErrorFail {
+			return nil, fmt.Errorf("vlm: %d/%d regions failed: %s", failed, total, firstErr(results))
+		}
+	}
+	return page, nil
+}
+
+func (e *Engine) envelope(page *parser.RawPage, mode, layoutErr string, regions []RegionResult, calls []CallResult, ms int) {
+	env := rawEnvelope{Engine: Name, Model: e.cfg.Client.Model(), Mode: mode, LayoutError: layoutErr,
+		Regions: regions, Calls: calls, Ms: ms}
+	if json.Valid(page.Raw) {
+		env.Layout = json.RawMessage(page.Raw)
 	}
 	if b, err := json.Marshal(env); err == nil {
 		page.Raw = b
 	}
-	if failed > 0 {
-		e.cfg.Log.Warn("vlm: regions failed", "page", in.PageNo, "failed", failed, "total", len(targets), "first_err", firstErr(results))
-		if e.cfg.OnError == OnErrorFail {
-			return nil, fmt.Errorf("vlm: %d/%d regions failed: %s", failed, len(targets), firstErr(results))
-		}
-	}
-	return page, nil
 }
 
 // selectRegions returns indexes of regions to transcribe. With FullPage and
@@ -244,7 +334,7 @@ func (e *Engine) selectRegions(page *parser.RawPage) []int {
 	var out []int
 	for i, r := range page.Regions {
 		b := r.Quad.BBox()
-		if !e.classes[strings.ToLower(r.Class)] || b.Width() < float64(e.cfg.MinSide) || b.Height() < float64(e.cfg.MinSide) {
+		if !e.classes[norm(r.Class)] || b.Width() < float64(e.cfg.MinSide) || b.Height() < float64(e.cfg.MinSide) {
 			continue
 		}
 		if !hasLines[r.ID] && nestedWithRegionWithLines(page.Regions, i, hasLines) {
@@ -291,38 +381,154 @@ func nestedWithRegionWithLines(regions []parser.RawRegion, i int, hasLines map[i
 	return false
 }
 
-// transcribe crops one region and calls the VLM, retrying transient errors.
-func (e *Engine) transcribe(ctx context.Context, src image.Image, r parser.RawRegion) RegionResult {
-	return e.transcribeWith(ctx, src, r, e.cfg.Padding)
+// batch is one planned call: a group's regions (in top-to-bottom order) or a
+// single region (group "").
+type batch struct {
+	group   string
+	regions []int // indexes into page.Regions
 }
 
-func (e *Engine) transcribeWith(ctx context.Context, src image.Image, r parser.RawRegion, padding int) RegionResult {
-	b := r.Quad.BBox()
-	pad := float64(padding)
-	rect := image.Rect(int(b.X0-pad), int(b.Y0-pad), int(b.X1+pad+0.5), int(b.Y1+pad+0.5)).Intersect(src.Bounds())
-	res := RegionResult{LayoutID: r.ID, Class: r.Class, BBox: [4]int{rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y}}
-	if rect.Empty() {
-		res.Error = "empty crop"
-		return res
+// plan groups the targets: regions of a grouped class are batched per group
+// in reading position, cut by BatchMaxRegions and BatchMaxHeight; every
+// other region is a batch of its own.
+func (e *Engine) plan(src image.Image, page *parser.RawPage, targets []int) []batch {
+	var out []batch
+	byGroup := map[string][]int{}
+	var groups []string
+	for _, ri := range targets {
+		g := e.groupOf[norm(page.Regions[ri].Class)]
+		if g == "" {
+			out = append(out, batch{regions: []int{ri}})
+			continue
+		}
+		if _, ok := byGroup[g]; !ok {
+			groups = append(groups, g)
+		}
+		byGroup[g] = append(byGroup[g], ri)
 	}
-	crop, err := e.encodeCrop(src, rect)
-	if err != nil {
-		res.Error = err.Error()
-		return res
+	for _, g := range groups {
+		rs := byGroup[g]
+		sort.SliceStable(rs, func(a, b int) bool {
+			ba, bb := page.Regions[rs[a]].Quad.BBox(), page.Regions[rs[b]].Quad.BBox()
+			if ba.Y0 != bb.Y0 {
+				return ba.Y0 < bb.Y0
+			}
+			return ba.X0 < bb.X0
+		})
+		cur := batch{group: g}
+		h := 0
+		for _, ri := range rs {
+			rh := e.cropRect(src, page.Regions[ri]).Dy() + barHeight + gap
+			if len(cur.regions) > 0 && (len(cur.regions) >= e.cfg.BatchMaxRegions || h+rh > e.cfg.BatchMaxHeight) {
+				out = append(out, cur)
+				cur, h = batch{group: g}, 0
+			}
+			cur.regions = append(cur.regions, ri)
+			h += rh
+		}
+		if len(cur.regions) > 0 {
+			out = append(out, cur)
+		}
+	}
+	return out
+}
+
+func (e *Engine) cropRect(src image.Image, r parser.RawRegion) image.Rectangle {
+	b := r.Quad.BBox()
+	pad := float64(e.cfg.Padding)
+	return image.Rect(int(b.X0-pad), int(b.Y0-pad), int(b.X1+pad+0.5), int(b.Y1+pad+0.5)).Intersect(src.Bounds())
+}
+
+// read performs one planned batch. A group batch is stitched into one image;
+// the regions its answer does not mark are read again one by one, so a model
+// that ignores the markers costs extra calls, never text.
+func (e *Engine) read(ctx context.Context, src image.Image, page *parser.RawPage, b batch) ([]RegionResult, []CallResult) {
+	res := make([]RegionResult, len(b.regions))
+	var rects []image.Rectangle
+	var ids []int
+	var keep []int // positions in b.regions with a usable crop
+	for i, ri := range b.regions {
+		r := page.Regions[ri]
+		rect := e.cropRect(src, r)
+		res[i] = RegionResult{LayoutID: r.ID, Class: r.Class, Call: -1, BBox: [4]int{rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y}}
+		if rect.Empty() {
+			res[i].Error = "empty crop"
+			continue
+		}
+		rects, ids, keep = append(rects, rect), append(ids, r.ID), append(keep, i)
+	}
+	if len(keep) == 0 {
+		return res, nil
+	}
+	if b.group == "" || len(keep) == 1 {
+		var calls []CallResult
+		for k, i := range keep {
+			tr, cr := e.call(ctx, b.group, ids[k:k+1], e.cfg.Prompt, crop(src, rects[k]))
+			res[i].Call = len(calls)
+			calls = append(calls, cr)
+			fill(&res[i], tr, cr.Error)
+		}
+		return res, calls
 	}
 
+	tr, cr := e.call(ctx, b.group, ids, fmt.Sprintf(e.cfg.BatchPrompt, len(keep)), stitch(src, rects))
+	calls := []CallResult{cr}
+	var parts map[int]string
+	if cr.Error == "" {
+		parts = splitBatch(tr.Text)
+	}
+	for k, i := range keep {
+		text, ok := parts[k+1]
+		if ok {
+			res[i].Call = 0
+			_, text = SplitFrontMatter(text)
+			res[i].Text, res[i].Truncated = text, tr.Truncated
+			continue
+		}
+		if cr.Error != "" {
+			// The call itself failed (already retried): every region of the
+			// batch follows on_error rather than multiplying failing calls.
+			res[i].Error = cr.Error
+			continue
+		}
+		// Missing from the batch answer: read this region on its own.
+		one, ocr := e.call(ctx, "", ids[k:k+1], e.cfg.Prompt, crop(src, rects[k]))
+		res[i].Call = len(calls)
+		calls = append(calls, ocr)
+		fill(&res[i], one, ocr.Error)
+	}
+	return res, calls
+}
+
+func fill(r *RegionResult, tr *Transcription, errMsg string) {
+	if errMsg != "" {
+		r.Error = errMsg
+		return
+	}
+	r.Text, r.Meta, r.Truncated = tr.Text, tr.Meta, tr.Truncated
+}
+
+// call sends one image to the Transcriber under the process-wide semaphore,
+// retrying transient errors.
+func (e *Engine) call(ctx context.Context, group string, ids []int, prompt string, img image.Image) (*Transcription, CallResult) {
+	cr := CallResult{Group: group, Regions: ids}
+	jpg, err := e.encode(img)
+	if err != nil {
+		cr.Error = err.Error()
+		return nil, cr
+	}
 	select {
 	case e.sem <- struct{}{}:
 	case <-ctx.Done():
-		res.Error = ctx.Err().Error()
-		return res
+		cr.Error = ctx.Err().Error()
+		return nil, cr
 	}
 	defer func() { <-e.sem }()
 
 	t0 := time.Now()
 	var tr *Transcription
 	for attempt := 0; ; attempt++ {
-		tr, err = e.cfg.Client.Transcribe(ctx, crop)
+		tr, err = e.cfg.Client.Transcribe(ctx, Request{Prompt: prompt, JPEG: jpg, Regions: ids})
 		if err == nil || attempt >= e.cfg.Retries || !Retryable(err) || ctx.Err() != nil {
 			break
 		}
@@ -331,38 +537,40 @@ func (e *Engine) transcribeWith(ctx context.Context, src image.Image, r parser.R
 		case <-ctx.Done():
 		}
 	}
-	res.Ms = int(time.Since(t0).Milliseconds())
+	cr.Ms = int(time.Since(t0).Milliseconds())
 	if err != nil {
-		res.Error = err.Error()
-		return res
+		cr.Error = err.Error()
+		return nil, cr
 	}
-	res.Text, res.Meta, res.Truncated = tr.Text, tr.Meta, tr.Truncated
-	res.PromptTokens, res.CompletionTokens = tr.PromptTokens, tr.CompletionTokens
-	return res
+	cr.PromptTokens, cr.CompletionTokens, cr.Truncated = tr.PromptTokens, tr.CompletionTokens, tr.Truncated
+	return tr, cr
 }
 
 type subImager interface {
 	SubImage(r image.Rectangle) image.Image
 }
 
-func (e *Engine) encodeCrop(src image.Image, rect image.Rectangle) ([]byte, error) {
-	var crop image.Image
+func crop(src image.Image, rect image.Rectangle) image.Image {
 	if si, ok := src.(subImager); ok {
-		crop = si.SubImage(rect)
-	} else {
-		dst := image.NewRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
-		draw.Draw(dst, dst.Bounds(), src, rect.Min, draw.Src)
-		crop = dst
+		return si.SubImage(rect)
 	}
-	if long := max(rect.Dx(), rect.Dy()); e.cfg.MaxSide > 0 && long > e.cfg.MaxSide {
+	dst := image.NewRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
+	draw.Draw(dst, dst.Bounds(), src, rect.Min, draw.Src)
+	return dst
+}
+
+// encode downscales to MaxSide and encodes JPEG.
+func (e *Engine) encode(img image.Image) ([]byte, error) {
+	b := img.Bounds()
+	if long := max(b.Dx(), b.Dy()); e.cfg.MaxSide > 0 && long > e.cfg.MaxSide {
 		f := float64(e.cfg.MaxSide) / float64(long)
-		w, h := max(1, int(float64(rect.Dx())*f+0.5)), max(1, int(float64(rect.Dy())*f+0.5))
+		w, h := max(1, int(float64(b.Dx())*f+0.5)), max(1, int(float64(b.Dy())*f+0.5))
 		dst := image.NewRGBA(image.Rect(0, 0, w, h))
-		draw.CatmullRom.Scale(dst, dst.Bounds(), crop, crop.Bounds(), draw.Src, nil)
-		crop = dst
+		draw.CatmullRom.Scale(dst, dst.Bounds(), img, b, draw.Src, nil)
+		img = dst
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, crop, &jpeg.Options{Quality: e.cfg.JPEGQuality}); err != nil {
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: e.cfg.JPEGQuality}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

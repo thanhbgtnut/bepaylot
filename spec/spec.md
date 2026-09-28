@@ -1,13 +1,19 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.11 · Ngày: 2026-09-27 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
+> Phiên bản: 0.12 · Ngày: 2026-09-28 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM gom vùng qua agent, JSON trang trong Postgres); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
 >
-> Thay đổi so với 0.10 (U35): **chỉ search theo cây, bỏ LLM Wiki**
+> Thay đổi so với 0.11 (U36): **VLM gom vùng, gọi qua agent; ảnh trang; JSON trang trong Postgres**
+> - **Gom vùng cùng loại trên một trang:** các vùng cùng nhóm class (`text`, `abstract`, `content`… là nhóm `text`; chú thích; header/footer/footnote; công thức) được ghép thành **một ảnh có đánh số** và đọc bằng **một lần gọi** cho mỗi trang và nhóm. Tiêu đề (`doc_title`, `paragraph_title`) và bảng vẫn gọi riêng từng vùng. Con dấu (`seal`) được **gắn nhãn thẳng** từ layout, không gọi VLM (§5.3, §5.9).
+> - **Gọi qua agent, dạng streaming:** engine không còn HTTP client riêng (đẩy prompt + tin nhắn lên `/chat/completions`). Mọi yêu cầu bóc tách đi qua `agent.Extract`, gọi model bằng `Stream` trên registry provider của agent (`llm.providers`, retry chung). Cấu hình `parser.engines.vlm.provider` thay cho `base_url`/`api_key`/`timeout` (§5.9, §11).
+> - **Ảnh trang:** `GET /documents/:id/pages/:n/image` stream ảnh qua API. Trước đây API trả `302` tới presigned URL của MinIO/S3 khác origin; trình duyệt gọi bằng `fetch` + header xác thực nên bị chặn và báo lỗi không kết nối được. `302` chỉ còn khi client xin `?redirect=1` (§9.1, §10.2).
+> - **JSON trang lưu Postgres:** raw JSON của engine (layout, các lần gọi VLM) và text layer của trang nằm ở cột `jsonb` của `document_pages` (`raw`, `text_layer`, migration `0017_page_json.sql`), không còn là object `ocr/*.json.gz`, `text/*.json.gz` trên S3 (§9.1, §9.2). Mô hình dữ liệu hồ sơ (P8) dời sang migration `0018`.
+>
+> Thay đổi của 0.11 (U35): **chỉ search theo cây, bỏ LLM Wiki**
 > - Bỏ toàn bộ LLM Wiki (trang nguồn/entity/chủ đề, ingest, lint, index wiki, log, wiki schema, câu tổng hợp) vì đưa quá nhiều nội dung cho LLM, tốn token. LLM chỉ còn ở hai chỗ: tóm tắt node cây lúc index và duyệt cây + chỉ ra dòng trả lời lúc hỏi (§6.1, §16.2).
 > - Search viết lại theo đúng luồng PageIndex (§6.6): lọc phạm vi → **mục lục hồ sơ** (thẻ các file + nhánh đầu của cây, dựng bằng code) → **cây nguyên khối** khi vừa ngân sách → nạp trang của node đã chọn → LLM chỉ ra dòng → kiểm trích dẫn.
 > - Tool agent: bỏ `wiki_*`, thêm `kb_case_toc`; `kb_document_tree` trả cả cây khi vừa ngân sách (§8.2). API: bỏ §10.4–10.5 (wiki), thêm `GET /cases/:id/toc` (§10.3).
@@ -39,15 +45,15 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U6 | **Module Parser:** engine mặc định built-in là TurboOCR, theo mẫu `spec/parser/ocr_curl.txt` và response `spec/parser/output_example.json`. Kết quả phải có đầy đủ nội dung trang, các line, thứ tự trang và nội dung markdown, sao cho tra ngược thông tin text về trang và vị trí được tường minh | còn hiệu lực, **được mở rộng bởi U30**: tra ngược được tới cả element và ô bảng | §5, §5.10 |
 | U7 | **Module 2:** bộ chuyển đổi vectorless tạo nội dung cho hybrid search, lưu vào database, hỗ trợ tìm kiếm trên toàn bộ nội dung file theo trang | **được làm rõ bởi U35**: "nội dung cho search" là cây mục lục có tóm tắt (và section, full-text) lưu Postgres; tìm theo trang vẫn giữ. (Cách hiểu cũ U22/U24 — wiki của hồ sơ — đã bị thay) | §6.1, §6.5–6.8 |
 | U8 | **Module 3:** chuyển nội dung đã parse thành graph kiểu wiki: xác định entity và quan hệ, cho phép cấu hình nhiều schema khác nhau, gọi LLM để trích xuất | **được thay bởi U23, U35**: không còn graph/entity/wiki schema; Module 3 là hiển thị hồ sơ theo cây (§7) | §7 |
-| U9 | **Module cuối:** agent, như source code đang có | còn hiệu lực; phạm vi theo case (U21) | §8 |
+| U9 | **Module cuối:** agent, như source code đang có | còn hiệu lực; phạm vi theo case (U21); từ U36 agent cũng là cửa gọi model cho bóc tách ảnh của parser (`agent.Extract`) | §8, §5.9 |
 | U10 | Vectorless nghĩa là **không dùng embedding**. Search kiểu PageIndex: nạp context (cây mục lục) để LLM xác định nội dung nào cần tìm trong file | còn hiệu lực, **là cách làm duy nhất theo U35**: mục lục hồ sơ → cây của file (nguyên khối khi vừa ngân sách) → trang | §6.1, §6.5, §6.6 |
 | U11 | Mỗi file có **metadata đi kèm, không bắt buộc**, và search được theo metadata. Ví dụ upload nhiều file cùng gán một mã hồ sơ thì phải tìm được theo mã hồ sơ đó | metadata vẫn giữ; **phần mã hồ sơ được thay bởi U18** (mã hồ sơ là case, không phải metadata) | §6.2, §6.3, §10.2 |
 | U12 | Render PDF sang ảnh bằng **thư viện Go**, nhanh, kiểm soát được RAM/CPU | còn hiệu lực | §5.7 |
 | U13 | Với PDF/A (và PDF có text), nếu lấy được nội dung text thì dùng để **bổ sung context** cho đúng | còn hiệu lực | §5.8 |
 | U14 | Ngôn ngữ lập trình là Go | còn hiệu lực | toàn bộ |
-| U15 | File lưu trên **S3 storage**, ảnh cũng vậy; metadata lưu **Postgres** | còn hiệu lực | §9.1 |
+| U15 | File lưu trên **S3 storage**, ảnh cũng vậy; metadata lưu **Postgres** | còn hiệu lực, **được làm rõ bởi U36**: JSON kết quả của trang (raw engine, text layer) là dữ liệu có cấu trúc nên lưu Postgres, không lưu S3 | §9.1 |
 | U16 | Spec đặt tại `spec/spec.md`, viết tiếng Việt | còn hiệu lực | — |
-| U17 | Parser OCR: gọi TurboOCR lấy layout, **cắt ảnh theo từng vùng** của trang, gọi **đồng thời** VLM (host theo chuẩn OpenAI, thử với `allenai/olmocr-2-7b` chạy local) để lấy text, rồi tổng hợp lại theo từng trang | còn hiệu lực | §5.9 |
+| U17 | Parser OCR: gọi TurboOCR lấy layout, **cắt ảnh theo từng vùng** của trang, gọi **đồng thời** VLM (host theo chuẩn OpenAI, thử với `allenai/olmocr-2-7b` chạy local) để lấy text, rồi tổng hợp lại theo từng trang | còn hiệu lực, **được làm rõ bởi U36**: vùng cùng nhóm class trên một trang gom thành một lần gọi; tiêu đề và bảng gọi riêng; con dấu không gọi; mọi lần gọi đi qua agent (streaming) chứ không qua client HTTP riêng | §5.9 |
 | U18 | Người dùng upload một loạt hồ sơ theo **một mã** (ví dụ mã thanh toán `RT112233`). Mã là khái niệm chung (**case**) để dùng cho nhiều bài toán khác (tín dụng doanh nghiệp…); không có khái niệm riêng của luồng thanh toán trong code, nhưng giữ đủ logic xử lý hồ sơ. Có **bảng case** | còn hiệu lực | §6.2, §9.2 |
 | U19 | Parse bằng TurboOCR; nếu cấu hình VLM thì lấy text bằng VLM rồi gộp lại. TurboOCR vẫn luôn cung cấp text và **toạ độ** để hiển thị | còn hiệu lực (làm rõ U17) | §5.9 |
 | U20 | Khi cần bóc tách trường thông tin hoặc kiểm tra tuân thủ một rule theo mã hồ sơ, người dùng chỉ việc hỏi agent. Agent tự tìm đúng tài liệu trong case bằng search vectorless, rồi bóc tách hoặc trả lời theo nội dung người dùng gửi | còn hiệu lực; search vectorless theo U35 (mục lục hồ sơ → cây → trang); **được làm rõ bởi U30**: kết quả bóc tách được lưu thành Extracted Field (value, confidence, evidence[]) gắn với document; danh sách trường vẫn nằm trong tin nhắn, không nằm trong server | §6.6, §6.9.3, §8 |
@@ -60,11 +66,12 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U27 | Index và tóm tắt theo đúng `index.md` của LLM Wiki (catalog mọi trang: link, tóm tắt một dòng, metadata như ngày hoặc số nguồn, nhóm theo loại; đọc index trước rồi mới đi vào trang), tóm tắt được làm ngay khi ingest; **tối ưu token**, tránh token thừa; dữ liệu vẫn lưu Postgres | **được thay bởi U35**; ý "tối ưu token, đọc mục lục trước rồi mới vào trang" chuyển thành mục lục hồ sơ (§6.6) | §6.6 |
 | U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6 | §10.6, §9.2 (migration `0015`), §11, frontend `/login` |
 | U29 | Viết **tài liệu vận hành** trong thư mục `spec` để bàn giao cho đội vận hành OPN: vận hành từng tính năng và các kiểm tra trạng thái dịch vụ | còn hiệu lực | [`spec/van-hanh.md`](van-hanh.md), `spec/van-hanh/healthcheck.sh`, `spec/van-hanh/kiem-tra.sql` |
-| U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0017`), §10.7 |
+| U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0018`), §10.7 |
 | U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực | §4.2, §6.2, §6.9.4, §10.7, §11 |
 | U32 | Rà lại spec, sửa các chỗ mâu thuẫn theo phương án tối ưu: giá trị hiện tại của field chỉ là bản đã xác nhận; evidence liên file không bị mồ côi; công duyệt giữ qua reparse; wiki và field không lệch âm thầm; bbox ô bảng ổn định với VLM; reparse ghi đúng hành vi; có service sở hữu mô hình dữ liệu | còn hiệu lực trừ ý "wiki và field không lệch âm thầm" (không còn wiki, U35); **làm rõ U20, U30** | §3.1, §4.7, §5.6, §5.10, §6.9, §8.2, §9.2 |
 | U33 | **Xoá các phần mâu thuẫn** còn sót trong spec và **ghi lại lưu ý** để code rõ ràng | còn hiệu lực | toàn bộ; §16 (Lưu ý khi code) |
 | U34 | bepaylot phải theo **đúng giải pháp vectorless** (PageIndex + LLM Wiki): sửa toàn bộ spec cho đúng | **được thay bởi U35** | — |
+| U36 | Sửa bốn điểm: (1) **Layout:** các text box cùng class trên cùng một trang phải **gom lại gọi agent bóc tách một lần**, vì ảnh từng vùng rất nhỏ, gọi đi gọi lại tốn lần gọi và token; gom các nhãn cùng class và tương tự nhau, mỗi trang mỗi nhóm một lần gọi. **Title vẫn gọi riêng.** Layout là **con dấu thì gắn nhãn luôn, không gọi VLM**. (2) Yêu cầu bóc tách gọi sang **agent hiện có trong source code, dạng streaming**, không gọi riêng kiểu LLM base đẩy prompt + user message lên. (3) Sửa lỗi **xem ảnh trang báo không kết nối được**. (4) **Lưu JSON kết quả của trang vào database**, không lưu S3, vì đó là dữ liệu có cấu trúc | còn hiệu lực; **làm rõ U15, U17** | §0 (bản 0.12), §5.3, §5.9, §9.1, §9.2 (migration `0017`), §10.2, §11 |
 | U35 | **Không đưa quá nhiều cho LLM vì tốn token; chỉ search theo index tree.** Luồng: cần hỏi thông tin thì duyệt index tree, tìm đúng trang, nạp trang vào context để trả lời. Xoá nội dung thừa trong spec (chỉ phần LLM Wiki); Module 3 hiển thị theo cây | còn hiệu lực; **thay U24, U26, U27, U34**, làm rõ U7, U8, U10, U22, U23 | §6.1, §6.5, §6.6, §7, §8.2, §9.2 (migration `0016`), §10.3, §11, §16 |
 
 ## 1. Yêu cầu chung
@@ -80,13 +87,13 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R7 | Metadata tuỳ chọn theo file, tìm được theo metadata (trong case) | `documents.metadata` JSONB + GIN, gán khi upload đơn lẻ hoặc theo lô, lọc bằng toán tử `eq/in/prefix/range`; mã hồ sơ là case, không phải metadata (§6.2, §6.3) |
 | R8 | Render PDF → ảnh bằng thư viện Go, nhanh, kiểm soát RAM/CPU; PDF/A có text thì dùng bổ sung | go-pdfium chạy multi-process, DPI thích ứng, tái chế process, timeout theo trang; text layer hợp nhất với OCR theo dòng (§5.7, §5.8) |
 | R9 | Code bằng Go; file và ảnh lưu S3, metadata lưu Postgres | §9.1 |
-| R10 | Layout TurboOCR + VLM đọc từng vùng đồng thời, tổng hợp theo trang | engine `turboocr_vlm`: cắt vùng, fan-out có giới hạn, căn text VLM với dòng OCR để giữ bbox/offset (§5.9) |
+| R10 | Layout TurboOCR + VLM đọc từng vùng đồng thời, tổng hợp theo trang | engine `turboocr_vlm`: cắt vùng, gom vùng cùng nhóm class của một trang thành một ảnh đánh số (một lần gọi), tiêu đề/bảng gọi riêng, con dấu gắn nhãn không gọi; gọi qua `agent.Extract` (streaming); fan-out có giới hạn, căn text VLM với dòng OCR để giữ bbox/offset (§5.9) |
 | R11 | Tài liệu nhóm theo mã hồ sơ, agent chỉ tìm trong đúng hồ sơ, dùng được cho nhiều bài toán | Bảng `cases` + loại case trong YAML (§6.2); session agent gắn một `case_id` bất biến, mọi truy vấn của tool lọc `case_id` phía server (§8.1) |
 | R12 | Hỏi đáp nhanh, rẻ token | Không có lớp biên soạn trước; LLM chỉ đọc mục lục/cây (tiêu đề, khoảng trang, tóm tắt) và đúng các trang cần thiết; ngân sách token cứng ở mọi bước (§6.6, §11) |
 | R14 | Hiển thị hồ sơ để đọc hiểu cả bộ | Module 3: case → file → cây mục lục kèm tóm tắt, bấm node mở trang gốc + bbox, "Hỏi về hồ sơ"; không gọi LLM (§7) |
 | R15 | Dữ liệu graph/wiki cũ bị xoá | Migration `0014` xoá graph bản 0.4; `0016` xoá LLM Wiki (§9.2) |
 | R16 | Người dùng tự đăng ký / đăng nhập trên web, có OIDC, xác thực như WeKnora | `service/auth`: bcrypt + JWT access/refresh lưu vết trong `auth_tokens`, OIDC authorization code (backend đổi code, state ký + cookie nonce); middleware Bearer JWT → API key; trang `/login` hai cột; API key tự phục vụ (§10.6) |
-| R17 | Dữ liệu hồ sơ liên kết được theo cây Case → Document → Page → Element/Table, cộng Extracted Field và Classification có evidence | Bảng `page_tables`, `table_cells`, `extracted_fields`, `document_segments`, `evidence_spans` (migration `0017`); mọi evidence giải được ra `(document, page, line/element/ô, bbox)`; API trả cả cây (§6.9, §10.7) |
+| R17 | Dữ liệu hồ sơ liên kết được theo cây Case → Document → Page → Element/Table, cộng Extracted Field và Classification có evidence | Bảng `page_tables`, `table_cells`, `extracted_fields`, `document_segments`, `evidence_spans` (migration `0018`); mọi evidence giải được ra `(document, page, line/element/ô, bbox)`; API trả cả cây (§6.9, §10.7) |
 
 ### 1.1 Tech stack
 
@@ -102,7 +109,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | Ảnh | Go stdlib `image/*`, `golang.org/x/image` (tiff, draw) | file ảnh upload trực tiếp |
 | OCR mặc định | TurboOCR (`POST /ocr/raw`) | engine built-in, cắm thêm engine khác qua interface |
 | Xác thực | `golang-jwt/jwt/v5` (HS256), `golang.org/x/crypto/bcrypt`, `coreos/go-oidc/v3` + `golang.org/x/oauth2` | JWT access/refresh, mật khẩu, OIDC (§10.6) |
-| OCR bằng VLM | endpoint OpenAI-compatible (`/v1/chat/completions`), mặc định `allenai/olmocr-2-7b` (vLLM, LM Studio…) | engine `turboocr_vlm`: TurboOCR cho layout, VLM đọc text từng vùng (§5.9) |
+| OCR bằng VLM | model đọc ảnh cấu hình như một provider trong `llm.providers` (mặc định provider `vlm`, OpenAI-compatible, `allenai/olmocr-2-7b` qua vLLM/LM Studio), gọi qua agent (streaming) | engine `turboocr_vlm`: TurboOCR cho layout, VLM đọc text theo nhóm vùng (§5.9) |
 
 ---
 
@@ -443,7 +450,8 @@ Nhận xét từ file mẫu, bắt buộc xử lý:
 | `text`, `abstract`, `content`, `reference`, `aside_text` | `paragraph` | nối các line thành đoạn; line kết thúc bằng gạch nối thì ghép liền |
 | `table` | `table` | HTML → GFM table nếu không có `rowspan`/`colspan`, ngược lại giữ HTML đã làm sạch |
 | `formula`, `formula_number` | `formula` | `$$ latex $$` |
-| `image`, `chart`, `seal`, `header_image`, `footer_image` | `figure` | `![figure p{n}-b{k}](asset://{doc}/p{n}/b{k}.jpg)` + text trong hình (nếu có) dạng `> ` |
+| `image`, `chart`, `header_image`, `footer_image` | `figure` | `![figure p{n}-b{k}](asset://{doc}/p{n}/b{k}.jpg)` + text trong hình (nếu có) dạng `> ` |
+| `seal` (con dấu) | `figure` (`raw_class = seal`) | `![con dấu p{n}-b{k}](…)`: gắn nhãn thẳng từ layout, **không gọi VLM** (§5.9); search "con dấu" tìm được trang có dấu |
 | `figure_title`, `table_title`, `chart_title` | `caption` | `*…*` |
 | `header`, `footer`, `number`, `footnote` | `header` / `footer` / `page_number` / `footnote` | theo quy tắc lặp lại ở mục 5.2 (6) |
 | (khác) | `unknown` | như `paragraph` |
@@ -713,9 +721,14 @@ Kiểm tra này chặn trường hợp "text layer rác": font không có ToUnic
 
 Golden test: một PDF/A-2u mẫu gồm một trang sinh từ Word và một trang scan có lớp OCR ẩn kém. Kết quả mong đợi: trang 1 lấy text layer (dấu và số đúng), trang 2 giữ OCR (`sim` thấp).
 
-### 5.9 Engine `turboocr_vlm` — layout TurboOCR + đọc từng vùng bằng VLM
+### 5.9 Engine `turboocr_vlm` — layout TurboOCR + VLM đọc theo nhóm vùng, gọi qua agent
 
 **Mục đích.** TurboOCR cho layout, dòng và bbox tốt, nhưng text có thể sai dấu, sai số hoặc dính chữ trên bản scan xấu. Một VLM chuyên OCR (mặc định `allenai/olmocr-2-7b`) đọc text chính xác hơn nhưng không trả về vị trí. Engine `turboocr_vlm` kết hợp cả hai: **vị trí lấy từ TurboOCR, nội dung lấy từ VLM**, và vẫn giữ tra cứu tường minh theo trang/dòng/bbox (§5.6).
+
+**Nguyên tắc chi phí (U36).** Ảnh của từng vùng rất nhỏ, nên gọi VLM cho từng vùng tốn nhiều lần gọi và token (mỗi ảnh có chi phí cố định, prompt lặp lại). Vì vậy:
+- vùng **cùng nhóm class trên cùng một trang** được ghép thành **một ảnh** và đọc bằng **một lần gọi**;
+- **tiêu đề** (`doc_title`, `paragraph_title`) và **bảng** vẫn gọi riêng từng vùng (tiêu đề ngắn nhưng quyết định cây mục lục; bảng lớn và cần HTML riêng);
+- **con dấu** (`seal`) được **gắn nhãn thẳng** từ layout, không gọi VLM.
 
 **Luồng một trang** (task `page:ocr`, package `internal/parser/vlm`):
 
@@ -723,11 +736,18 @@ Golden test: một PDF/A-2u mẫu gồm một trang sinh từ Word và một tra
 ảnh trang (S3) ──► TurboOCR /ocr/raw?layout=1&reading_order=1&tables=1
                      │  lines + regions (layout) + reading_order
                      ▼
-               chọn vùng cần đọc ──► cắt ảnh từng vùng (+padding, thu nhỏ ≤ max_side)
+               chọn vùng cần đọc; seal → gắn nhãn, không gọi
                      │
-                     ▼  đồng thời, giới hạn max_concurrency request/process
-               VLM (OpenAI-compatible POST /v1/chat/completions, ảnh base64)
-                     │  text markdown (+ YAML front matter của olmOCR, bị bỏ)
+                     ▼  lập kế hoạch gọi
+               nhóm text / caption / furniture / formula:
+                   các vùng của trang, xếp trên → dưới, ghép 1 ảnh
+                   (thanh đen đánh số [1], [2]… trên mỗi vùng) → 1 lần gọi
+               doc_title, paragraph_title, table: 1 vùng → 1 lần gọi
+                     │
+                     ▼  đồng thời, giới hạn max_concurrency lần gọi/process
+               vlm.Transcriber ──► agent.Extract (streaming, llm.providers)
+                     │  lô: tách theo marker <<<k>>> → text của từng vùng
+                     │  vùng thiếu trong câu trả lời lô → đọc lại riêng vùng đó
                      ▼
                RawRegion.Text / .HTML (bảng) / .LaTeX (công thức)
                      ▼
@@ -737,14 +757,39 @@ Golden test: một PDF/A-2u mẫu gồm một trang sinh từ Word và một tra
 ```
 
 **Chọn vùng.**
-- Chỉ gửi các lớp dạng text: `doc_title, paragraph_title, text, abstract, content, reference, aside_text, algorithm, table, formula, figure_title, table_title, chart_title, header, footer, footnote` (cấu hình `classes`). Ảnh, con dấu và số trang để lại cho OCR.
+- Chỉ đọc các lớp dạng text: `doc_title, paragraph_title, text, abstract, content, reference, aside_text, algorithm, table, formula, figure_title, table_title, chart_title, header, footer, footnote` (cấu hình `classes`). Ảnh và số trang để lại cho OCR.
+- Lớp trong `tag_classes` (mặc định `[seal]`) được gắn nhãn: raw ghi `tagged: true`, block là `figure` với `raw_class = seal`, markdown `![con dấu …]` (§5.3). Không gọi VLM.
 - Vùng nhỏ hơn `min_side` px bị bỏ.
 - **Vùng lồng nhau:** model layout hay trả vùng "container" bao vùng con, hoặc vùng con nằm trong vùng khác. Một vùng **không có dòng OCR nào** mà chồng ≥ 80% (theo diện tích vùng nhỏ hơn) với một vùng có dòng thì bị bỏ qua, vì nếu đọc sẽ nhân đôi text.
 - Trang không có vùng nào (layout tắt hoặc rỗng) mà có dòng: gửi cả vùng bao các dòng (`full_page`).
 
-**Gọi VLM.** Mỗi vùng là một request chat gồm prompt và ảnh JPEG `data:` URL. Prompt mặc định là prompt v4 của olmOCR: bảng dạng HTML, công thức dạng LaTeX, front matter YAML. Tất cả vùng của trang chạy song song; semaphore chung của process giới hạn `max_concurrency`. Lỗi 5xx/429/mạng được retry `retries` lần. Vùng vẫn lỗi thì:
+**Gom nhóm** (`groups`, mặc định):
+
+| Nhóm | Class | Gọi |
+|---|---|---|
+| `text` | `text, abstract, content, reference, aside_text, algorithm` | 1 lần / trang (chia lô nếu vượt giới hạn) |
+| `caption` | `figure_title, table_title, chart_title` | 1 lần / trang |
+| `furniture` | `header, footer, footnote` | 1 lần / trang |
+| `formula` | `formula` | 1 lần / trang |
+| (không nhóm) | `doc_title, paragraph_title, table` | 1 lần / vùng |
+| (gắn nhãn) | `seal` | 0 |
+
+- Vùng của một nhóm được xếp theo vị trí (trên → dưới, trái → phải), cắt kèm `padding`, rồi **ghép dọc** trên nền trắng. Trên mỗi vùng có một thanh đen cao 34 px ghi số `[k]` màu trắng. Ảnh ghép thu về `max_side` như ảnh đơn.
+- Một lô bị cắt khi đủ `batch_max_regions` vùng (mặc định 20) hoặc chiều cao ảnh ghép vượt `batch_max_height` px (mặc định 2400, trước khi thu nhỏ), để chữ không bị thu quá nhỏ. Vùng cao hơn giới hạn đi một mình.
+- Prompt lô (`batch_prompt`, mặc định built-in, có `%d` = số vùng) yêu cầu chép từng vùng theo thứ tự, mở đầu bằng marker `<<<k>>>` trên dòng riêng; bảng HTML, công thức LaTeX; không front matter, không chép thanh số. Câu trả lời được tách theo marker (chấp nhận cả dòng chỉ có `[k]`).
+- **Không mất text vì model bỏ marker:** vùng nào không có marker trong câu trả lời lô thì được **đọc lại riêng** bằng prompt một vùng. Model không theo marker chỉ tốn thêm lần gọi, không mất nội dung.
+- `groups: {}` tắt gom nhóm (mỗi vùng một lần gọi như bản ≤ 0.11).
+
+**Gọi VLM qua agent (streaming).** Engine không có HTTP client riêng. `vlm.Transcriber` được container nối vào `agent.Extract` (`internal/agent/extract.go`, adapter `internal/container/vlm.go`):
+- provider và model lấy từ `parser.engines.vlm.provider`/`model` trong **registry provider của agent** (`llm.providers`); model rỗng = `llm.default_model`;
+- một tin nhắn user gồm prompt + ảnh JPEG (`UserInputMultiContent`, base64); không có session, lịch sử, skill hay tool, nên token chỉ gồm prompt và ảnh;
+- gọi bằng `Stream` của chat model; các chunk được nối lại (có callback `OnDelta` cho ai cần theo dõi); `<think>…</think>` bị bỏ; `finish_reason` = `length`/`max_tokens` → `truncated`; usage ghi vào raw;
+- retry mạng/5xx do lớp `llm` (`withRetry`, 2 lần) lo; `retries` của engine (mặc định 0) là số lần thử thêm bên ngoài; lỗi 4xx (trừ 429) không retry.
+
+Prompt một vùng mặc định là prompt v4 của olmOCR: bảng dạng HTML, công thức dạng LaTeX, front matter YAML (bị bỏ). Tất cả lần gọi của trang chạy song song; semaphore chung của process giới hạn `max_concurrency`. Vùng vẫn lỗi thì:
 - `on_error: fallback` (mặc định): giữ text OCR của vùng đó, ghi cảnh báo;
 - `on_error: fail`: trang lỗi, task retry cả trang.
+Nếu chính lần gọi lô lỗi thì mọi vùng của lô theo `on_error` (không gọi lại từng vùng, tránh nhân số lần gọi khi provider đang lỗi).
 
 Kết quả gán theo loại vùng:
 - `table`: nếu có `<table>` thì HTML của VLM thành `page_blocks.html` và dùng để render markdown (GFM hoặc HTML sạch như §5.2); nếu là bảng markdown thì dùng nguyên văn. HTML bảng của TurboOCR **không bị bỏ**: nó nằm trong raw (`layout.tables`) và là khung lưới để dựng ô (§5.10).
@@ -753,14 +798,14 @@ Kết quả gán theo loại vùng:
 
 **Căn text VLM với dòng OCR** (`assemble/refine.go`, hàm thuần):
 1. Tách từ của text VLM và của các dòng OCR trong block. So sánh theo dạng bỏ dấu, bỏ dấu câu ở hai đầu. Căn đơn điệu bằng quy hoạch động kiểu edit distance: thay thế tốn `1 − similarity` (hoặc 1 nếu khác hẳn), khoảng trống tốn 0,7.
-2. **Chống bịa:** nếu số từ OCR khớp tốt (chi phí ≤ 0,5) ít hơn `min_coverage` (mặc định 0,3), hoặc text VLM dài hơn 4 × số từ OCR + 20, thì bỏ kết quả VLM và giữ OCR cho block đó.
+2. **Chống bịa:** nếu số từ OCR khớp tốt (chi phí ≤ 0,5) ít hơn `min_coverage` (mặc định 0,3), hoặc text VLM dài hơn 4 × số từ OCR + 20, thì bỏ kết quả VLM và giữ OCR cho block đó. Bước này cũng chặn trường hợp model lô gán nhầm text của vùng này cho marker của vùng khác.
 3. **Cắt phần tràn:** chỉ giữ đoạn text VLM từ từ khớp tốt đầu tiên tới từ khớp tốt cuối cùng; ký hiệu markdown sát hai đầu được giữ. Chữ của vùng bên cạnh lọt vào do padding hoặc lồng vùng bị loại.
 4. Mỗi dòng OCR nhận `text` = đoạn text VLM mà các từ của nó căn tới, `text_ocr` = text OCR gốc, `text_source = vlm`, và bỏ cờ `low_confidence`. Dòng không căn được giữ text OCR và không có offset.
 5. Block nhận `text` = text VLM đã cắt và `text_source = vlm` (cột `page_blocks.text_source`, migration `0011`). Block không có dòng OCR nào nhưng có text VLM được tạo **dòng tổng hợp**: mỗi dòng text một dòng, chia đều theo chiều cao bbox của vùng.
 6. `Render` ghi text VLM **nguyên văn** làm markdown của block (tiêu đề: một dòng, thêm `#`/`##`), rồi tìm lần lượt từng dòng VLM trong đó để đặt `md_start/md_end`. Vì vậy `markdown[md_start:md_end] == line.text` luôn đúng, và từ bất kỳ đoạn text nào vẫn tra ngược được trang + bbox. Render lại (đánh dấu header/footer lặp, §5.2) cho cùng kết quả vì block lưu `text_source`.
 7. `PlainText` (FTS trang) dùng toàn bộ text VLM của block, kể cả từ không có dòng OCR tương ứng. `page.text_source = vlm` khi trang có ít nhất một block được refine.
 
-**Không có layout → gửi cả trang** (`full_page: true`, mặc định). Khi TurboOCR lỗi (không kết nối được, timeout, circuit breaker mở), hoặc trả về trang không có vùng và không có dòng, thì cả ảnh trang (thu nhỏ về `max_side`) được gửi cho VLM trong **một** request. Nếu VLM cũng lỗi, trang lỗi và task retry. `SplitMarkdown` tách markdown trả về thành các vùng theo thứ tự đọc:
+**Không có layout → gửi cả trang** (`full_page: true`, mặc định). Khi TurboOCR lỗi (không kết nối được, timeout, circuit breaker mở), hoặc trả về trang không có vùng và không có dòng, thì cả ảnh trang (thu nhỏ về `max_side`) được gửi cho VLM trong **một** lần gọi (cũng qua agent). Nếu VLM cũng lỗi, trang lỗi và task retry. `SplitMarkdown` tách markdown trả về thành các vùng theo thứ tự đọc:
 - `#`… → `doc_title` / `paragraph_title`;
 - dòng thường khớp cấu trúc văn bản hành chính (`Điều N`, `Chương`, `Mục`, `Phần`) → `paragraph_title`;
 - dòng VIẾT HOA bắt đầu bằng loại văn bản (`GIẤY`, `HỢP ĐỒNG`, `QUYẾT ĐỊNH`, `BIÊN BẢN`, `THÔNG BÁO`…) → `doc_title`;
@@ -772,17 +817,17 @@ Vì không có OCR, bbox của vùng là **dải dọc xấp xỉ** tỉ lệ v�
 
 **Quan hệ với text layer (§5.8).** Trang PDF có text layer đạt chất lượng thì **không gọi VLM** (`skip_with_text_layer: true`): text layer đúng từng ký tự và không tốn GPU. Trang đã refine bằng VLM thì không merge text layer nữa, vì merge theo dòng sẽ làm lệch markdown nguyên văn của block.
 
-**Raw.** `ocr/raw` của trang lưu `{"engine":"turboocr_vlm","model":…,"layout":<JSON TurboOCR>,"regions":[{layout_id,class,bbox,ms,text,meta,prompt_tokens,completion_tokens,error}],"ms":…}` để debug và đo chi phí.
+**Raw.** Cột `document_pages.raw` (jsonb, §9.2) lưu `{"engine":"turboocr_vlm","model":…,"mode":"regions"|"full_page","layout":<JSON TurboOCR>,"regions":[{layout_id,class,bbox,call,tagged,text,meta,truncated,error}],"calls":[{group,regions,ms,prompt_tokens,completion_tokens,truncated,error}],"ms":…}`. `regions[].call` trỏ vào `calls` (−1 với vùng gắn nhãn), nên đo được số lần gọi và token của từng trang, từng nhóm.
 
-**Chọn engine.** Engine chỉ được đăng ký khi có `parser.engines.vlm.base_url`. Thứ tự ưu tiên: `engine` khi reparse document → `parser.engine` của loại case (§6.2) → `parser_engine` trong config của KB → `parser.default_engine` (`BEPAYLOT_OCR_ENGINE=turboocr_vlm`). Không cấu hình VLM thì engine này không đăng ký và mọi case dùng `turboocr` (text + toạ độ từ TurboOCR). `GET /v1/parser/engines` báo engine khả dụng khi cả TurboOCR và VLM đều sống và model có trong `/v1/models`.
+**Chọn engine.** Engine chỉ được đăng ký khi có `parser.engines.vlm.provider`. Nếu để trống mà provider `vlm` trong `llm.providers` có `base_url` (`VLM_BASE_URL`) thì provider là `vlm`, và model mặc định là `allenai/olmocr-2-7b`. Thứ tự ưu tiên chọn engine: `engine` khi reparse document → `parser.engine` của loại case (§6.2) → `parser_engine` trong config của KB → `parser.default_engine` (`BEPAYLOT_OCR_ENGINE=turboocr_vlm`). Không cấu hình VLM thì engine này không đăng ký và mọi case dùng `turboocr` (text + toạ độ từ TurboOCR). `GET /v1/parser/engines` báo engine khả dụng khi TurboOCR sống (hoặc `full_page` bật) và provider có trong registry.
 
-**Timeout.** Một trang có thể có 30–50 vùng. Với model 7B chạy local (≈ 5–15 s/vùng), một trang mất cỡ 1 phút ở `max_concurrency: 4`, nên `page:ocr` có `Timeout = 15m`.
+**Timeout.** Trước U36 một trang 30–50 vùng tốn 30–50 lần gọi. Với gom nhóm, trang văn bản thường còn 3–8 lần gọi (1–2 lô `text`, 1 `furniture`, mỗi tiêu đề/bảng một lần). Mỗi lần gọi lô lâu hơn một lần gọi đơn, nên `page:ocr` vẫn giữ `Timeout = 15m`; timeout từng lần gọi là `llm.request_timeout`.
 
-**Cấu hình** (`parser.engines.vlm`): `base_url, api_key, model, prompt, max_tokens, temperature, timeout, max_concurrency, classes, padding (12), max_side (1288), min_side, jpeg_quality (90), retries (1), on_error, full_page, min_coverage (0,3), skip_with_text_layer`.
+**Cấu hình** (`parser.engines.vlm`, §11): `provider, model, prompt, batch_prompt, max_tokens, temperature, max_concurrency, classes, groups, tag_classes, batch_max_regions (20), batch_max_height (2400), padding (12), max_side (1288), min_side, jpeg_quality (90), retries (0), on_error, full_page, min_coverage (0,3), skip_with_text_layer`. Bỏ `base_url`, `api_key`, `timeout` (nằm ở provider trong `llm.providers`).
 
 **Kiểm thử.**
-- Unit: căn dòng khi VLM nối đoạn, chống bịa, cắt text tràn, dòng tổng hợp, render lại ổn định, fan-out đồng thời có giới hạn, bỏ vùng lồng, `on_error`.
-- Live: `VLM_BASE_URL=http://localhost:1234/v1 VLM_TEST_IMAGE=<ảnh> go test -run TestLiveVLM ./internal/parser/vlm`, dùng layout mẫu `spec/parser/output_example.json`.
+- Unit: gom nhóm (một lần gọi mỗi nhóm, tiêu đề/bảng riêng), con dấu gắn nhãn không gọi, cắt lô theo `batch_max_regions`, tách marker, vùng thiếu marker được đọc lại riêng, model bỏ hết marker không mất text, bố cục ảnh ghép; căn dòng khi VLM nối đoạn, chống bịa, cắt text tràn, dòng tổng hợp, render lại ổn định, fan-out đồng thời có giới hạn, bỏ vùng lồng, `on_error`.
+- Live: `VLM_BASE_URL=http://localhost:1234/v1 VLM_TEST_IMAGE=<ảnh> go test -run TestLiveVLM ./internal/parser/vlm`, dùng layout mẫu `spec/parser/output_example.json` (client HTTP tối giản chỉ có trong test).
 
 ### 5.10 Bảng có cấu trúc (Table)
 
@@ -1416,18 +1461,16 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 |---|---|---|
 | File gốc | **S3** | không lưu blob trong Postgres |
 | Ảnh trang đã render (JPEG) | **S3** | cần cho OCR, highlight bbox, reparse |
-| JSON thô từ OCR, text layer thô | **S3** (gzip) | để debug và hợp nhất lại mà không phải OCR lại |
+| JSON kết quả của trang: raw engine (layout TurboOCR, các lần gọi VLM), text layer thô | **Postgres** (`document_pages.raw`, `document_pages.text_layer`, jsonb) | dữ liệu có cấu trúc (U36): truy vấn, debug và hợp nhất lại mà không phải OCR lại. Trang parse trước migration `0017` còn object `ocr/`, `text/` trên S3 (đọc được qua `raw_key`, `text_layer_key`) |
 | Ảnh crop của figure | **S3** | |
 | Markdown toàn văn | **S3** | markdown từng trang nằm ở Postgres để truy vấn nhanh |
-| Metadata: case, document, page, block, line, bảng + ô, section, cây, metadata người dùng, `pdf_info`, extracted field, classification, evidence, task | **Postgres** | chỉ lưu **object key** + `size`, `etag`, `content_type` |
+| Metadata: case, document, page, block, line, bảng + ô, section, cây, metadata người dùng, `pdf_info`, extracted field, classification, evidence, task | **Postgres** | với file và ảnh chỉ lưu **object key** + `size`, `etag`, `content_type` |
 
 **Bố cục key** (bucket `storage.s3.bucket`, tiền tố `storage.s3.prefix`):
 
 ```
 {prefix}/kb/{kb_id}/doc/{doc_id}/source/original.{ext}
 {prefix}/kb/{kb_id}/doc/{doc_id}/g{gen}/pages/{page:05d}.jpg
-{prefix}/kb/{kb_id}/doc/{doc_id}/g{gen}/ocr/{page:05d}.json.gz
-{prefix}/kb/{kb_id}/doc/{doc_id}/g{gen}/text/{page:05d}.json.gz
 {prefix}/kb/{kb_id}/doc/{doc_id}/g{gen}/figures/p{page}-b{block}.jpg
 {prefix}/kb/{kb_id}/doc/{doc_id}/g{gen}/document.md
 ```
@@ -1436,14 +1479,14 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 - **Upload**: request multipart được stream thẳng vào `aws-sdk-go-v2/feature/s3/manager.Uploader` (`PartSize` 16 MB, `Concurrency` 4 → RAM ≤ 64 MB mỗi upload). Trên đường stream có `io.TeeReader` → sha256 + bộ quét PDF/A. Key đặt theo `doc_id`, không theo sha256. Nếu sau khi upload phát hiện trùng `(case_id, sha256)`, object mới bị xoá và API trả document đã có (`200`, `duplicate: true`).
 - **Worker đọc file gốc**: `manager.Downloader` tải song song theo range về cache đĩa local (§5.7). PDFium cần truy cập ngẫu nhiên nên không đọc trực tiếp từ S3.
 - **Gửi ảnh cho OCR**: body của `GetObject` được stream thẳng vào request `POST /ocr/raw` (đặt `Content-Length` từ S3), không đệm ảnh trong RAM.
-- **Phục vụ ảnh cho client**: `GET /documents/:id/pages/:n/image` trả `302` tới presigned URL (TTL `storage.presign_ttl`, mặc định 15 phút). Nếu `storage.presign=false` (S3 nội bộ không lộ ra ngoài) thì API proxy stream.
+- **Phục vụ ảnh cho client**: `GET /documents/:id/pages/:n/image` **stream ảnh qua API** (`Cache-Control: private, max-age=3600`; ảnh của một `gen` không đổi). Web app tải ảnh bằng `fetch` kèm header xác thực; nếu API trả `302` tới presigned URL của S3/MinIO (origin khác) thì trình duyệt coi là request cross-origin, S3 không có CORS nên bị chặn và báo lỗi không kết nối được (lỗi trước U36). Client ngoài có thể xin `?redirect=1` để nhận `302` tới presigned URL (TTL `storage.presign_ttl`, mặc định 15 phút), chỉ khi `storage.presign=true`.
 - **Xoá và reparse**: object của `gen` cũ được xoá bằng `DeleteObjects` theo lô 1.000 key trong task `maintenance`. Upload dang dở (multipart chưa hoàn tất) được dọn bằng lifecycle rule `AbortIncompleteMultipartUpload` sau 1 ngày.
 - Tương thích S3 API: AWS S3, MinIO (dev và on-prem), Ceph RGW. Cấu hình `use_path_style` cho MinIO.
 - Tuỳ chọn mã hoá phía server (`SSE-S3`/`SSE-KMS`) qua `storage.s3.sse`.
 
 ### 9.2 DDL
 
-Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, mô hình dữ liệu hồ sơ ở `0017_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
+Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, mô hình dữ liệu hồ sơ ở `0018_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
 
 ```sql
 -- 0006_extensions.sql
@@ -1522,8 +1565,10 @@ CREATE TABLE document_pages (
   attempts int NOT NULL DEFAULT 0,
   width int, height int, dpi int, rotation int DEFAULT 0,
   image_key text,                             -- ảnh trang đã render (S3)
-  raw_key text,                               -- JSON gốc từ OCR (S3)
-  text_layer_key text,                        -- text layer thô (S3)
+  raw jsonb,                                  -- JSON gốc của engine: layout, các lần gọi VLM (0017, §5.9)
+  text_layer jsonb,                           -- text layer thô của trang PDF (0017, §5.8)
+  raw_key text,                               -- trang parse trước 0017: JSON gốc trên S3; mới = ''
+  text_layer_key text,                        -- trang parse trước 0017: text layer trên S3; mới = 
   text_source text,                           -- ocr|merged|layer_only
   text_quality real,
   render_ms int, ocr_ms int,
@@ -1711,7 +1756,7 @@ DELETE FROM task_pending_ops WHERE task_type LIKE 'wiki:%';
 DELETE FROM task_dead_letters WHERE task_type LIKE 'wiki:%';
 ALTER TABLE doc_tree_nodes ADD COLUMN tree_tokens int;    -- token của cây con dạng mục lục (§6.5 bước 7); NULL với cây dựng trước 0016 thì tính lúc đọc
 
--- 0017_document_model.sql (§5.10, §6.9): bảng, field, phân loại, evidence
+-- 0018_document_model.sql (§5.10, §6.9): bảng, field, phân loại, evidence
 CREATE EXTENSION IF NOT EXISTS btree_gist;                -- EXCLUDE theo document_id + khoảng trang
 ALTER TABLE documents
   ADD COLUMN classify_status text NOT NULL DEFAULT 'skipped';  -- skipped (không có labels) | none (có labels, chưa ai yêu cầu) | pending|processing|done|failed
@@ -1875,7 +1920,7 @@ Mọi route `/v1/*` cần xác thực (§10.6): `Authorization: Bearer <access t
 | GET | `/documents/:id/markdown` | markdown toàn văn (`?pages=1-5`) |
 | GET | `/documents/:id/pages` | danh sách trang (`status`, `is_blank`, `width/height`) |
 | GET | `/documents/:id/pages/:n` | `{markdown, blocks[], lines[], tables[]}` của trang (`tables[].cells[]`, §5.10) |
-| GET | `/documents/:id/pages/:n/image` | ảnh trang: `302` tới presigned URL S3 (hoặc proxy stream nếu `presign=false`) |
+| GET | `/documents/:id/pages/:n/image` | ảnh trang, stream qua API; `?redirect=1` (và `storage.presign=true`) → `302` tới presigned URL S3 |
 | POST | `/documents/:id/locate` | `{line}` \| `{md_start, md_end}` \| `{text, page?, fuzzy?}` \| `{page, block_no, row?, col?}` → vị trí + bbox |
 | GET | `/parser/engines` | engine đang đăng ký + health |
 | POST | `/sessions/:id/attachments` | upload file đính kèm chat vào **case của session** (lane `interactive`); session chưa gắn case → `409` |
@@ -2073,6 +2118,32 @@ parser:
       timeout: 120s
       options: { layout: true, reading_order: true, tables: true, formulas: false }
       breaker: { failures: 5, open_for: 30s }
+    vlm:                            # engine turboocr_vlm (§5.9); gọi qua agent, streaming
+      provider: ${BEPAYLOT_VLM_PROVIDER}   # tên trong llm.providers; rỗng + llm.providers.vlm.base_url = "vlm"
+      model: ${BEPAYLOT_VLM_MODEL}         # rỗng = llm.default_model (provider vlm: allenai/olmocr-2-7b)
+      max_tokens: 4096
+      temperature: 0.1
+      max_concurrency: 4            # lần gọi VLM đồng thời mỗi process
+      classes: []                   # [] = các lớp dạng text
+      groups:                       # mỗi trang mỗi nhóm một lần gọi; class ngoài nhóm = một lần gọi/vùng
+        text: [text, abstract, content, reference, aside_text, algorithm]
+        caption: [figure_title, table_title, chart_title]
+        furniture: [header, footer, footnote]
+        formula: [formula]
+      tag_classes: [seal]           # gắn nhãn, không gọi VLM
+      batch_max_regions: 20
+      batch_max_height: 2400        # px ảnh ghép trước khi thu về max_side
+      padding: 12
+      max_side: 1288
+      jpeg_quality: 90
+      retries: 0                    # thêm vào retry của provider
+      on_error: fallback            # fallback | fail
+      full_page: true
+      min_coverage: 0.3
+      skip_with_text_layer: true
+
+# llm.providers có thêm provider vlm (kind openai, base_url ${VLM_BASE_URL}, api_key ${VLM_API_KEY})
+# cho server olmOCR local; model đọc ảnh của provider chat cũng dùng được (provider: openai…).
 
 index:
   section: { max_tokens: 1500 }
@@ -2149,7 +2220,7 @@ fields:                             # Extracted Field (§6.9.3)
 | N32 | **Classification tuỳ chọn, không loại trừ.** Loại case có `labels` nhưng không bật `auto` → không có task `document:classify` nào sau index, `classify_status=none`, 0 lần gọi LLM; bật `auto` → prompt chỉ chứa dòng tiêu đề (không có dòng nội dung); file không có tiêu đề → không gọi LLM; `POST /classify` với `mode=pages` mới gửi dòng đầu trang. File 10 trang gộp 3 loại giấy tờ → 3 segment đúng khoảng trang (fake LLM); nhãn ngoài tập hoặc `at` bịa bị loại; confidence thấp → `unknown`; segment của người dùng giữ qua lần chạy lại; search, mục lục hồ sơ, cây và thẻ tài liệu **không đổi** giữa lúc có và không có segment; không tool/API search nào nhận tham số nhãn | integration test |
 | N34 | **Ô bảng với VLM.** Bảng có lưới TurboOCR và lưới VLM cùng kích thước → mọi ô có dòng OCR đều có bbox, text là text VLM; citation vào vị trí trong ô gộp giải về ô gốc. | `parser/assemble` unit test + integration test |
 | N37 | **Cây PageIndex nguyên khối.** File có cây `tree_tokens` ≤ `search.tree_token_budget`: bước 2 chọn node trong đúng 1 lần gọi, prompt chứa mọi node; `kb_document_tree` không `node_id` trả mọi node. Cây vượt ngân sách: node bị lược có `(+k mục, expand nX)` và `expand` trả đúng cây con | integration test |
-| N33 | Migration `0017` chạy trên DB có dữ liệu 0.7: thêm bảng mới; file cũ có `classify_status=skipped`, bảng cũ chưa có ô cho tới khi reparse (hoặc task `maintenance` dựng lại ô từ `page_blocks.html` + `page_lines`, không cần OCR lại) | migration test trên `bepaylot_test` |
+| N33 | Migration `0018` chạy trên DB có dữ liệu 0.7: thêm bảng mới; file cũ có `classify_status=skipped`, bảng cũ chưa có ô cho tới khi reparse (hoặc task `maintenance` dựng lại ô từ `page_blocks.html` + `page_lines`, không cần OCR lại) | migration test trên `bepaylot_test` |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2166,8 +2237,9 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P4** | `pdf_mode=auto`, DOCX/XLSX qua convert sang PDF, TIFF nhiều trang, ParadeDB tuỳ chọn, UI highlight | — | chưa làm |
 | **P5** | Case (§6.2, §8.1): migration `0013_cases.sql` + chuyển dữ liệu cũ; package `service/cases` + repository; nạp `configs/case_types`; upload theo `case_code`, chống trùng theo case; search/`DocumentInCase` theo `case_id`; session gắn `case_id` (thay `kb_ids`/`kb_filter` trong `internal/agent/knowledge.go`, `internal/tools/knowledge.go`, `handler/session_kb.go`); prompt `<case>`; đính kèm chat vào case; kiểm tra citation theo case; API §10.1, §10.5; frontend chọn case | N11, N13, N16–N18 | ✅ backend + agent xong (test tích hợp N13, N16–N18); chưa có: kiểm citation trước khi stream, frontend chọn case |
 | **P6** | LLM Wiki theo case (bản 0.5–0.9): ingest, lint, index wiki, tool `wiki_*`, UI wiki | — | đã làm, **bị gỡ ở P9** (U35) |
-| **P8** | Mô hình dữ liệu hồ sơ (§5.10, §6.9): migration `0017`; `ParsedTable` trong `parser/assemble` + lưu `page_tables`/`table_cells`; task `maintenance` dựng ô cho dữ liệu cũ; citation `b<k>`/`t<k>:r<i>c<j>` trong `/citations`, `kb_locate`; `service/docmodel` + `evidence_spans` + `CitationResolver` dùng chung cho search, tool và evidence; đánh giá lại evidence liên file khi xoá/reparse; `extracted_fields` + tool `kb_save_fields`/`kb_get_fields`/`kb_read_table`; `document:classify` tuỳ chọn (`auto`/API, chế độ `titles`/`pages`) + callback `document.classified`; API §10.7; UI: dải nhãn và bảng field (xác nhận/bác bỏ, tô sáng evidence) trên trình xem file | N29–N34 | chưa làm |
+| **P8** | Mô hình dữ liệu hồ sơ (§5.10, §6.9): migration `0018`; `ParsedTable` trong `parser/assemble` + lưu `page_tables`/`table_cells`; task `maintenance` dựng ô cho dữ liệu cũ; citation `b<k>`/`t<k>:r<i>c<j>` trong `/citations`, `kb_locate`; `service/docmodel` + `evidence_spans` + `CitationResolver` dùng chung cho search, tool và evidence; đánh giá lại evidence liên file khi xoá/reparse; `extracted_fields` + tool `kb_save_fields`/`kb_get_fields`/`kb_read_table`; `document:classify` tuỳ chọn (`auto`/API, chế độ `titles`/`pages`) + callback `document.classified`; API §10.7; UI: dải nhãn và bảng field (xác nhận/bác bỏ, tô sáng evidence) trên trình xem file | N29–N34 | chưa làm |
 | **P9** | Gỡ LLM Wiki, chỉ còn search duyệt cây (U35): migration `0016_drop_wiki.sql` (xoá bảng/cột wiki, thêm `doc_tree_nodes.tree_tokens`); xoá `service/wiki`, `configs/wiki_schemas`, route và tool `wiki_*`, task `wiki:*`, pool `wiki` → `enrich`, trạng thái `enriching`; search §6.6 (mục lục hồ sơ → cây nguyên khối → trang → dòng); `GET /cases/:id/toc` + tool `kb_case_toc`; `kb_document_tree` trả cả cây khi vừa ngân sách; mô tả tool nêu luồng duyệt cây; frontend: thay trang wiki/graph bằng Module 3 hiển thị theo cây (§7) | N19–N22, N37 | ✅ xong (27/09/2026): test tích hợp N16, N20–N22, N37 và test unit cây/mục lục; chạy đầu-cuối với LLM thật (§15.3). Pool `enrich` chưa có vì `document:classify` thuộc P8 |
+| **P10** | VLM gom vùng qua agent + ảnh trang + JSON trang (U36): `agent.Extract` (streaming trên `llm.providers`), adapter `container/vlm.go`, bỏ client HTTP của `parser/vlm`; gom nhóm class theo trang (ảnh ghép đánh số, marker `<<<k>>>`, đọc lại vùng thiếu), tiêu đề/bảng gọi riêng, `seal` gắn nhãn; `GET …/image` stream qua API; migration `0017_page_json.sql` (`raw`, `text_layer` jsonb) | — | ✅ xong (28/09/2026): unit test `parser/vlm`; chưa chạy test tích hợp DB và chưa đo token/lần gọi với model thật (§15.3) |
 | **P7** | Đăng nhập như WeKnora (§10.6): migration `0015_auth.sql`, `service/auth` (bcrypt, JWT access/refresh + `auth_tokens`, OIDC), middleware Bearer JWT → API key, API `/v1/auth/*`, trang `/login` + hộp thoại Tài khoản trong `frontend/`, `cmd/seed -password` | N26–N28 | ✅ xong (test tích hợp N26–N27, chạy trình duyệt N28 với provider OIDC giả); chưa thử với provider OIDC thật |
 
 ---
@@ -2206,13 +2278,14 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Wiring, vai trò `-role api\|worker\|all`, housekeeping | `internal/container`, `cmd/server` |
 | Queue asynq theo pool, dead-letter, queue in-process khi không có Redis (chỉ dev) | `internal/queue` |
 | S3 (aws-sdk-go-v2 transfermanager), store in-memory (dev/test), cache file nguồn | `internal/storage` |
-| Parser: TurboOCR, engine `turboocr_vlm` (layout + VLM từng vùng, §5.9), assemble, text layer, go-pdfium, ảnh upload | `internal/parser/*` |
+| Parser: TurboOCR, engine `turboocr_vlm` (layout + VLM gom vùng theo nhóm, con dấu gắn nhãn, §5.9), assemble, text layer, go-pdfium, ảnh upload | `internal/parser/*` |
+| Bóc tách ảnh qua agent (`agent.Extract`, streaming trên `llm.providers`) cho engine `turboocr_vlm` | `internal/agent/extract.go`, `internal/container/vlm.go` |
 | Case và loại case (§6.2), `case:delete`, housekeeping case | `internal/application/service/cases`, `configs/case_types`, `repository/postgres/cases.go` |
 | Module 1–2 (upload theo case, cây mục lục, search) | `internal/application/service/{document,index,metadata}` |
 | Search duyệt cây (§6.6): mục lục hồ sơ → cây nguyên khối → trang của node → dòng, `GET /cases/:id/toc`, `?format=text` của cây, `tree_tokens` | `internal/application/service/index/{search_tree,treeview,search}.go`, migration `0016_drop_wiki.sql` |
 | Tool agent `kb_*` (`kb_case_toc`, `kb_document_tree` trả cả cây) theo `CaseScope`; session gắn `case_id`; section prompt `<case>` | `internal/tools/knowledge.go`, `internal/agent`, `internal/handler/session_case.go` |
 | Kiểm tra quy tắc module (§3.3) | `internal/archtest` |
-| Migrations `0006`–`0016` (`0017` mới có trong spec, P8) | `migrations/postgres` |
+| Migrations `0006`–`0017` (`0018` mới có trong spec, P8) | `migrations/postgres` |
 | Callback hoàn thành document (tuỳ chọn, retry + lưu trạng thái, §4.7) | `internal/webhook`, `internal/application/service/document/callback.go` |
 | Worker PDFium native (cgo, tag `pdfium_cgo`), Docker target `api` / `worker` | `cmd/pdfium-worker`, `deploy/Dockerfile` |
 | Tài liệu vận hành bàn giao OPN, script kiểm tra trạng thái, bộ SQL kiểm tra (U29) | `spec/van-hanh.md`, `spec/van-hanh/` |
@@ -2241,6 +2314,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 - **VLM (§5.9):** đã chạy thật với `allenai/olmocr-2-7b` qua LM Studio (`localhost:1234`) trên một trang dựng lại từ layout mẫu. Kết quả: 30 vùng, 0 lỗi, ≈ 59 s/trang ở `max_concurrency: 4`, 28 block được refine, 38/38 dòng VLM định vị được offset. Chưa chạy chung với TurboOCR thật và chưa đo trên bản scan thật.
 - **Chạy đầu-cuối (25/09/2026):** Postgres + Redis + MinIO (Docker), `role=all`, engine `turboocr_vlm`, VLM olmOCR-2-7B (LM Studio), LLM `inclusionai/ling-3.0-flash-fin:free` qua OpenRouter. TurboOCR không truy cập được, nên cả hai trang của một PDF scan đi nhánh `full_page` (≈ 70 s cho 2 trang). Cây mục lục dựng từ tiêu đề nhận diện được (Hợp đồng → Điều 1–4). Search `keyword` và `reasoning` (1 lần gọi LLM) trả đúng dòng bảng "Tiền thuê hằng tháng | 12.000.000" và dòng thời hạn thuê. Agent gọi `kb_list_documents` (lọc `ma_ho_so`), `kb_search`, `kb_read_pages` rồi trả lời có trích dẫn `p/l`. Model `inclusionai/ling-3.0-flash` (trả phí) chưa chạy được vì key hết hạn mức. Chế độ cả trang đọc kém hơn chế độ theo vùng (ví dụ "TÍNH" thay cho "TÌNH") vì ảnh bị thu về 1288 px.
 - **Chạy đầu-cuối bản 0.11 (27/09/2026):** server thật (`role=all`, queue in-process) trên DB riêng, LLM `qwen/qwen3.8-27b` qua Groq (`.env`). PDF 4 trang có text layer và bookmark vào case `RT112233` → `completed` ngay sau `index:tree` (không còn `enriching`); tóm tắt node do LLM thật viết. `GET /cases/:id/toc` ≈ 200 token. Search `reasoning` hai câu hỏi (đợt thanh toán 2 + tài khoản; thời gian bảo hành): mỗi câu **2 lần gọi LLM, ≈ 950 token input**, chỉ đọc đúng 1 trang của node được chọn, hit đúng dòng (`via=tree`). Agent chọn `kb_search` hoặc bắt đầu bằng `kb_case_toc` đúng luồng, nhưng câu trả lời cuối bị Groq trả 429 (hạn mức 7.000 token/phút: system prompt của agent ≈ 4.000 token). Trang `/cases` mở bằng trình duyệt: mục lục hồ sơ → cây → ảnh trang, không lỗi console.
+- **Bản 0.12 (U36, 28/09/2026):** unit test `parser/vlm` (gom nhóm, con dấu, marker, đọc lại vùng thiếu, ảnh ghép) và toàn bộ `go test ./...` qua. **Chưa kiểm:** test tích hợp DB (`make test-db`, cần Docker) cho migration `0017` và cột `raw`/`text_layer`; chưa đo với model thật số lần gọi/token mỗi trang và độ tuân thủ marker `<<<k>>>` của olmOCR (model fine-tune theo prompt riêng, có thể bỏ marker → rơi về đọc lại từng vùng); chưa mở trình duyệt kiểm ảnh trang sau khi đổi sang stream.
 - **LLM thật trên tập lớn:** chưa đo N15 và N19 (recall@5, token trung bình) trên bộ ≥ 30 câu hỏi.
 - **Dọn dữ liệu sau reparse (`document:gen_cleanup`)** lỗi `relation "kg_mentions" does not exist` từ migration `0014` (bảng đã bị xoá nhưng code vẫn xoá ở đó); đã sửa (27/09/2026). Dead-letter cũ loại này không cần retry (van-hanh.md §6.2).
 - **Đăng nhập (27/09/2026):** server thật + Vite trên DB dev: đăng ký, đăng nhập sai/đúng, `/auth/me`, gọi `/v1/kbs` bằng JWT và bằng API key (header và Bearer), thu hồi key, refresh xoay vòng, đổi mật khẩu, đăng xuất; OIDC với provider giả (tự duyệt) qua Vite cùng origin và khi API khác origin, replay callback bị chặn, `return_to` lạ → 400. Trình duyệt (Playwright): chặn route → `/login`, đăng ký, token hỏng → tự refresh, tạo API key, đăng xuất, đăng nhập OIDC. **Chưa thử với provider OIDC thật** (Keycloak, Google…).
@@ -2277,6 +2351,7 @@ Mục này gom các quy tắc dễ làm sai khi code, rải ở nhiều mục ph
 - Mục lục hồ sơ dựng bằng code khi đọc, không lưu, không gọi LLM (§6.6).
 - Search: không có trường `reason` trong JSON của LLM; mỗi request tối đa `search.max_llm_calls` (§6.6).
 - Phân loại: **mặc định không chạy**. Chỉ chạy khi loại case bật `classification.auto` (chế độ `titles`, chỉ gửi dòng tiêu đề) hoặc khi gọi API; chế độ `pages` chỉ qua API. File không có tiêu đề nào → không gọi LLM (§6.9.4).
+- **VLM của parser (§5.9):** gom vùng cùng nhóm class trên một trang thành một lần gọi; chỉ tiêu đề và bảng gọi riêng; `seal` không gọi. Mọi lần gọi đi qua `agent.Extract` (không session, không lịch sử, không tool); không viết client HTTP riêng tới model trong `parser`.
 - Không có bước pipeline tự bóc tách field (Q21). Không có workflow nghiệp vụ, danh sách trường hay rule trong system prompt, config hoặc mô tả tool; mô tả tool chỉ nêu cách dùng tool (luồng duyệt cây) (§8.2).
 
 ### 16.3 Không loại trừ

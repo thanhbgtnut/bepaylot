@@ -268,16 +268,19 @@ func (s *Service) render(ctx context.Context, d types.Document, p types.DocTaskP
 		if _, err := s.objects.Put(ctx, imgKey, bytes.NewReader(pr.JPEG), int64(len(pr.JPEG)), "image/jpeg"); err != nil {
 			return err
 		}
-		textKey := ""
+		// The text layer is structured page data: it goes to the page row
+		// (jsonb), not to S3 (§9.1).
+		var layer []byte
 		if pr.Text != nil && len(pr.Text.Words) > 0 {
-			textKey = s.keys.TextLayer(d.KBID, d.ID, d.Gen, pr.PageNo)
-			if err := s.putGzipJSON(ctx, textKey, pr.Text); err != nil {
-				return err
+			b, jerr := json.Marshal(pr.Text)
+			if jerr != nil {
+				return jerr
 			}
+			layer = b
 		}
 		if err := s.st.Pages.MarkRendered(ctx, d.ID, d.Gen, pr.PageNo, postgres.Rendered{
 			Width: pr.Width, Height: pr.Height, DPI: pr.DPI, WidthPt: pr.WidthPt, HeightPt: pr.HeightPt,
-			Rotation: pr.Rotation, ImageKey: imgKey, TextLayerKey: textKey, RenderMs: pr.RenderMs,
+			Rotation: pr.Rotation, ImageKey: imgKey, TextLayer: layer, RenderMs: pr.RenderMs,
 		}); err != nil {
 			return err
 		}
@@ -341,7 +344,7 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	if err != nil || row.Gen != d.Gen || row.Status == types.PageDone || row.Status == types.PageFailed {
 		return nil
 	}
-	layer := s.loadTextLayer(ctx, row.TextLayerKey)
+	layer := s.loadTextLayer(ctx, row)
 	tlOpt := s.textLayerOpts(d)
 
 	engine, err := s.engines.Get(d.Engine)
@@ -363,7 +366,7 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 			page := textlayer.PageFromLayer(pageNo, row.Width, row.Height, row.DPI, layer)
 			page.TextQuality = textlayer.Quality(layer, "", tlOpt)
 			assemble.Render(page)
-			return s.savePage(ctx, d, page, "", ocrMs)
+			return s.savePage(ctx, d, page, nil, ocrMs)
 		}
 		return s.finishPageFailed(ctx, d, pageNo, err)
 	}
@@ -388,11 +391,8 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	if err := s.cropFigures(ctx, row, page); err != nil {
 		s.log.Warn("crop figures failed", "doc", d.ID, "page", pageNo, "err", err)
 	}
-	rawKey := s.keys.OCRRaw(d.KBID, d.ID, d.Gen, pageNo)
-	if err := s.putGzip(ctx, rawKey, raw.Raw); err != nil {
-		return err
-	}
-	return s.savePage(ctx, d, page, rawKey, ocrMs)
+	// The engine's raw JSON (layout, VLM calls) is kept on the page row.
+	return s.savePage(ctx, d, page, raw.Raw, ocrMs)
 }
 
 func (s *Service) callEngine(ctx context.Context, engine parser.Engine, row types.DocumentPage, refine bool) (*parser.RawPage, error) {
@@ -404,8 +404,8 @@ func (s *Service) callEngine(ctx context.Context, engine parser.Engine, row type
 	return engine.ParsePage(ctx, parser.PageImage{PageNo: row.PageNo, Body: rc, Size: info.Size, Width: row.Width, Height: row.Height}, s.engineOptions(refine))
 }
 
-func (s *Service) savePage(ctx context.Context, d types.Document, page *types.ParsedPage, rawKey string, ocrMs int) error {
-	err := s.st.Pages.SaveParsed(ctx, d.ID, d.Gen, page, rawKey, assemble.PlainText(page), ocrMs)
+func (s *Service) savePage(ctx context.Context, d types.Document, page *types.ParsedPage, raw []byte, ocrMs int) error {
+	err := s.st.Pages.SaveParsed(ctx, d.ID, d.Gen, page, raw, assemble.PlainText(page), ocrMs)
 	if errors.Is(err, postgres.ErrNotFound) {
 		return nil // superseded by a reparse
 	}
@@ -426,16 +426,29 @@ func (s *Service) finishPageFailed(ctx context.Context, d types.Document, pageNo
 	return fmt.Errorf("%w: page %d: %v", queue.ErrSkipRetry, pageNo, cause)
 }
 
-func (s *Service) loadTextLayer(ctx context.Context, key string) *types.TextLayer {
-	if key == "" {
-		return nil
-	}
+// loadTextLayer reads the page's text layer from its row; a page rendered
+// before migration 0017 still has it in S3 (text_layer_key).
+func (s *Service) loadTextLayer(ctx context.Context, row types.DocumentPage) *types.TextLayer {
 	var tl types.TextLayer
-	if err := s.getGzipJSON(ctx, key, &tl); err != nil {
-		s.log.Warn("load text layer failed", "key", key, "err", err)
+	b, err := s.st.Pages.TextLayer(ctx, row.DocumentID, row.Gen, row.PageNo)
+	switch {
+	case err != nil:
+		s.log.Warn("load text layer failed", "doc", row.DocumentID, "page", row.PageNo, "err", err)
 		return nil
+	case len(b) > 0:
+		if err := json.Unmarshal(b, &tl); err != nil {
+			s.log.Warn("decode text layer failed", "doc", row.DocumentID, "page", row.PageNo, "err", err)
+			return nil
+		}
+		return &tl
+	case row.TextLayerKey != "":
+		if err := s.getGzipJSON(ctx, row.TextLayerKey, &tl); err != nil {
+			s.log.Warn("load text layer failed", "key", row.TextLayerKey, "err", err)
+			return nil
+		}
+		return &tl
 	}
-	return &tl
+	return nil
 }
 
 // assemble finishes parsing: running headers, full-document markdown and
@@ -567,27 +580,6 @@ func (s *Service) Housekeeping(ctx context.Context) error {
 	}
 	s.callbackHousekeeping(ctx, bucket)
 	return nil
-}
-
-func (s *Service) putGzip(ctx context.Context, key string, data []byte) error {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(data); err != nil {
-		return err
-	}
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	_, err := s.objects.Put(ctx, key, &buf, int64(buf.Len()), "application/gzip")
-	return err
-}
-
-func (s *Service) putGzipJSON(ctx context.Context, key string, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	return s.putGzip(ctx, key, b)
 }
 
 func (s *Service) getGzipJSON(ctx context.Context, key string, v any) error {

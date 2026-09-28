@@ -982,13 +982,19 @@ func (h *Handlers) GetPage(ctx context.Context, c *app.RequestContext) {
 
 // PageImage handles GET /v1/documents/{id}/pages/{n}/image.
 //
-// @Summary   The rendered page image (redirect to a presigned URL, or streamed)
+// The image is streamed through the API: the web app loads it with fetch and
+// its auth header, and a 302 to the S3 host would be a cross-origin request
+// that S3/MinIO does not allow (the browser reports a network error).
+// Clients that can follow it may ask for the presigned URL with redirect=1.
+//
+// @Summary   The rendered page image (streamed; redirect=1 for a presigned URL)
 // @Tags      Pages
 // @Produce   image/jpeg
-// @Param     id   path  string  true  "Document id"  format(uuid)
-// @Param     n    path  int     true  "Page number (1-based)"
+// @Param     id        path   string  true   "Document id"  format(uuid)
+// @Param     n         path   int     true   "Page number (1-based)"
+// @Param     redirect  query  int     false  "1 = 302 to a presigned S3 URL (storage.presign on)"
 // @Success   200  {file}  file
-// @Success   302  {string}  string  "Redirect to the presigned S3 URL"
+// @Success   302  {string}  string  "Redirect to the presigned S3 URL (redirect=1)"
 // @Failure   404  {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth
 // @Router    /v1/documents/{id}/pages/{n}/image [get]
@@ -1006,7 +1012,7 @@ func (h *Handlers) PageImage(ctx context.Context, c *app.RequestContext) {
 		h.badRequest(c, "invalid page number")
 		return
 	}
-	url, rc, size, err := h.Docs.PageImage(ctx, u.ID, id, n)
+	url, rc, size, err := h.Docs.PageImage(ctx, u.ID, id, n, string(c.Query("redirect")) == "1")
 	if err != nil {
 		h.serviceError(c, err)
 		return
@@ -1016,6 +1022,8 @@ func (h *Handlers) PageImage(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.SetContentType("image/jpeg")
+	// Images of a generation never change (a reparse writes new keys).
+	c.Response.Header.Set("Cache-Control", "private, max-age=3600")
 	c.SetBodyStream(rc, int(size))
 }
 

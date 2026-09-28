@@ -2987,6 +2987,10 @@ paths:
         name: "n"
         required: true
         type: integer
+      - description: 1 = 302 to a presigned S3 URL (storage.presign on)
+        in: query
+        name: redirect
+        type: integer
       produces:
       - image/jpeg
       responses:
@@ -2995,7 +2999,7 @@ paths:
           schema:
             type: file
         "302":
-          description: Redirect to the presigned S3 URL
+          description: Redirect to the presigned S3 URL (redirect=1)
           schema:
             type: string
         "404":
@@ -3004,7 +3008,7 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: The rendered page image (redirect to a presigned URL, or streamed)
+      summary: The rendered page image (streamed; redirect=1 for a presigned URL)
       tags:
       - Pages
   /v1/documents/{id}/reparse:

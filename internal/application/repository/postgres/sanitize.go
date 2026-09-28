@@ -48,6 +48,37 @@ func cleanJSON(v any) ([]byte, error) {
 	return json.Marshal(stripNUL(tree))
 }
 
+// cleanRawJSON prepares engine or parser JSON for a jsonb column: empty
+// input is NULL, invalid JSON is kept as a JSON string, and NUL escapes are
+// removed like cleanJSON does.
+func cleanRawJSON(b []byte) (*string, error) {
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil
+	}
+	if !json.Valid(b) {
+		s, err := cleanJSON(strings.ToValidUTF8(string(b), "\uFFFD"))
+		if err != nil {
+			return nil, err
+		}
+		out := string(s)
+		return &out, nil
+	}
+	if bytes.Contains(b, []byte(`\u0000`)) {
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
+		var tree any
+		if err := dec.Decode(&tree); err != nil {
+			return nil, err
+		}
+		var err error
+		if b, err = json.Marshal(stripNUL(tree)); err != nil {
+			return nil, err
+		}
+	}
+	out := string(b)
+	return &out, nil
+}
+
 func stripNUL(v any) any {
 	switch t := v.(type) {
 	case string:

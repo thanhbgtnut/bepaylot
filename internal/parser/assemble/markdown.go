@@ -107,7 +107,7 @@ func Render(page *types.ParsedPage) {
 			sep()
 			b.MdStart = pos
 			if b.AssetKey != "" {
-				write(fmt.Sprintf("![figure p%d-b%d](%s)", page.PageNo, b.BlockNo, b.AssetKey))
+				write(fmt.Sprintf("![%s p%d-b%d](%s)", figureLabel(b.RawClass), page.PageNo, b.BlockNo, b.AssetKey))
 				if hasText {
 					write("\n")
 				}
@@ -256,4 +256,13 @@ func PlainText(page *types.ParsedPage) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// figureLabel is the alt text of a figure: seals are tagged from the layout
+// class alone (no VLM call, §5.9), so a search for "con dấu" finds them.
+func figureLabel(rawClass string) string {
+	if strings.EqualFold(rawClass, "seal") {
+		return "con dấu"
+	}
+	return "figure"
 }

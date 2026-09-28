@@ -69,7 +69,7 @@ Queue `*_interactive` (file đính kèm trong chat) có trọng số 3, được
 | **Redis 7** | hàng đợi task (asynq) | upload vẫn nhận nhưng không xử lý; worker dừng. Task trong Redis mất nếu Redis mất dữ liệu → housekeeping tự đẩy lại tài liệu đứng yên (§5.8) |
 | **S3 / MinIO** | file gốc, ảnh trang, kết quả OCR thô, markdown | upload lỗi; xem ảnh trang lỗi; worker không render/OCR được |
 | **TurboOCR** (`TURBOOCR_URL`, `POST /ocr/raw`) | OCR mặc định | file mới lỗi OCR → `partial`/`failed`; tài liệu cũ, hỏi đáp vẫn chạy |
-| **VLM** (tuỳ chọn, `VLM_BASE_URL`, OpenAI-compatible) | engine `turboocr_vlm` đọc từng vùng ảnh | chỉ ảnh hưởng hồ sơ dùng engine này (`on_error: fallback` giữ text OCR) |
+| **VLM** (tuỳ chọn, provider `vlm` = `VLM_BASE_URL`, OpenAI-compatible; hoặc `BEPAYLOT_VLM_PROVIDER`) | engine `turboocr_vlm` đọc vùng ảnh qua agent (streaming): mỗi trang mỗi nhóm class một lần gọi, tiêu đề/bảng gọi riêng, con dấu không gọi | chỉ ảnh hưởng hồ sơ dùng engine này (`on_error: fallback` giữ text OCR). Số lần gọi và token từng trang: cột `document_pages.raw -> 'calls'` |
 | **LLM** (`OPENAI_BASE_URL`/`ANTHROPIC_API_KEY`, `BEPAYLOT_DEFAULT_MODEL`) | agent hỏi đáp, search `reasoning`, tóm tắt mục lục, trích xuất wiki | agent/search lỗi; mục lục và wiki hạ về chế độ không LLM (§5.4–5.5) |
 | **OIDC provider** (tuỳ chọn) | đăng nhập SSO | chỉ nút "Đăng nhập bằng …" lỗi; email + mật khẩu và API key vẫn chạy |
 
@@ -185,7 +185,7 @@ Cần `curl`; `jq` và `redis-cli` nếu có sẽ cho kết quả chi tiết hơ
 | `GET /healthz` | không | process còn sống | liveness probe |
 | `GET /readyz` | không | ping Postgres (timeout 2 s); trả model/provider LLM mặc định | readiness probe; **không** kiểm Redis, S3, OCR, LLM |
 | `GET /v1/auth/config` | không | cấu hình đăng nhập; `auth_bypass` phải là `false` | cảnh báo cấu hình sai |
-| `GET /v1/parser/engines` | API key | engine OCR đăng ký, `available`, `error` | TurboOCR: chỉ báo **thiếu cấu hình** hoặc **circuit breaker đang mở** (5 lỗi liên tiếp → ngắt 30 s), không gọi thử mạng; VLM: gọi `GET /models` thật |
+| `GET /v1/parser/engines` | API key | engine OCR đăng ký, `available`, `error` | TurboOCR: chỉ báo **thiếu cấu hình** hoặc **circuit breaker đang mở** (5 lỗi liên tiếp → ngắt 30 s), không gọi thử mạng; VLM: chỉ kiểm provider có trong `llm.providers` (không gọi mạng; dùng `healthcheck.sh` để gọi `GET /models`) |
 | `GET /v1/admin/queues` | admin | mỗi queue: `pending`, `active`, `scheduled`, `retry`, `archived` | độ tồn hàng đợi. `error: NOT_FOUND … does not exist` = queue chưa từng có task, bình thường |
 | `GET /v1/admin/dead-letters?task_type=&scope_id=&limit=` | admin | task đã hết lượt retry | xem lỗi, retry (§6) |
 | `POST /v1/admin/dead-letters/{id}/retry` | admin | đưa lại task vào hàng đợi | sau khi đã sửa nguyên nhân |

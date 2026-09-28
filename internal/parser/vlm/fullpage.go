@@ -3,7 +3,6 @@ package vlm
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"image"
 	"regexp"
@@ -33,22 +32,18 @@ func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, 
 		w, h = b.Dx(), b.Dy()
 	}
 	t0 := time.Now()
-	full := parser.RawRegion{ID: 0, Class: "page", Quad: types.QuadFromBBox(types.BBox{X1: float64(b.Dx()), Y1: float64(b.Dy())})}
-	res := e.transcribeWith(ctx, src, full, 0)
-	if res.Error != "" {
-		return nil, fmt.Errorf("vlm: full page (layout unavailable: %s): %s", reason, res.Error)
+	tr, cr := e.call(ctx, "", []int{0}, e.cfg.Prompt, src)
+	if cr.Error != "" {
+		return nil, fmt.Errorf("vlm: full page (layout unavailable: %s): %s", reason, cr.Error)
 	}
 	// Figure boxes are in the pixels of the image the model saw.
 	scale := 1.0
 	if long := max(b.Dx(), b.Dy()); e.cfg.MaxSide > 0 && long > e.cfg.MaxSide {
 		scale = float64(long) / float64(e.cfg.MaxSide)
 	}
-	page := &parser.RawPage{Width: w, Height: h, Regions: SplitMarkdown(res.Text, w, h, scale)}
-	env := rawEnvelope{Engine: Name, Model: e.cfg.Client.Model(), Mode: "full_page", LayoutError: reason,
-		Regions: []RegionResult{res}, Ms: int(time.Since(t0).Milliseconds())}
-	if raw, err := json.Marshal(env); err == nil {
-		page.Raw = raw
-	}
+	page := &parser.RawPage{Width: w, Height: h, Regions: SplitMarkdown(tr.Text, w, h, scale)}
+	res := RegionResult{Class: "page", BBox: [4]int{0, 0, b.Dx(), b.Dy()}, Text: tr.Text, Meta: tr.Meta, Truncated: tr.Truncated}
+	e.envelope(page, "full_page", reason, []RegionResult{res}, []CallResult{cr}, int(time.Since(t0).Milliseconds()))
 	return page, nil
 }
 

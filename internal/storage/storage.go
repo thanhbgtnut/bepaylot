@@ -73,16 +73,6 @@ func (k Keys) PageImage(kb, doc uuid.UUID, gen, page int) string {
 	return k.Gen(kb, doc, gen) + fmt.Sprintf("/pages/%05d.jpg", page)
 }
 
-// OCRRaw is the engine's raw JSON for a page (gzip).
-func (k Keys) OCRRaw(kb, doc uuid.UUID, gen, page int) string {
-	return k.Gen(kb, doc, gen) + fmt.Sprintf("/ocr/%05d.json.gz", page)
-}
-
-// TextLayer is the page's raw text layer (gzip).
-func (k Keys) TextLayer(kb, doc uuid.UUID, gen, page int) string {
-	return k.Gen(kb, doc, gen) + fmt.Sprintf("/text/%05d.json.gz", page)
-}
-
 // Figure is a cropped figure image.
 func (k Keys) Figure(kb, doc uuid.UUID, gen, page, block int) string {
 	return k.Gen(kb, doc, gen) + fmt.Sprintf("/figures/p%d-b%d.jpg", page, block)

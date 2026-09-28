@@ -177,22 +177,27 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	oc := cfg.Parser.Engines.TurboOCR
 	layout := turboocr.New(turboocr.Config{BaseURL: oc.BaseURL, Timeout: oc.Timeout, BreakerFailures: oc.Breaker.Failures, BreakerOpenFor: oc.Breaker.OpenFor})
 	engines.Register(layout)
-	if vc := cfg.Parser.Engines.VLM; vc.BaseURL != "" {
+	if vc := cfg.Parser.Engines.VLM; vc.Provider != "" {
+		model := vc.Model
+		if model == "" {
+			model = cfg.LLM.DefaultModel
+		}
+		client := &agentVLM{ag: ag, reg: registry, provider: vc.Provider, model: model, maxTokens: vc.MaxTokens, temperature: float32(vc.Temperature)}
 		e, err := vlm.New(vlm.Config{
-			Layout: layout,
-			Client: vlm.NewClient(vlm.ClientConfig{BaseURL: vc.BaseURL, APIKey: vc.APIKey, Model: vc.Model, Prompt: vc.Prompt,
-				MaxTokens: vc.MaxTokens, Temperature: vc.Temperature, Timeout: vc.Timeout}),
-			MaxConcurrency: vc.MaxConcurrency, Classes: vc.Classes, Padding: vc.Padding, MaxSide: vc.MaxSide, MinSide: vc.MinSide,
+			Layout: layout, Client: client, Prompt: vc.Prompt, BatchPrompt: vc.BatchPrompt,
+			MaxConcurrency: vc.MaxConcurrency, Classes: vc.Classes, Groups: vc.Groups, TagClasses: vc.TagClasses,
+			BatchMaxRegions: vc.BatchMaxRegions, BatchMaxHeight: vc.BatchMaxHeight,
+			Padding: vc.Padding, MaxSide: vc.MaxSide, MinSide: vc.MinSide,
 			JPEGQuality: vc.JPEGQuality, Retries: vc.Retries, OnError: vc.OnError, FullPage: vc.FullPageEnabled(), Log: log,
 		})
 		if err != nil {
 			return fmt.Errorf("vlm engine: %w", err)
 		}
 		engines.Register(e)
-		log.Info("ocr engine registered", "engine", vlm.Name, "model", vc.Model, "base_url", vc.BaseURL)
+		log.Info("ocr engine registered", "engine", vlm.Name, "provider", vc.Provider, "model", model)
 	}
 	if _, err := engines.Get(""); err != nil {
-		return fmt.Errorf("parser.default_engine: %w (engine %s needs parser.engines.vlm.base_url)", err, vlm.Name)
+		return fmt.Errorf("parser.default_engine: %w (engine %s needs parser.engines.vlm.provider)", err, vlm.Name)
 	}
 
 	// PDF renderer: workers only.

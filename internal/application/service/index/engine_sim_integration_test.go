@@ -205,14 +205,15 @@ func (s *ocrService) RoundTrip(r *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 }
 
-// simVLM transcribes a crop by looking up its page and pixel size.
+// simVLM transcribes a crop by looking up its page and pixel size (the
+// engine runs without batching here, so every call is one region).
 type simVLM struct {
 	text  map[string]string
 	calls map[int]int
 }
 
-func (v *simVLM) Transcribe(ctx context.Context, jpg []byte) (*vlm.Transcription, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(jpg))
+func (v *simVLM) Transcribe(ctx context.Context, req vlm.Request) (*vlm.Transcription, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(req.JPEG))
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +229,8 @@ func TestSimulatedScan20PagesBothEngines(t *testing.T) {
 	svc := &ocrService{pages: ocrPages, query: map[int]string{}}
 	turbo := turboocr.New(turboocr.Config{BaseURL: "http://turboocr.sim", Timeout: 10 * time.Second, HTTPClient: &http.Client{Transport: svc}})
 	fakeVLM := &simVLM{text: vlmText, calls: map[int]int{}}
-	refining, err := vlm.New(vlm.Config{Layout: turbo, Client: fakeVLM, MaxConcurrency: 1, FullPage: true})
+	refining, err := vlm.New(vlm.Config{Layout: turbo, Client: fakeVLM, MaxConcurrency: 1, FullPage: true,
+		Groups: map[string][]string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1718,7 +1718,7 @@ const docTemplate = `{
                 "tags": [
                     "Pages"
                 ],
-                "summary": "The rendered page image (redirect to a presigned URL, or streamed)",
+                "summary": "The rendered page image (streamed; redirect=1 for a presigned URL)",
                 "parameters": [
                     {
                         "type": "string",
@@ -1734,6 +1734,12 @@ const docTemplate = `{
                         "name": "n",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1 = 302 to a presigned S3 URL (storage.presign on)",
+                        "name": "redirect",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1744,7 +1750,7 @@ const docTemplate = `{
                         }
                     },
                     "302": {
-                        "description": "Redirect to the presigned S3 URL",
+                        "description": "Redirect to the presigned S3 URL (redirect=1)",
                         "schema": {
                             "type": "string"
                         }

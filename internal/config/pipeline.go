@@ -125,27 +125,37 @@ type ParserEngines struct {
 	VLM      VLM      `yaml:"vlm"`
 }
 
-// VLM configures engine turboocr_vlm (§5.9): TurboOCR finds the layout, each
-// region is cropped and transcribed concurrently by an OpenAI-compatible
-// vision model. The engine is registered only when base_url is set.
+// VLM configures engine turboocr_vlm (§5.9): TurboOCR finds the layout, the
+// regions of a page are read by a vision model through the agent
+// (agent.Extract, streaming, on the LLM provider registry): regions whose
+// classes share a group in one call per page, titles and tables one call
+// each, seals tagged without a call. The engine is registered only when
+// provider is set.
 type VLM struct {
-	BaseURL     string        `yaml:"base_url"` // up to and including /v1
-	APIKey      string        `yaml:"api_key"`
-	Model       string        `yaml:"model"`
-	Prompt      string        `yaml:"prompt"` // "" = olmOCR's page prompt
-	MaxTokens   int           `yaml:"max_tokens"`
-	Temperature float64       `yaml:"temperature"`
-	Timeout     time.Duration `yaml:"timeout"` // per request
-	// MaxConcurrency bounds in-flight VLM requests per worker process.
+	// Provider names an entry of llm.providers (e.g. "vlm" for a local
+	// olmOCR server, or the chat provider when its model reads images).
+	Provider    string  `yaml:"provider"`
+	Model       string  `yaml:"model"`        // "" = llm.default_model
+	Prompt      string  `yaml:"prompt"`       // one region; "" = olmOCR's page prompt
+	BatchPrompt string  `yaml:"batch_prompt"` // a stitched group; "" = built-in (with %d)
+	MaxTokens   int     `yaml:"max_tokens"`
+	Temperature float64 `yaml:"temperature"`
+	// MaxConcurrency bounds in-flight VLM calls per worker process.
 	MaxConcurrency int      `yaml:"max_concurrency"`
-	Classes        []string `yaml:"classes"`  // layout classes sent to the VLM; empty = text-like classes
-	Padding        int      `yaml:"padding"`  // px around each region
-	MaxSide        int      `yaml:"max_side"` // downscale crops above this long side
-	MinSide        int      `yaml:"min_side"`
-	JPEGQuality    int      `yaml:"jpeg_quality"`
-	Retries        int      `yaml:"retries"`
-	OnError        string   `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
-	FullPage       *bool    `yaml:"full_page"` // no region → send the whole page
+	Classes        []string `yaml:"classes"` // layout classes sent to the VLM; empty = text-like classes
+	// Groups: group name → classes read together (one call per page and
+	// group). Nil = text/caption/furniture/formula; {} = no batching.
+	Groups          map[string][]string `yaml:"groups"`
+	TagClasses      []string            `yaml:"tag_classes"`       // tagged without a call; nil = [seal]
+	BatchMaxRegions int                 `yaml:"batch_max_regions"` // regions per batch call
+	BatchMaxHeight  int                 `yaml:"batch_max_height"`  // px of a stitched batch before downscaling
+	Padding         int                 `yaml:"padding"`           // px around each region
+	MaxSide         int                 `yaml:"max_side"`          // downscale images above this long side
+	MinSide         int                 `yaml:"min_side"`
+	JPEGQuality     int                 `yaml:"jpeg_quality"`
+	Retries         int                 `yaml:"retries"`   // on top of the provider's own retries
+	OnError         string              `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
+	FullPage        *bool               `yaml:"full_page"` // no region → send the whole page
 	// MinCoverage is the share of a block's OCR words that must agree with
 	// the transcription before it replaces the OCR text.
 	MinCoverage float64 `yaml:"min_coverage"`
@@ -295,18 +305,25 @@ func (c *Config) applyPipelineDefaults() {
 	setInt(&p.Engines.TurboOCR.Breaker.Failures, 5)
 	setDuration(&p.Engines.TurboOCR.Breaker.OpenFor, 30*time.Second)
 	v := &p.Engines.VLM
-	setString(&v.Model, "allenai/olmocr-2-7b")
+	// A local olmOCR server configured as provider "vlm" (VLM_BASE_URL)
+	// turns the engine on without naming it.
+	if pc, ok := c.LLM.Providers["vlm"]; v.Provider == "" && ok && pc.BaseURL != "" {
+		v.Provider = "vlm"
+	}
+	if v.Provider == "vlm" {
+		setString(&v.Model, "allenai/olmocr-2-7b")
+	}
 	setInt(&v.MaxTokens, 4096)
 	if v.Temperature == 0 {
 		v.Temperature = 0.1
 	}
-	setDuration(&v.Timeout, 180*time.Second)
 	setInt(&v.MaxConcurrency, 4)
+	setInt(&v.BatchMaxRegions, 20)
+	setInt(&v.BatchMaxHeight, 2400)
 	setInt(&v.Padding, 12)
 	setInt(&v.MaxSide, 1288)
 	setInt(&v.MinSide, 8)
 	setInt(&v.JPEGQuality, 90)
-	setInt(&v.Retries, 1)
 	setString(&v.OnError, "fallback")
 	if v.MinCoverage == 0 {
 		v.MinCoverage = 0.3

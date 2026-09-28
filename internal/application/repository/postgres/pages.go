@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -143,17 +144,42 @@ type Rendered struct {
 	WidthPt, HeightPt float64
 	Rotation          int
 	ImageKey          string
-	TextLayerKey      string
+	TextLayer         []byte // JSON of types.TextLayer; nil = none
 	RenderMs          int
 }
 
 // MarkRendered stores render output and moves the page to rendered.
 func (r *PagesRepo) MarkRendered(ctx context.Context, doc uuid.UUID, gen, page int, v Rendered) error {
-	_, err := r.pool.Exec(ctx, `UPDATE document_pages SET status = 'rendered', width = $4, height = $5, dpi = $6,
-		width_pt = $7, height_pt = $8, rotation = $9, image_key = $10, text_layer_key = $11, render_ms = $12, error = ''
+	layer, err := cleanRawJSON(v.TextLayer)
+	if err != nil {
+		return err
+	}
+	_, err = r.pool.Exec(ctx, `UPDATE document_pages SET status = 'rendered', width = $4, height = $5, dpi = $6,
+		width_pt = $7, height_pt = $8, rotation = $9, image_key = $10, text_layer = $11, text_layer_key = '', render_ms = $12, error = ''
 		WHERE document_id = $1 AND gen = $2 AND page_no = $3`,
-		doc, gen, page, v.Width, v.Height, v.DPI, v.WidthPt, v.HeightPt, v.Rotation, v.ImageKey, v.TextLayerKey, v.RenderMs)
+		doc, gen, page, v.Width, v.Height, v.DPI, v.WidthPt, v.HeightPt, v.Rotation, v.ImageKey, layer, v.RenderMs)
 	return err
+}
+
+// TextLayer returns the page's stored text layer JSON (nil when none).
+func (r *PagesRepo) TextLayer(ctx context.Context, doc uuid.UUID, gen, page int) ([]byte, error) {
+	return r.jsonColumn(ctx, "text_layer", doc, gen, page)
+}
+
+// Raw returns the engine's raw JSON of the page (nil when none).
+func (r *PagesRepo) Raw(ctx context.Context, doc uuid.UUID, gen, page int) ([]byte, error) {
+	return r.jsonColumn(ctx, "raw", doc, gen, page)
+}
+
+// jsonColumn reads one jsonb column of a page; col is a constant of this file.
+func (r *PagesRepo) jsonColumn(ctx context.Context, col string, doc uuid.UUID, gen, page int) ([]byte, error) {
+	var b []byte
+	err := r.pool.QueryRow(ctx, `SELECT `+col+`::text FROM document_pages WHERE document_id = $1 AND gen = $2 AND page_no = $3`,
+		doc, gen, page).Scan(&b)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return b, err
 }
 
 // SetStatus moves a page to status with an optional error.
@@ -213,18 +239,22 @@ func scanPages(rows pgx.Rows) ([]types.DocumentPage, error) {
 	return out, rows.Err()
 }
 
-// SaveParsed stores a parsed page (row, blocks, lines) and marks it done.
-// It only writes when the page still belongs to generation gen.
-func (r *PagesRepo) SaveParsed(ctx context.Context, doc uuid.UUID, gen int, p *types.ParsedPage, rawKey, textPlain string, ocrMs int) error {
+// SaveParsed stores a parsed page (row, raw engine JSON, blocks, lines) and
+// marks it done. It only writes when the page still belongs to generation gen.
+func (r *PagesRepo) SaveParsed(ctx context.Context, doc uuid.UUID, gen int, p *types.ParsedPage, raw []byte, textPlain string, ocrMs int) error {
+	rawJSON, err := cleanRawJSON(raw)
+	if err != nil {
+		return err
+	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE document_pages SET status = 'done', raw_key = $4, text_source = $5, text_quality = $6,
+	tag, err := tx.Exec(ctx, `UPDATE document_pages SET status = 'done', raw = $4, raw_key = '', text_source = $5, text_quality = $6,
 		ocr_ms = $7, engine = $8, markdown = $9, text_plain = $10, is_blank = $11, error = '', finished_at = now()
 		WHERE document_id = $1 AND gen = $2 AND page_no = $3`,
-		doc, gen, p.PageNo, rawKey, p.TextSource, p.TextQuality, ocrMs, p.Engine, cleanText(p.Markdown), cleanText(textPlain), p.IsBlank)
+		doc, gen, p.PageNo, rawJSON, p.TextSource, p.TextQuality, ocrMs, p.Engine, cleanText(p.Markdown), cleanText(textPlain), p.IsBlank)
 	if err != nil {
 		return err
 	}
