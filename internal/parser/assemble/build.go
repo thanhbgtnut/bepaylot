@@ -99,7 +99,7 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 	}
 
 	// 2. Reading rank of every raw line.
-	rank := lineRanks(raw)
+	rank := LineRanks(raw)
 
 	// 3. Lines → blocks: engine assignment, else smallest containing region.
 	var orphans []int
@@ -194,9 +194,9 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 	return page
 }
 
-// lineRanks returns each raw line's position in reading order. Lines missing
+// LineRanks returns each raw line's position in reading order. Lines missing
 // from ReadingOrder are appended by geometry (top-to-bottom, left-to-right).
-func lineRanks(raw *parser.RawPage) []int {
+func LineRanks(raw *parser.RawPage) []int {
 	idx := make(map[int]int, len(raw.Lines))
 	for i, l := range raw.Lines {
 		idx[l.ID] = i

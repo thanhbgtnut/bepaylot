@@ -9,9 +9,9 @@ import (
 	"github.com/thanhenti/bepaylot/internal/parser/vlm"
 )
 
-// agentVLM is the Transcriber of engine turboocr_vlm: every region or batch
-// is an extraction request to the agent (agent.Extract), streamed on the
-// agent's provider registry, rather than a separate HTTP client (§5.9).
+// agentVLM is the Transcriber of engine turboocr_vlm: every page (image +
+// OCR text) is an extraction request to the agent (agent.Extract), streamed
+// on the agent's provider registry, rather than a separate HTTP client (§5.9).
 type agentVLM struct {
 	ag          *agent.Agent
 	reg         *llm.Registry

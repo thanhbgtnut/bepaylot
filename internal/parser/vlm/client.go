@@ -1,9 +1,10 @@
-// Package vlm refines OCR with a vision-language model (§5.9): a layout
-// engine (TurboOCR) finds the regions of a page; regions of one page whose
-// classes share a group are stitched into one numbered image and read in one
-// call, titles and tables are read one per call, seals are tagged without a
-// call. The transcriptions travel in RawRegion.Text to package assemble,
-// which aligns them with the OCR lines per page.
+// Package vlm refines OCR with a vision-language model (§5.9) in two steps:
+// (1) TurboOCR reads the page (lines, boxes, layout); (2) one VLM call per
+// page turns the whole page image into markdown, with the OCR text in the
+// prompt so the model checks its answer against it (nothing missing, names
+// and numbers right). The markdown is then split and aligned back onto the
+// OCR regions (RawRegion.Text); package assemble aligns each region's text
+// with its OCR lines, so positions still come from TurboOCR.
 //
 // The package does not talk to a model itself: every call goes through a
 // Transcriber, which production wires to the agent (agent.Extract, a
@@ -17,28 +18,36 @@ import (
 	"strings"
 )
 
-// DefaultPrompt is olmOCR's own page prompt (v4, YAML front matter), used for
-// a region read on its own. Other models work with it too; the front matter
-// is stripped when present.
+// DefaultPrompt is olmOCR's own page prompt (v4, YAML front matter), used
+// when there is no OCR text to send (full_page: the layout engine failed).
+// Other models work with it too; the front matter is stripped when present.
 const DefaultPrompt = "Attached is one page of a document that you must process. Just return the plain text representation of this document as if you were reading it naturally. Convert equations to LateX and tables to HTML.\n" +
 	"If there are any figures or charts, label them with the following markdown syntax ![Alt text describing the contents of the figure](page_startx_starty_width_height.png)\n" +
 	"Return your output as markdown, with a front matter section on top specifying values for the primary_language, is_rotation_valid, rotation_correction, is_table, and is_diagram parameters."
 
-// DefaultBatchPrompt reads a stitched batch; %d is the number of regions.
-const DefaultBatchPrompt = "The image stacks %d regions cut from the same document page, top to bottom. " +
-	"A black bar with a number [k] sits above each region.\n" +
-	"Transcribe every region exactly as written, in order. Start each region on a new line with its marker <<<k>>> " +
-	"(k is the number on its bar), then the region's text as plain markdown: keep the original language and diacritics, " +
-	"tables as HTML, equations as LaTeX. Do not transcribe the bars or numbers, do not add front matter, comments or code fences. " +
-	"If a region has no text, write its marker alone."
+// OCRPlaceholder marks where PagePrompt receives the OCR text of the page;
+// a prompt without it gets the OCR block appended.
+const OCRPlaceholder = "{ocr}"
+
+// DefaultPagePrompt reads one page with its OCR text as the check.
+const DefaultPagePrompt = "Attached is one page of a document. Return the plain text representation of this page as markdown, " +
+	"as if you were reading it naturally: keep the original language, spelling and diacritics; mark headings with #; " +
+	"convert tables to HTML and equations to LaTeX. Do not add front matter, comments or code fences, and do not describe images.\n\n" +
+	"Below is the text an OCR engine read from the same page, in reading order. Blank lines separate layout regions; " +
+	"lines ending in " + LowConfMark + " were read with low confidence. Use it to check your answer: every piece of text in it " +
+	"must appear in your answer, and names, numbers, dates and codes must match what the image shows. The OCR text may contain " +
+	"mistakes such as missing diacritics or merged words; wherever it disagrees with the image, write what the image shows. " +
+	"Never copy the " + LowConfMark + " marks.\n\n<ocr>\n" + OCRPlaceholder + "\n</ocr>"
+
+// LowConfMark ends an OCR context line read with low confidence.
+const LowConfMark = "[?]"
 
 // Request is one model call: a prompt and one JPEG image.
 type Request struct {
 	Prompt string
 	JPEG   []byte
-	// Regions are the layout ids the image holds, in order (debugging and
-	// tests; the model only sees the image and the prompt).
-	Regions []int
+	// PageNo is the page the image shows (logging and tests).
+	PageNo int
 }
 
 // Transcriber answers one Request; the container wires it to the agent.

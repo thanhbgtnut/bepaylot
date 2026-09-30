@@ -129,12 +129,12 @@ func box(x0, y0, x1, y1 float64) [][2]float64 {
 }
 
 // simFixtures lays every page out in pixels (72 dpi: 612x792) and returns
-// the /ocr/raw body per page, the VLM text per (page, crop size) and the
-// expected bbox of every line keyed by page and clean text.
-func simFixtures(t *testing.T) (map[int][]byte, map[string]string, map[string]types.BBox) {
+// the /ocr/raw body per page, the VLM markdown per page and the expected
+// bbox of every line keyed by page and clean text.
+func simFixtures(t *testing.T) (map[int][]byte, map[int]string, map[string]types.BBox) {
 	tableLine = map[string]bool{}
 	ocr := map[int][]byte{}
-	vlmText := map[string]string{}
+	vlmText := map[int]string{}
 	bboxes := map[string]types.BBox{}
 	for pg := 1; pg < len(simBundle); pg++ {
 		var out simOCR
@@ -145,7 +145,7 @@ func simFixtures(t *testing.T) (map[int][]byte, map[string]string, map[string]ty
 			for _, l := range b.lines {
 				longest = max(longest, len([]rune(l)))
 			}
-			x0, x1 := 72.0, 72.0+float64(min(460, 8*longest)+ri) // +ri keeps crop sizes unique on a page
+			x0, x1 := 72.0, 72.0+float64(min(460, 8*longest))
 			top := y
 			for _, l := range b.lines {
 				lx1 := 72.0 + float64(min(460, 8*len([]rune(l))))
@@ -163,11 +163,10 @@ func simFixtures(t *testing.T) (map[int][]byte, map[string]string, map[string]ty
 				out.Tables = append(out.Tables, simTable{LayoutID: ri, HTML: b.html})
 				text = b.html
 			}
-			key := fmt.Sprintf("%d|%dx%d", pg, int(x1-x0), int(bottom-top))
-			if _, dup := vlmText[key]; dup {
-				t.Fatalf("crop size %s is not unique", key)
+			if vlmText[pg] != "" {
+				vlmText[pg] += "\n\n"
 			}
-			vlmText[key] = text
+			vlmText[pg] += text
 			y += 24
 		}
 		body, _ := json.Marshal(out)
@@ -205,21 +204,28 @@ func (s *ocrService) RoundTrip(r *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 }
 
-// simVLM transcribes a crop by looking up its page and pixel size (the
-// engine runs without batching here, so every call is one region).
+// simVLM answers the clean markdown of a page (one call per page). It
+// checks that the prompt carries the page's noisy OCR text.
 type simVLM struct {
-	text  map[string]string
+	text  map[int]string
+	ocr   map[int][]byte
 	calls map[int]int
 }
 
 func (v *simVLM) Transcribe(ctx context.Context, req vlm.Request) (*vlm.Transcription, error) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(req.JPEG))
-	if err != nil {
+	if _, _, err := image.DecodeConfig(bytes.NewReader(req.JPEG)); err != nil {
 		return nil, err
 	}
 	pg := pageOf(ctx)
 	v.calls[pg]++
-	return &vlm.Transcription{Text: v.text[fmt.Sprintf("%d|%dx%d", pg, cfg.Width, cfg.Height)]}, nil
+	var o simOCR
+	_ = json.Unmarshal(v.ocr[pg], &o)
+	for _, l := range o.Results {
+		if !strings.Contains(req.Prompt, l.Text) {
+			return nil, fmt.Errorf("page %d: prompt lacks OCR line %q", pg, l.Text)
+		}
+	}
+	return &vlm.Transcription{Text: v.text[pg]}, nil
 }
 func (v *simVLM) Health(context.Context) error { return nil }
 func (v *simVLM) Model() string                { return "sim/olmocr" }
@@ -228,9 +234,8 @@ func TestSimulatedScan20PagesBothEngines(t *testing.T) {
 	ocrPages, vlmText, bboxes := simFixtures(t)
 	svc := &ocrService{pages: ocrPages, query: map[int]string{}}
 	turbo := turboocr.New(turboocr.Config{BaseURL: "http://turboocr.sim", Timeout: 10 * time.Second, HTTPClient: &http.Client{Transport: svc}})
-	fakeVLM := &simVLM{text: vlmText, calls: map[int]int{}}
-	refining, err := vlm.New(vlm.Config{Layout: turbo, Client: fakeVLM, MaxConcurrency: 1, FullPage: true,
-		Groups: map[string][]string{}})
+	fakeVLM := &simVLM{text: vlmText, ocr: ocrPages, calls: map[int]int{}}
+	refining, err := vlm.New(vlm.Config{Layout: turbo, Client: fakeVLM, MaxConcurrency: 1, FullPage: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,8 +358,8 @@ func TestSimulatedScan20PagesBothEngines(t *testing.T) {
 					t.Fatalf("kb_search hit outside 13-14: %+v", hits.Hits)
 				}
 			}
-			if engine == vlm.Name && fakeVLM.calls[4] == 0 {
-				t.Fatal("the VLM was not called")
+			if engine == vlm.Name && fakeVLM.calls[4] != 1 {
+				t.Fatalf("VLM calls on page 4 = %d, want 1 (one call per page)", fakeVLM.calls[4])
 			}
 		})
 	}

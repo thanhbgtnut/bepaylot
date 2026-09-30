@@ -69,7 +69,7 @@ Queue `*_interactive` (file đính kèm trong chat) có trọng số 3, được
 | **Redis 7** | hàng đợi task (asynq) | upload vẫn nhận nhưng không xử lý; worker dừng. Task trong Redis mất nếu Redis mất dữ liệu → housekeeping tự đẩy lại tài liệu đứng yên (§5.8) |
 | **S3 / MinIO** | file gốc, ảnh trang, kết quả OCR thô, markdown | upload lỗi; xem ảnh trang lỗi; worker không render/OCR được |
 | **TurboOCR** (`TURBOOCR_URL`, `POST /ocr/raw`) | OCR mặc định | file mới lỗi OCR → `partial`/`failed`; tài liệu cũ, hỏi đáp vẫn chạy |
-| **VLM** (tuỳ chọn, provider `vlm` = `VLM_BASE_URL`, OpenAI-compatible; hoặc `BEPAYLOT_VLM_PROVIDER`) | engine `turboocr_vlm` đọc vùng ảnh qua agent (streaming): mỗi trang mỗi nhóm class một lần gọi, tiêu đề/bảng gọi riêng, con dấu không gọi | chỉ ảnh hưởng hồ sơ dùng engine này (`on_error: fallback` giữ text OCR). Số lần gọi và token từng trang: cột `document_pages.raw -> 'calls'` |
+| **VLM** (tuỳ chọn, provider `vlm` = `VLM_BASE_URL`, OpenAI-compatible; hoặc `BEPAYLOT_VLM_PROVIDER`) | engine `turboocr_vlm`: sau TurboOCR, **một lần gọi VLM mỗi trang** qua agent (streaming), prompt kèm text OCR của trang | chỉ ảnh hưởng hồ sơ dùng engine này (`on_error: fallback` giữ text OCR). Token từng trang: `document_pages.raw -> 'call'`; mức khớp với OCR: `raw -> 'align' ->> 'coverage'`, đoạn markdown bị bỏ vì không được OCR xác nhận: `raw -> 'align' -> 'unmatched'`. Server model phải có context ≥ 12k token (ảnh + text OCR + markdown) |
 | **LLM** (`OPENAI_BASE_URL`/`ANTHROPIC_API_KEY`, `BEPAYLOT_DEFAULT_MODEL`) | agent hỏi đáp, search `reasoning`, tóm tắt mục lục, trích xuất wiki | agent/search lỗi; mục lục và wiki hạ về chế độ không LLM (§5.4–5.5) |
 | **OIDC provider** (tuỳ chọn) | đăng nhập SSO | chỉ nút "Đăng nhập bằng …" lỗi; email + mật khẩu và API key vẫn chạy |
 
@@ -331,7 +331,7 @@ Mỗi mục: tính năng làm gì, cấu hình, cách kiểm tra, sự cố thư
 
 ### 5.3 Upload và xử lý tài liệu (Parser)
 
-**Làm gì.** Nhận file (PDF, JPG, PNG, TIFF; tối đa 500 MB/file, 100 file/lần), lưu S3, rồi: `split` → `render` từng trang ra ảnh (PDFium) → `OCR` từng trang (TurboOCR; engine `turboocr_vlm` thêm VLM đọc từng vùng) → hợp nhất với text layer của PDF/A → `assemble` markdown theo trang. Xử lý song song theo **trang**, lỗi ở trang nào retry trang đó.
+**Làm gì.** Nhận file (PDF, JPG, PNG, TIFF; tối đa 500 MB/file, 100 file/lần), lưu S3, rồi: `split` → `render` từng trang ra ảnh (PDFium) → `OCR` từng trang (TurboOCR; engine `turboocr_vlm` thêm một lần gọi VLM mỗi trang, kèm text OCR để kiểm) → hợp nhất với text layer của PDF/A → `assemble` markdown theo trang. Xử lý song song theo **trang**, lỗi ở trang nào retry trang đó.
 
 **Trạng thái tài liệu:** `queued → splitting → parsing → assembling → indexing → enriching → completed`; kết thúc khác: `partial` (một số trang lỗi, phần còn lại dùng được), `failed`, `cancelled`.
 

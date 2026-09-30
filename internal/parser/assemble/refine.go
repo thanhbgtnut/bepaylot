@@ -50,16 +50,19 @@ func cleanRefined(t types.BlockType, text string) string {
 	return strings.TrimSpace(reBlankRuns.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
 }
 
-type word struct {
-	start, end int // rune offsets in the source text
-	key        string
-	line       int // OCR line index; -1 for VLM words
+// Word is one whitespace-separated token of a text.
+type Word struct {
+	Start, End int // rune offsets in the source text
+	Key        string
+	// Line is the OCR line index for OCR words; for VLM words any tag the
+	// caller needs (-1 by default).
+	Line int
 }
 
-// words splits s on whitespace; keys are accent-folded with punctuation
+// Words splits s on whitespace; keys are accent-folded with punctuation
 // trimmed, so "Bích," matches "Bich".
-func words(s string, line int) []word {
-	var out []word
+func Words(s string, line int) []Word {
+	var out []Word
 	rs := []rune(s)
 	pos, start := 0, -1
 	flush := func(end int) {
@@ -71,7 +74,7 @@ func words(s string, line int) []word {
 		if key == "" {
 			key = raw
 		}
-		out = append(out, word{start: start, end: end, key: key, line: line})
+		out = append(out, Word{Start: start, End: end, Key: key, Line: line})
 		start = -1
 	}
 	for _, r := range rs {
@@ -87,20 +90,27 @@ func words(s string, line int) []word {
 }
 
 // subCost is 0 for identical words and 1 for unrelated ones.
-func subCost(a, b word) float64 {
-	if a.key == b.key {
+func subCost(a, b Word) float64 {
+	if a.Key == b.Key {
 		return 0
 	}
-	sim := textutil.Similarity(a.key, b.key)
+	sim := textutil.Similarity(a.Key, b.Key)
 	if sim >= 0.5 {
 		return 1 - sim
 	}
 	return 1
 }
 
-// align returns, for every OCR word, the index of the VLM word it aligns to
-// (-1 when it aligns to a gap) and the cost of that pairing.
-func align(ocr, vlm []word) ([]int, []float64) {
+// MaxAlignCells bounds the DP (OCR words × VLM words) of one alignment.
+const MaxAlignCells = maxAlignCells
+
+// GoodMatch is the highest pairing cost that counts as an agreement.
+const GoodMatch = 0.5
+
+// Align returns, for every OCR word, the index of the VLM word it aligns to
+// (-1 when it aligns to a gap) and the cost of that pairing. The alignment is
+// monotone (edit distance): both sequences must be in reading order.
+func Align(ocr, vlm []Word) ([]int, []float64) {
 	const gap = 0.7
 	n, m := len(ocr), len(vlm)
 	w := m + 1
@@ -148,6 +158,11 @@ func align(ocr, vlm []word) ([]int, []float64) {
 // page.Lines[from:to]. It reports whether the block was refined; when the
 // transcription does not agree enough with OCR the block is left untouched.
 // A block without OCR lines gets synthetic lines spread over its box.
+//
+// OCR is also the check for what the transcription left out: an OCR line
+// none of whose words matches well (and that OCR does not itself mark low
+// confidence) is put back into the block text, as OCR text, right after the
+// previous aligned line, so a model that skips a line never loses it (§5.9).
 func refineBlock(page *types.ParsedPage, b *types.ParsedBlock, from, to int, text string, minCoverage float64) bool {
 	text = cleanRefined(b.Type, text)
 	if text == "" {
@@ -162,18 +177,18 @@ func refineBlock(page *types.ParsedPage, b *types.ParsedBlock, from, to int, tex
 		return true
 	}
 
-	var ocr []word
+	var ocr []Word
 	for li := from; li < to; li++ {
-		ocr = append(ocr, words(page.Lines[li].Text, li)...)
+		ocr = append(ocr, Words(page.Lines[li].Text, li)...)
 	}
-	vlm := words(text, -1)
+	vlm := Words(text, -1)
 	if len(ocr) == 0 || len(vlm) == 0 || len(ocr)*len(vlm) > maxAlignCells || len(vlm) > 4*len(ocr)+20 {
 		return false
 	}
-	pair, cost := align(ocr, vlm)
+	pair, cost := Align(ocr, vlm)
 	good := 0
 	for i := range ocr {
-		if pair[i] >= 0 && cost[i] <= 0.5 {
+		if pair[i] >= 0 && cost[i] <= GoodMatch {
 			good++
 		}
 	}
@@ -182,11 +197,11 @@ func refineBlock(page *types.ParsedPage, b *types.ParsedBlock, from, to int, tex
 	}
 
 	// Keep the transcription between the first and last well-aligned words:
-	// text before or after them belongs to neighbouring or nested regions
-	// that leaked into the crop, and is rendered by those blocks already.
+	// text before or after them belongs to neighbouring regions and is
+	// rendered by those blocks already.
 	lo, hi := -1, -1
 	for i := range ocr {
-		if pair[i] < 0 || cost[i] > 0.5 {
+		if pair[i] < 0 || cost[i] > GoodMatch {
 			continue
 		}
 		if k := pair[i]; lo < 0 || k < lo {
@@ -196,34 +211,79 @@ func refineBlock(page *types.ParsedPage, b *types.ParsedBlock, from, to int, tex
 			hi = k
 		}
 	}
-	for lo > 0 && !hasAlnum(vlm[lo-1].key) {
+	for lo > 0 && !hasAlnum(vlm[lo-1].Key) {
 		lo-- // leading markup such as "-" or "**"
 	}
-	for hi < len(vlm)-1 && !hasAlnum(vlm[hi+1].key) {
+	for hi < len(vlm)-1 && !hasAlnum(vlm[hi+1].Key) {
 		hi++
 	}
 	runes := []rune(text)
-	base, end := vlm[lo].start, vlm[hi].end
+	base, end := vlm[lo].Start, vlm[hi].End
+
+	// A line with no well-matched word was skipped by the model (its words
+	// only pair with unrelated ones), unless OCR itself doubts the line: then
+	// the model's reading of it wins.
+	matched := make(map[int]bool, to-from)
+	for i, ow := range ocr {
+		if pair[i] >= 0 && cost[i] <= GoodMatch {
+			matched[ow.Line] = true
+		}
+	}
 
 	// Span of VLM words per OCR line, clipped to the kept text.
 	spanStart := make(map[int]int, to-from)
 	spanEnd := make(map[int]int, to-from)
 	for i, ow := range ocr {
-		if pair[i] < lo || pair[i] > hi {
+		if pair[i] < lo || pair[i] > hi || !matched[ow.Line] && !page.Lines[ow.Line].LowConfidence {
 			continue
 		}
 		vw := vlm[pair[i]]
-		if s, ok := spanStart[ow.line]; !ok || vw.start < s {
-			spanStart[ow.line] = vw.start
+		if s, ok := spanStart[ow.Line]; !ok || vw.Start < s {
+			spanStart[ow.Line] = vw.Start
 		}
-		if e, ok := spanEnd[ow.line]; !ok || vw.end > e {
-			spanEnd[ow.line] = vw.end
+		if e, ok := spanEnd[ow.Line]; !ok || vw.End > e {
+			spanEnd[ow.Line] = vw.End
 		}
 	}
+
+	// Lines the transcription skipped go back in after the previous aligned
+	// line (spans are monotone, so insertion points never go backwards).
+	sep := "\n"
+	if b.Type == types.BlockTitle || b.Type == types.BlockHeading {
+		sep = " "
+	}
+	type insert struct {
+		at   int // rune offset in text
+		text string
+	}
+	var inserts []insert
+	at := base
+	for li := from; li < to; li++ {
+		if _, ok := spanStart[li]; ok {
+			at = max(at, spanEnd[li])
+			continue
+		}
+		if t := strings.TrimSpace(page.Lines[li].Text); t != "" {
+			inserts = append(inserts, insert{at: at, text: t})
+		}
+	}
+	var sb strings.Builder
+	cur := base
+	for _, in := range inserts {
+		sb.WriteString(string(runes[cur:in.at]))
+		if in.at == base {
+			sb.WriteString(in.text + sep)
+		} else {
+			sb.WriteString(sep + in.text)
+		}
+		cur = in.at
+	}
+	sb.WriteString(string(runes[cur:end]))
+
 	for li := from; li < to; li++ {
 		s, ok := spanStart[li]
 		if !ok {
-			continue // stays OCR text; Render leaves it without offsets
+			continue // stays OCR text; Render locates it in the block text
 		}
 		l := &page.Lines[li]
 		l.TextOCR = l.Text
@@ -231,7 +291,7 @@ func refineBlock(page *types.ParsedPage, b *types.ParsedBlock, from, to int, tex
 		l.TextSource = types.TextSourceVLM
 		l.LowConfidence = false
 	}
-	b.Text, b.TextSource = string(runes[base:end]), types.TextSourceVLM
+	b.Text, b.TextSource = sb.String(), types.TextSourceVLM
 	return true
 }
 
@@ -271,14 +331,15 @@ func Refined(page *types.ParsedPage) bool {
 	return false
 }
 
-// locateLines sets MdStart/MdEnd of VLM lines inside a block rendered
-// verbatim from md, which starts at rune offset base of the page markdown.
-// Lines are searched in order so repeated phrases resolve to the right place.
+// locateLines sets MdStart/MdEnd of the lines of a block rendered verbatim
+// from md, which starts at rune offset base of the page markdown: VLM lines
+// and the OCR lines put back for text the model skipped. Lines are searched
+// in order so repeated phrases resolve to the right place.
 func locateLines(page *types.ParsedPage, lines []int, md string, base int) {
 	cursor := 0 // byte offset in md
 	for _, li := range lines {
 		l := &page.Lines[li]
-		if l.TextSource != types.TextSourceVLM || l.Text == "" {
+		if l.Text == "" {
 			continue
 		}
 		i := strings.Index(md[cursor:], l.Text)

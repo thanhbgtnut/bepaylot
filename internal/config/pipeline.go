@@ -125,39 +125,37 @@ type ParserEngines struct {
 	VLM      VLM      `yaml:"vlm"`
 }
 
-// VLM configures engine turboocr_vlm (§5.9): TurboOCR finds the layout, the
-// regions of a page are read by a vision model through the agent
-// (agent.Extract, streaming, on the LLM provider registry): regions whose
-// classes share a group in one call per page, titles and tables one call
-// each, seals tagged without a call. The engine is registered only when
-// provider is set.
+// VLM configures engine turboocr_vlm (§5.9), two steps per page: TurboOCR
+// reads lines, boxes and layout; then one call to a vision model through the
+// agent (agent.Extract, streaming, on the LLM provider registry) returns the
+// page markdown, with the OCR text in the prompt as the check. There is no
+// call per layout region. The engine is registered only when provider is
+// set.
 type VLM struct {
 	// Provider names an entry of llm.providers (e.g. "vlm" for a local
 	// olmOCR server, or the chat provider when its model reads images).
-	Provider    string  `yaml:"provider"`
-	Model       string  `yaml:"model"`        // "" = llm.default_model
-	Prompt      string  `yaml:"prompt"`       // one region; "" = olmOCR's page prompt
-	BatchPrompt string  `yaml:"batch_prompt"` // a stitched group; "" = built-in (with %d)
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"` // "" = llm.default_model
+	// PagePrompt reads a page with its OCR text ({ocr} marks where it goes);
+	// "" = built-in. Prompt reads a page without OCR text (full_page); "" =
+	// olmOCR's page prompt.
+	PagePrompt  string  `yaml:"page_prompt"`
+	Prompt      string  `yaml:"prompt"`
 	MaxTokens   int     `yaml:"max_tokens"`
 	Temperature float64 `yaml:"temperature"`
-	// MaxConcurrency bounds in-flight VLM calls per worker process.
-	MaxConcurrency int      `yaml:"max_concurrency"`
-	Classes        []string `yaml:"classes"` // layout classes sent to the VLM; empty = text-like classes
-	// Groups: group name → classes read together (one call per page and
-	// group). Nil = text/caption/furniture/formula; {} = no batching.
-	Groups          map[string][]string `yaml:"groups"`
-	TagClasses      []string            `yaml:"tag_classes"`       // tagged without a call; nil = [seal]
-	BatchMaxRegions int                 `yaml:"batch_max_regions"` // regions per batch call
-	BatchMaxHeight  int                 `yaml:"batch_max_height"`  // px of a stitched batch before downscaling
-	Padding         int                 `yaml:"padding"`           // px around each region
-	MaxSide         int                 `yaml:"max_side"`          // downscale images above this long side
-	MinSide         int                 `yaml:"min_side"`
-	JPEGQuality     int                 `yaml:"jpeg_quality"`
-	Retries         int                 `yaml:"retries"`   // on top of the provider's own retries
-	OnError         string              `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
-	FullPage        *bool               `yaml:"full_page"` // no region → send the whole page
+	// MaxConcurrency bounds in-flight page calls per worker process.
+	MaxConcurrency int `yaml:"max_concurrency"`
+	// ContextMaxChars caps the OCR text sent with a page (runes);
+	// ContextLowConf marks OCR lines below it as uncertain (0 = off).
+	ContextMaxChars int     `yaml:"context_max_chars"`
+	ContextLowConf  float64 `yaml:"context_low_conf"`
+	MaxSide         int     `yaml:"max_side"` // downscale page images above this long side
+	JPEGQuality     int     `yaml:"jpeg_quality"`
+	Retries         int     `yaml:"retries"`   // on top of the provider's own retries
+	OnError         string  `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
+	FullPage        *bool   `yaml:"full_page"` // no OCR (layout failed/empty) → page to the VLM alone
 	// MinCoverage is the share of a block's OCR words that must agree with
-	// the transcription before it replaces the OCR text.
+	// the markdown before it replaces the OCR text.
 	MinCoverage float64 `yaml:"min_coverage"`
 	// SkipWithTextLayer skips the VLM on pages whose PDF text layer is usable.
 	SkipWithTextLayer *bool `yaml:"skip_with_text_layer"`
@@ -324,11 +322,11 @@ func (c *Config) applyPipelineDefaults() {
 		v.Temperature = 0.1
 	}
 	setInt(&v.MaxConcurrency, 4)
-	setInt(&v.BatchMaxRegions, 20)
-	setInt(&v.BatchMaxHeight, 2400)
-	setInt(&v.Padding, 12)
+	setInt(&v.ContextMaxChars, 12000)
+	if v.ContextLowConf == 0 {
+		v.ContextLowConf = 0.8
+	}
 	setInt(&v.MaxSide, 1288)
-	setInt(&v.MinSide, 8)
 	setInt(&v.JPEGQuality, 90)
 	setString(&v.OnError, "fallback")
 	if v.MinCoverage == 0 {

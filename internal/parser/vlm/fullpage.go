@@ -15,7 +15,8 @@ import (
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 
-// fullPage transcribes the whole page in one VLM call and turns the markdown
+// fullPage transcribes the whole page in one VLM call without OCR text (the
+// layout engine failed or found nothing) and turns the markdown
 // into regions (headings, tables, formulas, figures, paragraphs) stacked down
 // the page. Without OCR there are no real line positions: region boxes are
 // approximate vertical bands proportional to text length (confidence 0), and
@@ -32,7 +33,7 @@ func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, 
 		w, h = b.Dx(), b.Dy()
 	}
 	t0 := time.Now()
-	tr, cr := e.call(ctx, "", []int{0}, e.cfg.Prompt, src)
+	tr, cr := e.call(ctx, in.PageNo, e.cfg.Prompt, src)
 	if cr.Error != "" {
 		return nil, fmt.Errorf("vlm: full page (layout unavailable: %s): %s", reason, cr.Error)
 	}
@@ -42,8 +43,7 @@ func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, 
 		scale = float64(long) / float64(e.cfg.MaxSide)
 	}
 	page := &parser.RawPage{Width: w, Height: h, Regions: SplitMarkdown(tr.Text, w, h, scale)}
-	res := RegionResult{Class: "page", BBox: [4]int{0, 0, b.Dx(), b.Dy()}, Text: tr.Text, Meta: tr.Meta, Truncated: tr.Truncated}
-	e.envelope(page, "full_page", reason, []RegionResult{res}, []CallResult{cr}, int(time.Since(t0).Milliseconds()))
+	e.envelope(page, rawEnvelope{Mode: "full_page", LayoutError: reason, Call: &cr, Markdown: tr.Text}, int(time.Since(t0).Milliseconds()))
 	return page, nil
 }
 
@@ -80,6 +80,40 @@ type segment struct {
 // SplitMarkdown splits a page transcription into regions in reading order.
 // scale maps figure coordinates reported by the model back to page pixels.
 func SplitMarkdown(md string, width, height int, scale float64) []parser.RawRegion {
+	segs := splitSegments(md, width, height, scale)
+
+	// Vertical bands proportional to text length inside the page margins.
+	total := 0
+	for _, s := range segs {
+		if s.box == nil {
+			total += weight(s.text)
+		}
+	}
+	x0, x1 := float64(width)*0.06, float64(width)*0.94
+	top, span := float64(height)*0.05, float64(height)*0.90
+	y := top
+	out := make([]parser.RawRegion, 0, len(segs))
+	for i, s := range segs {
+		r := parser.RawRegion{ID: i, Class: s.class}
+		if s.box != nil {
+			r.Quad, r.Confidence = types.QuadFromBBox(*s.box), 0.5
+		} else {
+			hh := span * float64(weight(s.text)) / float64(max(total, 1))
+			r.Quad = types.QuadFromBBox(types.BBox{X0: x0, Y0: y, X1: x1, Y1: y + hh})
+			y += hh
+		}
+		if s.class != "figure" {
+			apply(&r, s.text)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// splitSegments cuts a page transcription into segments in reading order:
+// headings, tables, formulas, figures (box from the model, scaled) and
+// paragraphs separated by blank lines.
+func splitSegments(md string, width, height int, scale float64) []segment {
 	var segs []segment
 	var cur []string
 	curClass := ""
@@ -160,33 +194,7 @@ func SplitMarkdown(md string, width, height int, scale float64) []parser.RawRegi
 		}
 	}
 	flush()
-
-	// Vertical bands proportional to text length inside the page margins.
-	total := 0
-	for _, s := range segs {
-		if s.box == nil {
-			total += weight(s.text)
-		}
-	}
-	x0, x1 := float64(width)*0.06, float64(width)*0.94
-	top, span := float64(height)*0.05, float64(height)*0.90
-	y := top
-	out := make([]parser.RawRegion, 0, len(segs))
-	for i, s := range segs {
-		r := parser.RawRegion{ID: i, Class: s.class}
-		if s.box != nil {
-			r.Quad, r.Confidence = types.QuadFromBBox(*s.box), 0.5
-		} else {
-			hh := span * float64(weight(s.text)) / float64(max(total, 1))
-			r.Quad = types.QuadFromBBox(types.BBox{X0: x0, Y0: y, X1: x1, Y1: y + hh})
-			y += hh
-		}
-		if s.class != "figure" {
-			apply(&r, s.text)
-		}
-		out = append(out, r)
-	}
-	return out
+	return segs
 }
 
 // weight gives short segments (headings) a visible band.

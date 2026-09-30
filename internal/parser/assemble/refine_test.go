@@ -163,3 +163,32 @@ func TestCleanRefined(t *testing.T) {
 		t.Errorf("paragraph = %q", got)
 	}
 }
+
+// A line the transcription skipped is put back from OCR at its place; a
+// low-confidence line the model rewrote entirely is not.
+func TestRefinePutsBackSkippedLines(t *testing.T) {
+	raw := &parser.RawPage{
+		Width: 1000, Height: 1000,
+		Regions: []parser.RawRegion{{ID: 0, Class: "text", Confidence: 0.9, Quad: box(100, 100, 900, 400),
+			Text: "Họ và tên: NGUYỄN VĂN TÌNH\nNgày 05 tháng 01 năm 2026\nQuốc tịch: Việt Nam"}},
+		Lines: []parser.RawLine{
+			{ID: 0, Text: "Họ và tên: NGUYEN VAN TINH", Confidence: 0.9, Quad: box(100, 100, 900, 140), LayoutID: 0},
+			{ID: 1, Text: "Điện thoại: 0792 127 116", Confidence: 0.9, Quad: box(100, 150, 900, 190), LayoutID: 0},
+			{ID: 2, Text: "Ngy surta thhnng am", Confidence: 0.4, Quad: box(100, 200, 900, 240), LayoutID: 0},
+			{ID: 3, Text: "Quoc tich: Viet Nam", Confidence: 0.9, Quad: box(100, 250, 900, 290), LayoutID: 0},
+		},
+		ReadingOrder: []int{0, 1, 2, 3},
+	}
+	p := build(raw)
+	checkOffsets(t, p)
+	want := "Họ và tên: NGUYỄN VĂN TÌNH\nĐiện thoại: 0792 127 116\nNgày 05 tháng 01 năm 2026\nQuốc tịch: Việt Nam"
+	if p.Blocks[0].Text != want || p.Blocks[0].TextSource != types.TextSourceVLM {
+		t.Fatalf("block text = %q", p.Blocks[0].Text)
+	}
+	if l := p.Lines[1]; l.Text != "Điện thoại: 0792 127 116" || l.TextSource != types.TextSourceOCR || l.MdStart < 0 {
+		t.Fatalf("put-back line = %+v", l)
+	}
+	if strings.Contains(p.Markdown, "surta") {
+		t.Fatalf("low-confidence OCR line duplicated:\n%s", p.Markdown)
+	}
+}

@@ -184,11 +184,9 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		}
 		client := &agentVLM{ag: ag, reg: registry, provider: vc.Provider, model: model, maxTokens: vc.MaxTokens, temperature: float32(vc.Temperature)}
 		e, err := vlm.New(vlm.Config{
-			Layout: layout, Client: client, Prompt: vc.Prompt, BatchPrompt: vc.BatchPrompt,
-			MaxConcurrency: vc.MaxConcurrency, Classes: vc.Classes, Groups: vc.Groups, TagClasses: vc.TagClasses,
-			BatchMaxRegions: vc.BatchMaxRegions, BatchMaxHeight: vc.BatchMaxHeight,
-			Padding: vc.Padding, MaxSide: vc.MaxSide, MinSide: vc.MinSide,
-			JPEGQuality: vc.JPEGQuality, Retries: vc.Retries, OnError: vc.OnError, FullPage: vc.FullPageEnabled(), Log: log,
+			Layout: layout, Client: client, PagePrompt: vc.PagePrompt, Prompt: vc.Prompt,
+			MaxConcurrency: vc.MaxConcurrency, ContextMaxChars: vc.ContextMaxChars, ContextLowConf: vc.ContextLowConf,
+			MaxSide: vc.MaxSide, JPEGQuality: vc.JPEGQuality, Retries: vc.Retries, OnError: vc.OnError, FullPage: vc.FullPageEnabled(), Log: log,
 		})
 		if err != nil {
 			return fmt.Errorf("vlm engine: %w", err)

@@ -38,7 +38,7 @@ wiki, rồi trang gốc. Agent làm việc trong đúng một case, trích dẫn
 
 | Module | Làm gì |
 |---|---|
-| **1. Parser** | Nhận file (stream thẳng lên S3), render PDF thành ảnh từng trang, OCR bằng TurboOCR (tuỳ chọn: TurboOCR lấy layout rồi **VLM đọc từng vùng**, ví dụ olmOCR), ghép với text layer có sẵn trong PDF (ưu tiên PDF/A), rồi dựng thành block, dòng có bounding box và markdown có offset. Từ bất kỳ đoạn text nào cũng tra ngược được trang, dòng và vùng trên ảnh. |
+| **1. Parser** | Nhận file (stream thẳng lên S3), render PDF thành ảnh từng trang, OCR bằng TurboOCR (tuỳ chọn: TurboOCR rồi **VLM đọc cả trang một lần gọi, kèm text OCR để kiểm**, ví dụ olmOCR), ghép với text layer có sẵn trong PDF (ưu tiên PDF/A), rồi dựng thành block, dòng có bounding box và markdown có offset. Từ bất kỳ đoạn text nào cũng tra ngược được trang, dòng và vùng trên ảnh. |
 | **2. Index (LLM Wiki + PageIndex)** | Chia section, dựng **cây mục lục** có tóm tắt và thẻ tài liệu cho từng file. Mỗi case có một **wiki** do LLM biên soạn (ingest / lint, có index và log): trang tổng quan, trang nguồn (mỗi file một trang), trang entity theo schema, chủ đề, ghi chú; mọi ý có chú thích về dòng gốc. Tìm kiếm `reasoning` đọc index wiki → trang wiki → trang gốc, mọi hit được đối chiếu lại với dòng gốc; ngoài ra có `keyword`, `metadata`. **Không dùng embedding.** |
 | **3. Hiển thị wiki** | API đọc/sửa wiki theo hồ sơ kiểu DeepWiki: mục lục, trang, chú thích bấm tới trang gốc, sơ đồ liên kết, nhật ký, kiểm tra, xuất file, sự kiện realtime. |
 | **4. Agent** | Agent chat hiện có; session gắn **đúng một case** (`sessions.case_id`, bất biến) thì có các tool `wiki_*` và `kb_*`, chỉ thấy dữ liệu của case đó. Mọi câu trả lời từ tài liệu kèm `citation_id`. |
@@ -164,9 +164,9 @@ Các điểm chính (spec §4–§5):
   - DPI tự hạ cho trang khổ lớn; process được tái chế sau N trang; trang quá timeout thì process bị kill.
   - JPEG được encode ngay trong process con.
 - **OCR bằng VLM (engine `turboocr_vlm`, spec §5.9).**
-  - TurboOCR trả về layout, dòng và bbox. Mỗi vùng text/bảng/công thức được cắt ra (có padding, thu nhỏ về ≤ 1288 px) rồi gửi **đồng thời** tới một VLM chuẩn OpenAI (mặc định `allenai/olmocr-2-7b`). Số request đang chạy bị giới hạn bởi `max_concurrency`.
-  - Text VLM được căn lại với các dòng OCR của từng block: markdown trang dùng text VLM nguyên văn, mỗi dòng vẫn giữ bbox và `md_start/md_end`, text OCR gốc nằm ở `text_ocr`.
-  - Các vùng layout lồng nhau không bị đọc hai lần. VLM trả text không khớp OCR (bịa) thì block giữ nguyên OCR; vùng gọi lỗi cũng giữ OCR (`on_error: fallback`).
+  - Hai bước, không gọi VLM theo vùng: (1) TurboOCR trả về text, dòng, bbox và layout; (2) **một lần gọi VLM cho cả trang** (thu nhỏ về ≤ 1288 px, qua agent, VLM chuẩn OpenAI, mặc định `allenai/olmocr-2-7b`) để lấy markdown. Prompt gửi kèm **text TurboOCR của trang** (dòng confidence thấp đánh dấu `[?]`) để model kiểm không thiếu, tên/số khớp ảnh. `max_concurrency` = số trang gọi đồng thời.
+  - Markdown được kiểm lại bằng OCR: căn từ với OCR cả trang, chia về đúng vùng layout; đoạn không có từ OCR nào khớp thì bỏ; dòng OCR bị markdown bỏ sót được chèn lại. Mỗi dòng vẫn giữ bbox và `md_start/md_end`, text OCR gốc nằm ở `text_ocr`.
+  - Block có text không khớp OCR (bịa) giữ nguyên OCR; lần gọi lỗi thì cả trang giữ OCR (`on_error: fallback`).
   - Trang PDF có text layer tốt thì không gọi VLM.
   - **TurboOCR không có hoặc lỗi** (hoặc không tìm thấy vùng nào): cả ảnh trang được gửi cho VLM; markdown được tách thành tiêu đề (kể cả "Điều N", "HỢP ĐỒNG…"), bảng, hình, đoạn văn với bbox xấp xỉ. Mỗi hàng bảng thành một dòng nên vẫn search được.
 - **Text layer / PDF/A.**
@@ -567,7 +567,7 @@ Các nhóm tinh chỉnh chính trong `config.yaml` (giải thích chi tiết ở
 
 - `workers.*`: concurrency từng pool, cửa sổ trang cho mỗi tài liệu.
 - `parser.render.*`: DPI, trần pixel, số worker, tái chế, timeout, cache.
-- `parser.engines.vlm.*`: model, `max_concurrency`, `classes`, `padding`, `max_side`, `min_coverage`, `on_error`, `skip_with_text_layer`.
+- `parser.engines.vlm.*`: model, `page_prompt`, `max_concurrency` (số trang), `context_max_chars`, `context_low_conf`, `max_side`, `min_coverage`, `on_error`, `skip_with_text_layer`.
 - `parser.text_layer.*`, `index.*`, `search.*`: ngân sách token, số lần gọi LLM tối đa, cache.
 - `cases.*`: thư mục loại case, loại mặc định, tự tạo case khi upload.
 - `wiki.*`: thư mục schema, model, số trang viết song song, ngân sách index, giới hạn ingest, lint.
@@ -647,7 +647,7 @@ internal/
     service/index/         Module 2: section, cây mục lục, search (index wiki → trang wiki → gốc)
     service/wiki/          Module 2: LLM Wiki của case (ingest, retract, lint, index, log, schema); API cho Module 3
     service/metadata/      kiểm tra và chuẩn hoá metadata
-  parser/          thư viện thuần: turboocr/, vlm/ (layout + VLM từng vùng), assemble/, textlayer/, pdf/ (go-pdfium), imagefile/
+  parser/          thư viện thuần: turboocr/, vlm/ (TurboOCR + VLM mỗi trang, kèm text OCR), assemble/, textlayer/, pdf/ (go-pdfium), imagefile/
   queue/           asynq theo pool, dead-letter, queue in-process cho dev/test
   storage/         S3, store trong RAM, cache file nguồn trên đĩa
   textutil/        bỏ dấu tiếng Việt, độ tương đồng, ước lượng token
