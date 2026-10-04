@@ -38,6 +38,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/storage"
 	"github.com/thanhenti/bepaylot/internal/tools"
 	"github.com/thanhenti/bepaylot/internal/types"
+	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // App is a wired application.
@@ -233,7 +234,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	if err := toolReg.SetKnowledgeTools(idx); err != nil {
 		return err
 	}
-	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs})
+	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs, idx: idx})
 
 	if cfg.Workers.RunsWorkers() {
 		handlers := map[string]queue.Handler{}
@@ -349,6 +350,7 @@ type describer struct {
 	st    *postgres.Store
 	docs  *document.Service
 	cases *cases.Service
+	idx   interfaces.Searcher
 }
 
 func (d describer) DescribeCase(ctx context.Context, owner, caseID uuid.UUID) *prompt.CaseInfo {
@@ -360,6 +362,19 @@ func (d describer) DescribeCase(ctx context.Context, owner, caseID uuid.UUID) *p
 		Metadata: c.Metadata, Documents: c.Documents}
 	for _, f := range d.docs.MetadataKeys(ctx, c) {
 		info.Fields = append(info.Fields, prompt.MetadataField{Key: f.Key, Type: f.Type, Description: f.Description, Values: f.Values})
+	}
+	// The session is bound to this case, so its tree is loaded every turn.
+	if refs, err := d.idx.CaseRefs(ctx, owner, caseID); err == nil {
+		info.Refs = make(map[string]string, len(refs))
+		for r, id := range refs {
+			info.Refs[r] = id.String()
+		}
+	}
+	if toc, err := d.idx.CaseTOC(ctx, owner, caseID, nil, nil); err == nil {
+		info.Tree = toc.Text
+		for _, p := range toc.Pending {
+			info.Pending = append(info.Pending, fmt.Sprintf("%s (%s)", p.FileName, p.Status))
+		}
 	}
 	return info
 }

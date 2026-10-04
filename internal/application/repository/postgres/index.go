@@ -174,6 +174,32 @@ func (r *IndexRepo) Tree(ctx context.Context, doc uuid.UUID, gen int) ([]types.T
 	return out, rows.Err()
 }
 
+// AppendToCaseTree adds the document as the last branch of its case tree.
+// A document already in the tree keeps its place.
+func (r *IndexRepo) AppendToCaseTree(ctx context.Context, caseID, doc uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `INSERT INTO case_tree (case_id, document_id) VALUES ($1, $2) ON CONFLICT (document_id) DO NOTHING`, caseID, doc)
+	return err
+}
+
+// CaseTreeDocs returns the live documents of the case tree in branch order.
+func (r *IndexRepo) CaseTreeDocs(ctx context.Context, caseID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT t.document_id FROM case_tree t JOIN documents d ON d.id = t.document_id
+		WHERE t.case_id = $1 AND d.deleted_at IS NULL ORDER BY t.seq`, caseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // DeleteOldGens removes pages, sections and tree nodes of generations older
 // than keep.
 func (r *IndexRepo) DeleteOldGens(ctx context.Context, doc uuid.UUID, keep int) error {

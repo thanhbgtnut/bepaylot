@@ -248,18 +248,19 @@ Agent giữ nguyên các khả năng sẵn có:
 
 | Tool | Dùng để |
 |---|---|
-| `wiki_index`, `wiki_read`, `wiki_search`, `wiki_links` | đọc index của wiki, trang wiki (chú thích kèm `citation_id`), tìm trong wiki, liên kết/quan hệ |
-| `kb_search` | tìm đoạn trả lời trong case (index wiki → trang wiki → gốc), lọc theo metadata và khoảng trang |
+| `kb_case_toc` | nạp cây của case vào context: mỗi file một dòng kèm cây mục lục (nguyên cây khi vừa ngân sách) |
+| `kb_search` | tìm full-text đúng từ (mã số, số tiền, tên) trong case, lọc theo metadata và khoảng trang |
 | `kb_list_documents`, `kb_metadata_values` | liệt kê file của case; đếm giá trị metadata trong case |
-| `kb_read_pages` | đọc trang dạng dòng đánh số `[L5] …` (tối đa 10 trang/lần) |
+| `kb_read_pages` | nạp trang của một node trên cây (`node_id`) hoặc một khoảng trang, dạng dòng đánh số `[L5] …` (tối đa 10 trang/lần) |
 | `kb_document_tree`, `kb_page_overview` | duyệt mục lục từng cấp; tổng quan từng trang |
 | `kb_find_in_document`, `kb_locate` | tìm trong một file (lọc theo khoảng trang), giải citation hoặc tìm vị trí một đoạn text |
 
 Không tool nào có tham số chọn case hay KB: phạm vi lấy từ `sessions.case_id` phía server. File của
 case khác bị từ chối với cùng thông báo như file không tồn tại. Case bị xoá giữa chừng thì tool báo
-"case không còn tồn tại". Prompt có section `<case>` (mã, loại, số file, trạng thái wiki, các trường
-metadata) — chỉ mô tả dữ liệu, không có workflow: việc cần bóc tách hay rule cần kiểm tra do người
-dùng viết trong tin nhắn. Wiki là lớp tìm nhanh; câu trả lời trích dẫn `citation_id` của dòng gốc.
+"case không còn tồn tại". Prompt có section `<case>` (mã, loại, số file, các trường metadata) và
+quy tắc trích dẫn, không có flow: agent tự lên plan từ các tool (cây của case có ID node →
+`kb_read_pages(node_id)`; hit `kb_search` kèm `node`). Việc cần bóc tách hay rule cần kiểm tra do người
+dùng viết trong tin nhắn; câu trả lời trích dẫn `citation_id` của dòng gốc.
 
 File đính kèm trong chat: `POST /v1/sessions/{id}/attachments` đưa file vào **case của session**
 (lane ưu tiên); session chưa gắn case → `409`. Câu trả lời tốt có thể lưu vào wiki bằng

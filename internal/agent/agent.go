@@ -304,6 +304,7 @@ func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink ev
 		if caseInfo == nil {
 			caseInfo = &prompt.CaseInfo{ID: scope.CaseID.String(), Deleted: true}
 		}
+		asm.setCiteRefs(caseInfo.Refs)
 		toolSess.EnableKnowledge()
 		ctx = tools.WithCaseScope(ctx, scope)
 		toolDesc = toolSess.VisibleDescriptions()

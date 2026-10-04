@@ -75,7 +75,9 @@ type SearchResponse struct {
 
 // DocumentBrief is a compact document listing entry.
 type DocumentBrief struct {
-	ID        uuid.UUID      `json:"id"`
+	ID uuid.UUID `json:"id"`
+	// Ref is the document's ref d<n> in its case tree ("" before its tree).
+	Ref       string         `json:"ref,omitempty"`
 	KBID      uuid.UUID      `json:"kb_id"`
 	CaseID    uuid.UUID      `json:"case_id"`
 	FileName  string         `json:"file_name"`

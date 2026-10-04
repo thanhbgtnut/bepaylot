@@ -131,8 +131,7 @@ type pageResult struct {
 }
 
 // draftResult reads a page's groups as they are: every heading group starts
-// a node, summaries are the first words. It is the result without LLM and
-// the fallback when the page call fails.
+// a node, summaries are the first words.
 func draftResult(groups []layoutGroup, words int) *pageResult {
 	r := &pageResult{}
 	for _, g := range groups {

@@ -1,13 +1,24 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.14 · Ngày: 2026-09-30 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
+> Phiên bản: 0.15 · Ngày: 2026-10-04 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
 >
-> Thay đổi so với 0.13 (U38): **VLM chỉ còn hai bước, mỗi trang một lần gọi, có text OCR để kiểm**
+> Thay đổi trong 0.15 (U42): **cây của case nạp sẵn vào context**. Phiên đã gắn đúng một case, nên mỗi lượt server dựng cây của case đó (cùng dạng `kb_case_toc`, nguyên cây khi vừa ngân sách) và đưa vào prompt ở section `<case_tree>` như dữ liệu, kèm file chưa có cây. Agent không phải gọi tool mới thấy cây; `kb_case_toc` còn để lọc theo metadata và mở nhánh bị lược (§8.1, §8.2). Trích dẫn model viết bằng ref (`doc:d1:p2:l4`, `doc:d1.n4:p2:l7`) được server đổi thành `doc:<document_id>:…` ngay trên luồng text (SSE và tin nhắn lưu), tra ref trong case của phiên; `kb_locate` cũng nhận dạng này.
+>
+> Thay đổi trong 0.15 (U40, U41): **agent tự suy luận cách tra hồ sơ theo cây**
+> - Không có flow nào trong prompt (U41): agent ReAct tự lên plan từ các tool. Mỗi tool chỉ mô tả nó là gì, trả về gì; output của tool này mang ID cho tool kia (node `d<n>.n<k>` trên cây → `kb_read_pages(node_id)`; hit của `kb_search` kèm `node`; node quá dài liệt kê node con). Luồng cây → node → trang chỉ là một ví dụ agent có thể tự chọn (§8.2).
+> - `kb_case_toc` nạp **nguyên cây của cả case** khi tổng vừa `search.tree_token_budget` (cùng đường tắt của search); vượt thì như cũ (thẻ + nhánh đầu). `kb_read_pages` nhận `node_id` (`n<k>` hoặc `d<n>.n<k>`) và đọc đúng khoảng trang của node. `kb_search` của agent **chỉ còn keyword**: agent không còn gọi vòng LLM duyệt cây lồng phía server (§8.2).
+>
+> Thay đổi so với 0.14 (U39): **cây dựng bằng code từ layout TurboOCR; một cây cho cả case**
+> - `index:tree` **không gọi LLM theo trang nữa**: node là các nhóm heading/title của layout TurboOCR (bước gộp layout của U37), cấp lấy từ kiểu block và số `#`, tóm tắt node là các từ đầu (trích nguyên văn); code ghép cây theo trang và bookmark như trước. LLM chỉ còn viết **thẻ tài liệu** (một lần gọi mỗi file) (§6.5).
+> - **Cây hồ sơ được lưu** (bảng `case_tree`, migration `0018_case_tree.sql`): gốc là case, mỗi file là một nhánh theo thứ tự được thêm, dưới nhánh là cây của file (`doc_tree_nodes`). File mới **chỉ nối thêm nhánh** khi cây của nó xong; cây của các file khác không bị dựng lại, ref `d<n>` của chúng không đổi. Reparse thay cây của file nhưng giữ vị trí nhánh; xoá file thì nhánh mất theo (§6.5, §6.6, §9.2).
+> - Cấu hình: bỏ `index.tree.concurrency`, `index.tree.page_tokens`; `index.tree.llm` chỉ còn bật/tắt thẻ tài liệu (§11). Mô hình dữ liệu hồ sơ (P8) dời sang migration `0019`.
+>
+> Thay đổi của 0.14 (U38): **VLM chỉ còn hai bước, mỗi trang một lần gọi, có text OCR để kiểm**
 > - Engine `turboocr_vlm` **không gọi VLM theo từng layout nữa** (bỏ cắt vùng, ảnh ghép đánh số, marker `<<<k>>>`, gọi riêng tiêu đề/bảng). Chỉ còn hai bước: (1) TurboOCR bóc tách text, box, layout của trang; (2) **một lần gọi VLM cho cả trang** để lấy markdown (§5.9).
 > - Prompt của lần gọi trang **kèm text TurboOCR** của trang (theo thứ tự đọc, dòng confidence thấp đánh dấu `[?]`) để VLM tự kiểm: không bỏ sót text, tên/số/ngày khớp ảnh; chỗ OCR sai thì theo ảnh.
 > - Sau khi có markdown, code **kiểm lại bằng OCR**: căn từ markdown với từ OCR của cả trang, chia markdown về đúng vùng layout; đoạn markdown không có từ OCR nào khớp thì bỏ (chưa được xác minh); dòng OCR mà markdown bỏ sót thì được **chèn lại** vào block. Vị trí vẫn lấy từ TurboOCR (§5.9).
@@ -76,14 +87,18 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U27 | Index và tóm tắt theo đúng `index.md` của LLM Wiki (catalog mọi trang: link, tóm tắt một dòng, metadata như ngày hoặc số nguồn, nhóm theo loại; đọc index trước rồi mới đi vào trang), tóm tắt được làm ngay khi ingest; **tối ưu token**, tránh token thừa; dữ liệu vẫn lưu Postgres | **được thay bởi U35**; ý "tối ưu token, đọc mục lục trước rồi mới vào trang" chuyển thành mục lục hồ sơ (§6.6) | §6.6 |
 | U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6 | §10.6, §9.2 (migration `0015`), §11, frontend `/login` |
 | U29 | Viết **tài liệu vận hành** trong thư mục `spec` để bàn giao cho đội vận hành OPN: vận hành từng tính năng và các kiểm tra trạng thái dịch vụ | còn hiệu lực | [`spec/van-hanh.md`](van-hanh.md), `spec/van-hanh/healthcheck.sh`, `spec/van-hanh/kiem-tra.sql` |
-| U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0018`), §10.7 |
+| U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0019`), §10.7 |
 | U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực | §4.2, §6.2, §6.9.4, §10.7, §11 |
 | U32 | Rà lại spec, sửa các chỗ mâu thuẫn theo phương án tối ưu: giá trị hiện tại của field chỉ là bản đã xác nhận; evidence liên file không bị mồ côi; công duyệt giữ qua reparse; wiki và field không lệch âm thầm; bbox ô bảng ổn định với VLM; reparse ghi đúng hành vi; có service sở hữu mô hình dữ liệu | còn hiệu lực trừ ý "wiki và field không lệch âm thầm" (không còn wiki, U35); **làm rõ U20, U30** | §3.1, §4.7, §5.6, §5.10, §6.9, §8.2, §9.2 |
 | U33 | **Xoá các phần mâu thuẫn** còn sót trong spec và **ghi lại lưu ý** để code rõ ràng | còn hiệu lực | toàn bộ; §16 (Lưu ý khi code) |
 | U34 | bepaylot phải theo **đúng giải pháp vectorless** (PageIndex + LLM Wiki): sửa toàn bộ spec cho đúng | **được thay bởi U35** | — |
 | U36 | Sửa bốn điểm: (1) **Layout** (**bị thay bởi U38**): các text box cùng class trên cùng một trang phải **gom lại gọi agent bóc tách một lần**, vì ảnh từng vùng rất nhỏ, gọi đi gọi lại tốn lần gọi và token; gom các nhãn cùng class và tương tự nhau, mỗi trang mỗi nhóm một lần gọi. **Title vẫn gọi riêng.** Layout là **con dấu thì gắn nhãn luôn, không gọi VLM**. (2) Yêu cầu bóc tách gọi sang **agent hiện có trong source code, dạng streaming**, không gọi riêng kiểu LLM base đẩy prompt + user message lên. (3) Sửa lỗi **xem ảnh trang báo không kết nối được**. (4) **Lưu JSON kết quả của trang vào database**, không lưu S3, vì đó là dữ liệu có cấu trúc | (1) **bị thay bởi U38** (không gọi VLM theo layout nữa; con dấu vẫn gắn nhãn từ layout, không gọi VLM); (2)–(4) còn hiệu lực; **làm rõ U15, U17** | §0 (bản 0.12), §5.3, §5.9, §9.1, §9.2 (migration `0017`), §10.2, §11 |
 | U35 | **Không đưa quá nhiều cho LLM vì tốn token; chỉ search theo index tree.** Luồng: cần hỏi thông tin thì duyệt index tree, tìm đúng trang, nạp trang vào context để trả lời. Xoá nội dung thừa trong spec (chỉ phần LLM Wiki); Module 3 hiển thị theo cây | còn hiệu lực; **thay U24, U26, U27, U34**, làm rõ U7, U8, U10, U22, U23 | §6.1, §6.5, §6.6, §7, §8.2, §9.2 (migration `0016`), §10.3, §11, §16 |
-| U37 | **Index quá lâu vì gọi LLM nhiều lần.** Trước hết **gộp tree node theo kết quả layout**; sau đó dựng node **theo trang như PageIndex**, không dùng cả file: mỗi trang chỉ cần thông tin chung của trang trước, nội dung trang hiện tại và thông tin tổng hợp của trang sau | còn hiệu lực; thay cách dựng cây cũ (khung heading/nhóm trang + LLM đề xuất mục lục + tóm tắt bottom-up theo tầng) | §6.5, §11 |
+| U37 | **Index quá lâu vì gọi LLM nhiều lần.** Trước hết **gộp tree node theo kết quả layout**; sau đó dựng node **theo trang như PageIndex**, không dùng cả file: mỗi trang chỉ cần thông tin chung của trang trước, nội dung trang hiện tại và thông tin tổng hợp của trang sau | phần gộp theo layout và ghép theo trang còn hiệu lực; **phần gọi LLM mỗi trang bị thay bởi U39**; thay cách dựng cây cũ (khung heading/nhóm trang + LLM đề xuất mục lục + tóm tắt bottom-up theo tầng) | §6.5, §11 |
+| U39 | Sửa phần dựng tree: **không dùng LLM dựng**, dùng **code logic trên kết quả TurboOCR** để dựng tree **cho cả case**. **Thêm file vào chỉ việc thêm vào tree, không dựng lại tree.** (Làm rõ: lưu một cây cho cả case; vẫn giữ một lần gọi LLM cho thẻ tài liệu) | còn hiệu lực; **thay phần gọi LLM mỗi trang của U37** | §0 (bản 0.15), §6.5, §6.6, §9.2 (migration `0018`), §11 |
+| U40 | Khi hỏi đáp, agent thực hiện các tool: (1) lấy tree theo case, nạp vào context; (2) tìm đúng trang cần lấy thông tin; (3) load trang từ tree vào context để trả lời. **Agent phải tự biết làm flow này, không cần người dùng hướng dẫn**, để agent có khả năng tổng quát. (Làm rõ: `kb_search` của agent chỉ giữ mode keyword) | còn hiệu lực; **được làm rõ bởi U41** (không ghi flow vào prompt); thay phần "agent được chọn `kb_search` để server tự chạy cả luồng" của §8.2 | §0 (bản 0.15), §6.6, §8.2 |
+| U41 | Flow load tree theo case rồi lấy trang để trả lời **không phụ thuộc vào prompt**: agent **tự lên plan** dựa trên các tool được cung cấp; flow người dùng đưa chỉ là ví dụ (few-shot), agent phải tổng quát hơn. Lấy tree theo case phải **đúng mã case**, không lấy của case khác; case vẫn do client chọn khi mở phiên như hiện tại | còn hiệu lực; làm rõ U40, giữ U21/§8.1 (phạm vi cứng theo `sessions.case_id`) | §0 (bản 0.15), §6.6, §8.1, §8.2 |
+| U42 | Hãy **load tree vào context**, vì tree đã theo case rồi (kết quả chạy thử: agent ít đi đường cây → node → trang, chủ yếu tìm từ khoá) | còn hiệu lực; bổ sung U40/U41: cây là dữ liệu của phiên, không phải flow | §0 (bản 0.15), §8.1, §8.2 |
 | U38 | Kiểm tra lại `turboocr_vlm`: **không gọi VLM theo từng layout nữa**, chỉ đi qua **2 bước**: (1) bóc tách bằng TurboOCR (text, box của từng trang); (2) gọi VLM **theo từng trang** để lấy markdown. Khi gọi VLM phải **gửi kèm text của TurboOCR** để verify kết quả markdown (coi như context của VLM), vì markdown trả ra có thể **sai hoặc thiếu** | còn hiệu lực; **thay U36 (1)**, thay phần "cắt ảnh theo vùng" của U17 | §0 (bản 0.14), §5.9, §11, §16 |
 
 ## 1. Yêu cầu chung
@@ -105,7 +120,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R14 | Hiển thị hồ sơ để đọc hiểu cả bộ | Module 3: case → file → cây mục lục kèm tóm tắt, bấm node mở trang gốc + bbox, "Hỏi về hồ sơ"; không gọi LLM (§7) |
 | R15 | Dữ liệu graph/wiki cũ bị xoá | Migration `0014` xoá graph bản 0.4; `0016` xoá LLM Wiki (§9.2) |
 | R16 | Người dùng tự đăng ký / đăng nhập trên web, có OIDC, xác thực như WeKnora | `service/auth`: bcrypt + JWT access/refresh lưu vết trong `auth_tokens`, OIDC authorization code (backend đổi code, state ký + cookie nonce); middleware Bearer JWT → API key; trang `/login` hai cột; API key tự phục vụ (§10.6) |
-| R17 | Dữ liệu hồ sơ liên kết được theo cây Case → Document → Page → Element/Table, cộng Extracted Field và Classification có evidence | Bảng `page_tables`, `table_cells`, `extracted_fields`, `document_segments`, `evidence_spans` (migration `0018`); mọi evidence giải được ra `(document, page, line/element/ô, bbox)`; API trả cả cây (§6.9, §10.7) |
+| R17 | Dữ liệu hồ sơ liên kết được theo cây Case → Document → Page → Element/Table, cộng Extracted Field và Classification có evidence | Bảng `page_tables`, `table_cells`, `extracted_fields`, `document_segments`, `evidence_spans` (migration `0019`); mọi evidence giải được ra `(document, page, line/element/ô, bbox)`; API trả cả cây (§6.9, §10.7) |
 
 ### 1.1 Tech stack
 
@@ -137,7 +152,7 @@ flowchart LR
   R --> W[cmd/server<br/>role=worker]
   W -->|render + text layer| PDF[go-pdfium<br/>process con]
   W -->|image| OCR[TurboOCR /ocr/raw]
-  W -->|tóm tắt node cây| LLM[LLM providers]
+  W -->|thẻ tài liệu| LLM[LLM providers]
   W --> PG
   W --> OS
 
@@ -254,7 +269,7 @@ Mỗi pool là một `asynq.Server` riêng, nên concurrency được cô lập 
 | `core` | `default`(1), `interactive`(3) | `document:split`, `document:assemble` | 4 | việc nhẹ, cần độ trễ thấp |
 | `render` | `render`(1), `render_interactive`(3) | `page:render` | `render.workers` (mặc định `min(NumCPU-1,4)`) | nặng CPU; số task song song = số process PDFium (§5.7) |
 | `ocr` | `page`(1), `page_interactive`(3) | `page:ocr` | 8 (= năng lực TurboOCR) | nặng I/O, **nút thắt chính**; tách riêng để bảo vệ OCR |
-| `index` | `index`(1), `index_interactive`(3) | `index:build`, `index:tree` | 6 | tách section, full-text, dựng cây + tóm tắt node (gọi LLM). Là điều kiện để search được |
+| `index` | `index`(1), `index_interactive`(3) | `index:build`, `index:tree` | 6 | tách section, full-text, dựng cây bằng code từ layout + thẻ tài liệu (một lần gọi LLM), nối file vào cây hồ sơ. Là điều kiện để search được |
 | `enrich` | `enrich`(1) | `document:classify` | 4 | việc tuỳ chọn sau index (§6.9.4), không ai chờ trực tiếp, không chặn search |
 | `maintenance` | `low`(1) | `document:delete`, `case:delete`, `kb:delete`, `document:reparse`, `housekeeping:sweep` | 2 | việc dài, chạy nền |
 
@@ -286,7 +301,7 @@ sequenceDiagram
   P->>Q: nếu done+failed = page_count → document:assemble (TaskID=assemble:{doc}:{gen})
   Q->>A: ghép markdown toàn văn + offset, status=indexing
   A->>Q: index:build
-  Q->>I: section + FTS → index:tree (dựng cây, tóm tắt node bằng LLM)
+  Q->>I: section + FTS → index:tree (dựng cây từ layout, thẻ tài liệu bằng LLM, nối vào cây hồ sơ)
   I->>I: status=completed (search được)
   I->>Q: document:classify mode=titles (chỉ khi loại case bật classification.auto, §6.9.4)
 ```
@@ -447,7 +462,7 @@ Response (tham chiếu `spec/parser/output_example.json`):
 Nhận xét từ file mẫu, bắt buộc xử lý:
 
 1. **Block không có line**: 5/35 layout (ví dụ `header` 15, `image` 34) không có line nào. Vẫn lưu block, đặt `text=''`; với `image` thì lưu ảnh crop.
-2. **Line nằm trong block `image`**: text trên con dấu ("PHÒNG / KINH T / NHA BỊCH") được gắn cho block `image`. Giữ line và đánh dấu `in_figure=true`. Mặc định line này không đưa vào nội dung gửi LLM tóm tắt node cây (§6.5) nhưng vẫn tìm kiếm được và vẫn có khi nạp trang để trả lời.
+2. **Line nằm trong block `image`**: text trên con dấu ("PHÒNG / KINH T / NHA BỊCH") được gắn cho block `image`. Giữ line và đánh dấu `in_figure=true`. Mặc định line này không đưa vào tóm tắt node cây (§6.5) nhưng vẫn tìm kiếm được và vẫn có khi nạp trang để trả lời.
 3. **`reading_order` có thể sai hình học**: line 17 "3. Ngành, nghề kinh doanh:" nằm **phía trên** bảng nhưng lại đứng sau mọi line của bảng. Assembler áp dụng bước sửa thứ tự: nếu block X nằm hoàn toàn phía trên block Y và hai block giao nhau theo trục ngang ≥ 30%, thì X phải đứng trước Y (bật/tắt bằng `parser.reading_order_fix`).
 4. **Line OCR chất lượng thấp** (con dấu ngân hàng: "Ngày surta thhnng am ng Băm"): line có `confidence < parser.low_conf_threshold` (mặc định 0.6) được đánh dấu `low_confidence=true`. Không loại bỏ, nhưng được gắn hậu tố `(?)` khi nạp cho LLM (§5.8) để giảm mức tin cậy.
 5. **`class_id` phụ thuộc model OCR**. Hệ thống **chỉ dựa vào `class` (tên)** và ánh xạ sang `BlockType` chuẩn qua bảng cấu hình, không hard-code id.
@@ -902,7 +917,7 @@ flowchart LR
   A --> V[5. Kiểm trích dẫn<br/>với dòng gốc → page + bbox]
 ```
 
-**Vì sao chỉ duyệt cây.** Chi phí token là ràng buộc chính. Một hồ sơ vài chục file, vài trăm trang có thể lên tới hàng trăm nghìn token. Cây mục lục chỉ gồm tiêu đề, khoảng trang và tóm tắt ngắn, nên nhỏ hơn toàn văn hàng chục lần. LLM chỉ đọc cây rồi đọc đúng vài trang cần thiết. Lúc index, mỗi file chỉ tốn các lần gọi tóm tắt node (§6.5); ngoài ra không có bước LLM nào khác chạy nền trên toàn bộ file.
+**Vì sao chỉ duyệt cây.** Chi phí token là ràng buộc chính. Một hồ sơ vài chục file, vài trăm trang có thể lên tới hàng trăm nghìn token. Cây mục lục chỉ gồm tiêu đề, khoảng trang và tóm tắt ngắn, nên nhỏ hơn toàn văn hàng chục lần. LLM chỉ đọc cây rồi đọc đúng vài trang cần thiết. Lúc index, mỗi file chỉ tốn một lần gọi viết thẻ tài liệu; cây dựng bằng code (§6.5); ngoài ra không có bước LLM nào khác chạy nền trên toàn bộ file.
 
 **Ví dụ chi phí.** Case 20 file, 400 trang, toàn văn khoảng 300.000 token.
 - Mục lục hồ sơ (thẻ 20 file + nhánh đầu của cây): khoảng 2–4 nghìn token.
@@ -924,6 +939,7 @@ flowchart LR
 | **Metadata** (tuỳ chọn) | file | mô tả và lọc file trong case (§6.3) |
 | **Section** (`sections`) | file | đơn vị nội dung ở lá của cây, dùng cho full-text và trích dẫn (§6.4) |
 | **Cây tài liệu** (`doc_tree_nodes`) | file | mục lục có tóm tắt để duyệt kiểu PageIndex (§6.5) |
+| **Cây hồ sơ** (`case_tree`) | case | các file của case theo thứ tự được thêm; mỗi file là một nhánh trỏ tới cây tài liệu (§6.5) |
 | **Mục lục hồ sơ** | case | thẻ các file + nhánh đầu của cây, **dựng bằng code** khi đọc, không lưu riêng, không gọi LLM (§6.6) |
 | **Chỉ mục full-text** trang gốc, section | file | gợi ý từ khoá, tìm trong file theo trang (§6.7) |
 | **Classification** (`document_segments`, tuỳ chọn) | dải trang của file | nhãn loại giấy tờ gợi ý, có confidence + evidence; chỉ có khi loại case bật tự động hoặc có người yêu cầu (§6.9.4) |
@@ -995,7 +1011,7 @@ parser: { engine: turboocr }
 **Phạm vi cứng**
 - Mọi đường đọc tài liệu đều đi qua `case_id`: lọc ứng viên search, đọc mục lục hồ sơ, duyệt cây mục lục, đọc trang, tìm trong file, locate, giải citation.
 - Điều kiện luôn là `documents.case_id = $case AND documents.deleted_at IS NULL`, với `$case` lấy từ phía server (session agent, §8.1, hoặc tham số API đã kiểm quyền), không bao giờ lấy từ tham số model.
-- Các bảng con (`document_pages`, `sections`, `doc_tree_nodes`, `page_lines`) không cần cột `case_id`, vì luôn được truy cập qua `document_id` đã kiểm phạm vi.
+- Các bảng con (`document_pages`, `sections`, `doc_tree_nodes`, `page_lines`; `case_tree` có `case_id` để sắp thứ tự nhánh, không dùng làm phạm vi) không cần cột `case_id`, vì luôn được truy cập qua `document_id` đã kiểm phạm vi.
 
 ### 6.3 Metadata theo file
 
@@ -1061,17 +1077,18 @@ Mọi API list/search nhận chung một bộ lọc `metadata`. Bộ lọc luôn
 - Section được phép vượt ranh giới trang, luôn ghi `page_start/page_end`, `line_from/line_to` theo `(page, line_no)` và `source_spans`.
 - Section là đơn vị cho full-text và trích dẫn.
 
-### 6.5 Dựng cây tài liệu (`index:tree`)
+### 6.5 Dựng cây tài liệu và cây hồ sơ (`index:tree`)
 
-Cây được dựng **theo từng trang** (kiểu PageIndex), không gửi cả file cho LLM và không có lượt tóm tắt từ lá lên gốc:
+Cây được dựng **bằng code từ layout TurboOCR, theo từng trang** (U39): không gọi LLM theo trang, không gửi cả file cho LLM và không có lượt tóm tắt từ lá lên gốc. Mỗi case có **một cây hồ sơ**: gốc là case, mỗi file là một nhánh, dưới nhánh là cây của file.
 
 1. **Gộp theo layout (code, không gọi LLM).** Trên mỗi trang, block `title`/`heading` (≤ 25 từ) mở một nhóm, các block sau nó là thân nhóm; nội dung trước heading đầu tiên là **nhóm dẫn** (tiếp nối trang trước). Bỏ furniture, header/footer, số trang. Hai heading liền nhau cùng cấp là một heading xuống dòng (trừ khi heading trước là nhãn kết thúc bằng `:` hoặc heading sau tự đánh số "I.", "1.", "1.1", "a)"). Heading có nội dung dưới nó < `index.tree.min_node_tokens` (mặc định 40) và còn heading khác sau nó trên trang (nhãn form, chú thích bị nhận nhầm là tiêu đề) được **gộp vào nhóm trước**. Kết quả là **bản nháp** node của trang: mỗi nhóm có heading là một node, cấp heading suy từ kiểu block và số `#`.
-2. **Mỗi trang một lần gọi LLM** (`index.tree.concurrency` trang song song, mặc định 4). Đầu vào gồm: **trang trước** (các mục còn mở ở cuối trang theo bản nháp + khoảng 200 ký tự cuối), **trang hiện tại** (các nhóm layout, cắt trong `index.tree.page_tokens`, mặc định 1.500 token), **trang sau** (các heading + khoảng 200 ký tự đầu). Ngữ cảnh trang trước/sau lấy từ layout nên các trang không phải chờ nhau. LLM trả `{"lead", "nodes": [{"from": "g<k>", "title", "level", "summary"}]}`: nhóm nào thật sự mở một node (bỏ heading giả, thêm node cho giấy tờ mới không có tiêu đề), cấp của node, tóm tắt ≤ `index.tree.summary_words` (mặc định 60 từ, giữ **thực thể, số hiệu, ngày tháng, số tiền**), và `lead` tóm tắt phần tiếp nối. Trả lời sai định dạng hoặc gọi lỗi thì trang dùng bản nháp. Trang trống không gọi.
+2. **Node của trang (code).** Mỗi nhóm có heading là một node: tiêu đề là heading (≤ 120 ký tự), cấp suy từ kiểu block (`title` = 1) và số `#`, tóm tắt là ≤ `index.tree.summary_words` (mặc định 60) từ đầu của thân nhóm (trích nguyên văn, giữ nguyên tên, số hiệu, ngày, số tiền). Nhóm dẫn là phần tiếp nối của node đang mở. Không gọi LLM.
 3. **Ghép cây (code).** Đi theo thứ tự trang: node mở cho tới khi có node cùng cấp hoặc cấp cao hơn; nhóm dẫn nối vào node đang mở (mở rộng `page_end`, cộng token, nối tóm tắt; node trải nhiều trang giữ tóm tắt ≤ 2 × `summary_words`). **Bookmark/outline của PDF** (§5.8), nếu có, là các cấp trên cùng; node theo trang nằm dưới bookmark sâu nhất đang mở, và node trùng tên bookmark bắt đầu trên cùng trang được gộp vào bookmark đó. Node chưa có tóm tắt (bookmark không có nội dung riêng) lấy danh sách tiêu đề con. Section (§6.4) được gắn vào node sâu nhất chứa trang đầu của nó.
 4. **Ràng buộc**: `page_start ≤ page_end`, nằm trong file; node con nằm trong khoảng trang của node cha. Hai node liền nhau có thể chung một trang (node trước kết thúc, node sau bắt đầu giữa trang).
-5. Số lần gọi LLM khi index một file = số trang có nội dung + 1 (thẻ tài liệu). `index.tree.llm: false` chỉ dành cho dev/test: cây là bản nháp layout, tóm tắt là vài dòng đầu (trích nguyên văn), search kém chính xác hơn.
+5. Số lần gọi LLM khi index một file = 1 (thẻ tài liệu). `index.tree.llm: false` thì thẻ cũng trích nguyên văn (tiêu đề PDF/title đầu tiên/tên file, vài dòng đầu của trang đầu).
 6. **Thẻ tài liệu** (document card, node gốc): `title`, `summary` ≤ 120 từ (mô tả nội dung theo khoảng trang nếu file gộp nhiều giấy tờ), `page_count` và metadata. Thẻ không có `doc_type`: loại giấy tờ là Classification theo dải trang, chạy ở task riêng sau cây (§6.9.4), và không đưa vào thẻ hay mục lục hồ sơ. Thẻ là dòng của file trong mục lục hồ sơ (§6.6).
 7. Ghi `token_count` cho từng node (nội dung) và `tree_tokens` cho cây dạng mục lục (tiêu đề + tóm tắt của mọi node), để search và tool biết có nạp **nguyên cây** vào context được không (§6.6 bước 2, §8.2).
+8. **Nối vào cây hồ sơ** (bảng `case_tree`). Khi cây của file được lưu lần đầu, file được **nối thêm làm nhánh cuối** của cây hồ sơ (`seq` tăng dần). Không dựng lại gì khác: cây và ref `d<n>` của các file đã có giữ nguyên. Reparse ghi cây mới của file nhưng nhánh giữ vị trí; xoá file thì nhánh mất theo (`ON DELETE CASCADE`), các nhánh khác không đổi. Mục lục hồ sơ, search (§6.6), `kb_list_documents` và Module 3 đọc các file theo thứ tự này; file chưa có cây (đang xử lý) đứng sau, theo thời điểm upload. **Ref `d<n>`** của file là vị trí nhánh trong cây hồ sơ (file thứ n được thêm, chỉ tính file chưa xoá): cố định khi lọc metadata hay thêm file, và chỉ tra được trong case của phiên.
 
 **Dạng cây đưa cho LLM** (dùng chung cho search bước 2, `kb_document_tree` và nhánh cây trong mục lục hồ sơ):
 
@@ -1099,7 +1116,7 @@ flowchart TD
   S5 --> R[hits có trích dẫn]
 ```
 
-Agent đi đúng luồng này bằng tool (§8.2): `kb_case_toc` → `kb_document_tree` → `kb_read_pages` → trả lời với `citation_id`. `POST /v1/search` chạy cùng luồng phía server và trả hit.
+Agent tự suy luận đường đi từ các tool (§8.2, U41); một đường điển hình: `kb_case_toc` (nạp cây của case) → `kb_document_tree` (khi cây bị lược) → `kb_read_pages(node_id)` (nạp trang của node) → trả lời với `citation_id`. `POST /v1/search` chạy cùng luồng phía server và trả hit; agent không gọi luồng phía server này.
 
 **Bước 1: lọc phạm vi (SQL, không gọi LLM).** Áp dụng `case_id` (bắt buộc với agent: đúng case của session; với API: `case_ids` hoặc `kb_ids`, ít nhất một), `document_ids` (chỉ giữ file thuộc phạm vi đó, file ngoài phạm vi bị bỏ im lặng), bộ lọc `metadata` (§6.3) và `status ∈ {completed, partial}`. Nếu phạm vi rỗng thì trả kết quả rỗng ngay. Các bước 2–5 chỉ thấy các file còn lại sau bước này, nên LLM không thể chọn, duyệt cây hay đọc trang của case khác.
 
@@ -1392,7 +1409,7 @@ Module 3 cho người dùng **đọc hiểu cả bộ hồ sơ** mà không ph�
 
 ### 7.5 Realtime
 
-- SSE `GET /documents/:id/events` (§10.2) cập nhật trạng thái từng file; mục lục thêm cây của file ngay khi `index:tree` xong.
+- SSE `GET /documents/:id/events` (§10.2) cập nhật trạng thái từng file; mục lục nối thêm nhánh của file vào cuối cây hồ sơ ngay khi `index:tree` xong, các nhánh khác không đổi.
 
 ---
 
@@ -1424,13 +1441,13 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 
 | Tool | Tham số chính | Trả về |
 |---|---|---|
-| `kb_case_toc` | `metadata?`, `expand?` (ID ngắn, ví dụ `d3`) | mục lục hồ sơ (§6.6 bước 2): mỗi file một dòng (thẻ tài liệu, số trang, metadata) kèm nhánh cấp đầu của cây; `expand` trả phần bị lược. Là điểm vào của luồng hỏi đáp |
-| `kb_search` | `query, document_ids?, metadata?, mode?, page_from?, page_to?, top_k?` | hit có `citation_id`, trang, trích dẫn, metadata của file (§6.6), chỉ trong case của session |
+| `kb_case_toc` | `metadata?`, `expand?` (ID ngắn, ví dụ `d3`) | cây của case (§6.6 bước 2; bản không lọc đã có sẵn trong `<case_tree>` của prompt, U42): mỗi file một dòng (thẻ tài liệu, số trang, metadata) kèm **nguyên cây** khi tổng vừa `search.tree_token_budget`, vượt thì nhánh cấp đầu; `expand` trả phần bị lược; `document_ids` ánh xạ `d<n>` → `document_id`. Là điểm vào của luồng hỏi đáp |
+| `kb_search` | `query, document_ids?, metadata?, page_from?, page_to?, top_k?` | **chỉ full-text** (mode `keyword`, U40): dòng chứa đúng từ cần tìm có `citation_id`, trang, `node` (ID node sâu nhất chứa trang trên cây của file) và `section`; chỉ trong case của session |
 | `kb_list_documents` | `metadata?, status?, limit?` | các file của case (lọc thêm theo metadata), kèm trạng thái, số trang và segment phân loại (nhãn, trang, confidence; §6.9.4) |
 | `kb_metadata_values` | `key` | các giá trị metadata khác nhau + số file, chỉ đếm trong case |
 | `kb_find_in_document` | `document_id, query, page_from?, page_to?` | các trang và line khớp (§6.8) |
 | `kb_page_overview` | `document_id, page_from?, page_to?` (mặc định mọi trang) | từng trang: tiêu đề layout, đoạn đầu, số dòng, số bảng, nhánh cây chứa trang, nhãn segment chứa trang |
-| `kb_read_pages` | `document_id, page_from, page_to` (tối đa 10 trang/lần) | markdown các trang, có marker trang |
+| `kb_read_pages` | `document_id`, `node_id?` (`n<k>` hoặc `d<n>.n<k>`) hoặc `page_from, page_to?` (tối đa 10 trang/lần) | các trang dạng dòng `[L<n>]`, có marker trang. Với `node_id`: đúng khoảng trang của node; node dài hơn 10 trang thì trả 10 trang đầu kèm danh sách node con (ID, tiêu đề, trang) |
 | `kb_document_tree` | `document_id, node_id?` | cây mục lục của file kiểu PageIndex (§6.5): **cả cây** (hoặc cả cây con của `node_id`) kèm tóm tắt và khoảng trang của từng node, khi vừa `search.tree_token_budget`; vượt thì cắt từ cấp sâu nhất, node bị lược ghi `(+k mục, expand nX)` để gọi lại với `node_id` |
 | `kb_locate` | `citation_id` hoặc `(document_id, text)` | trang + bbox (citation dòng, element hoặc ô bảng, §5.6) |
 | `kb_read_table` | `document_id, page, block_no` | bảng dạng lưới: mỗi ô có `citation_id` dạng `…:t<k>:r<i>c<j>`, text, confidence; kèm bảng nối trang (`continues_from`) |
@@ -1439,7 +1456,9 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 
 - Tên tool giữ tiền tố `kb_` để không đổi hợp đồng với client và skill hiện có; phạm vi thực tế là case.
 - Các tool là **built-in** (luôn bind, không deferred) khi session có case.
-- **Luồng mặc định là duyệt cây** (§6.6): `kb_case_toc` → `kb_document_tree` (chọn node) → `kb_read_pages` (đúng khoảng trang của node) → trả lời. Mô tả của các tool nêu luồng này (đây là cách dùng tool, không phải workflow nghiệp vụ) để agent không đọc cả file khi không cần. Agent vẫn được chọn cách khác trong phạm vi case: `kb_find_in_document` khi tìm mã số/số tiền chính xác, `kb_search` khi muốn server tự chạy cả luồng, hoặc đọc thẳng file nhỏ. Chỉ phạm vi là cố định.
+- **Trích dẫn luôn bằng `document_id`.** Câu trả lời đi qua bộ chuẩn hoá (cạnh `textGuard`, §8.1): `doc:d<n>[.n<k>]:p…` được đổi thành `doc:<document_id>:p…` theo ref của case của phiên, bất kể text bị chia chunk thế nào; ref không có trong case giữ nguyên (không giải được, như citation sai). UI và `GET /citations` vì vậy chỉ cần dạng UUID.
+- **Ref dùng chung giữa các tool.** Mọi tool nhận `document_id` cũng nhận ref `d<n>` của cây hồ sơ (§6.5 bước 8); `kb_read_pages`/`kb_document_tree` nhận `node_id` dạng `d<n>.n<k>` mà không cần `document_id`. Output trả lại ref (`kb_list_documents`: `ref`; hit `kb_search`: `ref` = `d<n>.n<k>`). Ref được server tra trong case của phiên, ref không có trong case báo "not found" như file không tồn tại.
+- **Agent tự suy luận cách tra** (§6.6, U41). Prompt **không có flow**: chỉ có `<case>` (dữ liệu), `<case_tree>` (cây của case nạp sẵn mỗi lượt, U42: dựng bằng `Searcher.CaseTOC` cho đúng `sessions.case_id`, cùng ngân sách với `kb_case_toc`) và quy tắc trích dẫn. Agent ReAct tự lên plan từ các tool, nên tool được thiết kế để nối với nhau: mô tả tool chỉ nói nó là gì và trả về gì (không "start here", không "sau đó gọi X"); output mang ID mà tool khác nhận (`kb_case_toc` trả cây với node `d<n>.n<k>` và `document_ids`; `kb_read_pages` nhận `node_id`; hit của `kb_search` kèm `node`; node quá dài liệt kê node con). Đường cây → node → trang là đường ngắn nhất agent tự thấy với câu hỏi về nội dung; câu hỏi mã số/số tiền có thể đi `kb_search` → đọc node. Phạm vi luôn là case của phiên (§8.1), không phụ thuộc agent chọn gì.
 - **Tiết kiệm context.** `kb_read_pages` tối đa 10 trang/lần; agent đọc theo node đã chọn, không đọc tuần tự cả file. `kb_document_tree` và `kb_case_toc` chỉ trả tiêu đề, khoảng trang và tóm tắt, không trả nội dung trang.
 - **Trích dẫn dòng gốc.** Câu trả lời cho người dùng trích dẫn `citation_id` của dòng gốc trên các trang đã đọc (§6.1).
 - **Tool theo trang**: `page_from`/`page_to` của `kb_search`, `kb_find_in_document`, `kb_page_overview` là tuỳ chọn; không truyền thì lấy cả file. File gộp CCCD + giấy chứng nhận + hợp đồng… vẫn là một file. Segment phân loại (§6.9.4) chỉ được **trả về** để agent tham khảo; không tool nào nhận tham số lọc theo nhãn.
@@ -1452,7 +1471,7 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 ### 8.3 Ví dụ nghiệp vụ
 
 **Case thanh toán `RT112233`** (loại `thanh_toan`):
-1. Client tạo case `RT112233`, upload các file (hoá đơn, hợp đồng, uỷ nhiệm chi…) vào case. Parser chạy `turboocr_vlm` theo loại case; mỗi file có cây mục lục riêng kèm tóm tắt node.
+1. Client tạo case `RT112233`, upload các file (hoá đơn, hợp đồng, uỷ nhiệm chi…) vào case. Parser chạy `turboocr_vlm` theo loại case; mỗi file có cây mục lục riêng (dựng từ layout) và được nối vào cây hồ sơ.
 2. Client mở session với `case_id` của `RT112233`.
 3. **Bóc tách trường.** Người dùng gửi ví dụ: "Lấy số hợp đồng, bên thụ hưởng, số tài khoản thụ hưởng, số tiền. Trả JSON, mỗi trường có `value`, `citation_id`, `confidence`, `needs_review`." Agent tự tìm trong case (mục lục hồ sơ → cây của hợp đồng và uỷ nhiệm chi → đọc đúng các trang), rồi trả kết quả có trích dẫn dòng gốc. Nếu tin nhắn yêu cầu lưu kết quả, agent gọi `kb_save_fields`: mỗi trường thành một Extracted Field `proposed` có evidence (số tiền trong bảng trỏ đúng ô `…:t4:r3c2`). Người duyệt xác nhận hoặc sửa trên UI (§6.9.3).
 4. **Kiểm tra rule.** Người dùng gửi ví dụ: "Kiểm tra: số tiền trên uỷ nhiệm chi không vượt giá trị hợp đồng. Trả `pass | fail | insufficient_evidence`, lý do và citation." Agent tìm hai con số trong case, so sánh và trả lời. Rule và định dạng kết quả nằm trong tin nhắn, không nằm trong server.
@@ -1499,7 +1518,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 
 ### 9.2 DDL
 
-Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, mô hình dữ liệu hồ sơ ở `0018_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
+Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
 
 ```sql
 -- 0006_extensions.sql
@@ -1677,6 +1696,16 @@ CREATE TABLE doc_tree_nodes (
 );
 CREATE INDEX doc_tree_nodes_doc_idx ON doc_tree_nodes (document_id, gen, parent_id, ord);
 
+-- 0018_case_tree.sql (§6.5 bước 8): cây hồ sơ, mỗi file một nhánh theo thứ tự được thêm
+CREATE TABLE case_tree (
+  case_id uuid NOT NULL,
+  document_id uuid PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+  seq bigint GENERATED ALWAYS AS IDENTITY,    -- thứ tự nhánh; file mới luôn ở cuối
+  added_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX case_tree_case_idx ON case_tree (case_id, seq);
+-- dữ liệu cũ: file đã có cây được nối vào case theo created_at
+
 -- 0010_tasks.sql
 CREATE TABLE task_dead_letters (
   id bigserial PRIMARY KEY,
@@ -1769,7 +1798,7 @@ DELETE FROM task_pending_ops WHERE task_type LIKE 'wiki:%';
 DELETE FROM task_dead_letters WHERE task_type LIKE 'wiki:%';
 ALTER TABLE doc_tree_nodes ADD COLUMN tree_tokens int;    -- token của cây con dạng mục lục (§6.5 bước 7); NULL với cây dựng trước 0016 thì tính lúc đọc
 
--- 0018_document_model.sql (§5.10, §6.9): bảng, field, phân loại, evidence
+-- 0019_document_model.sql (§5.10, §6.9): bảng, field, phân loại, evidence
 CREATE EXTENSION IF NOT EXISTS btree_gist;                -- EXCLUDE theo document_id + khoảng trang
 ALTER TABLE documents
   ADD COLUMN classify_status text NOT NULL DEFAULT 'skipped';  -- skipped (không có labels) | none (có labels, chưa ai yêu cầu) | pending|processing|done|failed
@@ -2155,7 +2184,7 @@ parser:
 index:
   section: { max_tokens: 1500 }
   keyword_engine: pg_fts            # pg_fts | paradedb
-  tree: { llm: true, concurrency: 4, page_tokens: 1500, min_node_tokens: 40, summary_words: 60, card_summary_words: 120, model: "" }   # dựng cây theo trang; llm: false chỉ cho dev/test (§6.5)
+  tree: { llm: true, min_node_tokens: 40, summary_words: 60, card_summary_words: 120, model: "" }   # cây dựng bằng code từ layout; llm chỉ cho thẻ tài liệu (§6.5)
 
 search:                             # luồng hỏi đáp duyệt cây (§6.6)
   model: ""                         # rỗng = llm.default_model; nên chọn model nhanh
@@ -2227,7 +2256,7 @@ fields:                             # Extracted Field (§6.9.3)
 | N32 | **Classification tuỳ chọn, không loại trừ.** Loại case có `labels` nhưng không bật `auto` → không có task `document:classify` nào sau index, `classify_status=none`, 0 lần gọi LLM; bật `auto` → prompt chỉ chứa dòng tiêu đề (không có dòng nội dung); file không có tiêu đề → không gọi LLM; `POST /classify` với `mode=pages` mới gửi dòng đầu trang. File 10 trang gộp 3 loại giấy tờ → 3 segment đúng khoảng trang (fake LLM); nhãn ngoài tập hoặc `at` bịa bị loại; confidence thấp → `unknown`; segment của người dùng giữ qua lần chạy lại; search, mục lục hồ sơ, cây và thẻ tài liệu **không đổi** giữa lúc có và không có segment; không tool/API search nào nhận tham số nhãn | integration test |
 | N34 | **Ô bảng với VLM.** Bảng có lưới TurboOCR và lưới VLM cùng kích thước → mọi ô có dòng OCR đều có bbox, text là text VLM; citation vào vị trí trong ô gộp giải về ô gốc. | `parser/assemble` unit test + integration test |
 | N37 | **Cây PageIndex nguyên khối.** File có cây `tree_tokens` ≤ `search.tree_token_budget`: bước 2 chọn node trong đúng 1 lần gọi, prompt chứa mọi node; `kb_document_tree` không `node_id` trả mọi node. Cây vượt ngân sách: node bị lược có `(+k mục, expand nX)` và `expand` trả đúng cây con | integration test |
-| N33 | Migration `0018` chạy trên DB có dữ liệu 0.7: thêm bảng mới; file cũ có `classify_status=skipped`, bảng cũ chưa có ô cho tới khi reparse (hoặc task `maintenance` dựng lại ô từ `page_blocks.html` + `page_lines`, không cần OCR lại) | migration test trên `bepaylot_test` |
+| N33 | Migration `0019` chạy trên DB có dữ liệu 0.7: thêm bảng mới; file cũ có `classify_status=skipped`, bảng cũ chưa có ô cho tới khi reparse (hoặc task `maintenance` dựng lại ô từ `page_blocks.html` + `page_lines`, không cần OCR lại) | migration test trên `bepaylot_test` |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2244,10 +2273,11 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P4** | `pdf_mode=auto`, DOCX/XLSX qua convert sang PDF, TIFF nhiều trang, ParadeDB tuỳ chọn, UI highlight | — | chưa làm |
 | **P5** | Case (§6.2, §8.1): migration `0013_cases.sql` + chuyển dữ liệu cũ; package `service/cases` + repository; nạp `configs/case_types`; upload theo `case_code`, chống trùng theo case; search/`DocumentInCase` theo `case_id`; session gắn `case_id` (thay `kb_ids`/`kb_filter` trong `internal/agent/knowledge.go`, `internal/tools/knowledge.go`, `handler/session_kb.go`); prompt `<case>`; đính kèm chat vào case; kiểm tra citation theo case; API §10.1, §10.5; frontend chọn case | N11, N13, N16–N18 | ✅ backend + agent xong (test tích hợp N13, N16–N18); chưa có: kiểm citation trước khi stream, frontend chọn case |
 | **P6** | LLM Wiki theo case (bản 0.5–0.9): ingest, lint, index wiki, tool `wiki_*`, UI wiki | — | đã làm, **bị gỡ ở P9** (U35) |
-| **P8** | Mô hình dữ liệu hồ sơ (§5.10, §6.9): migration `0018`; `ParsedTable` trong `parser/assemble` + lưu `page_tables`/`table_cells`; task `maintenance` dựng ô cho dữ liệu cũ; citation `b<k>`/`t<k>:r<i>c<j>` trong `/citations`, `kb_locate`; `service/docmodel` + `evidence_spans` + `CitationResolver` dùng chung cho search, tool và evidence; đánh giá lại evidence liên file khi xoá/reparse; `extracted_fields` + tool `kb_save_fields`/`kb_get_fields`/`kb_read_table`; `document:classify` tuỳ chọn (`auto`/API, chế độ `titles`/`pages`) + callback `document.classified`; API §10.7; UI: dải nhãn và bảng field (xác nhận/bác bỏ, tô sáng evidence) trên trình xem file | N29–N34 | chưa làm |
+| **P8** | Mô hình dữ liệu hồ sơ (§5.10, §6.9): migration `0019`; `ParsedTable` trong `parser/assemble` + lưu `page_tables`/`table_cells`; task `maintenance` dựng ô cho dữ liệu cũ; citation `b<k>`/`t<k>:r<i>c<j>` trong `/citations`, `kb_locate`; `service/docmodel` + `evidence_spans` + `CitationResolver` dùng chung cho search, tool và evidence; đánh giá lại evidence liên file khi xoá/reparse; `extracted_fields` + tool `kb_save_fields`/`kb_get_fields`/`kb_read_table`; `document:classify` tuỳ chọn (`auto`/API, chế độ `titles`/`pages`) + callback `document.classified`; API §10.7; UI: dải nhãn và bảng field (xác nhận/bác bỏ, tô sáng evidence) trên trình xem file | N29–N34 | chưa làm |
 | **P9** | Gỡ LLM Wiki, chỉ còn search duyệt cây (U35): migration `0016_drop_wiki.sql` (xoá bảng/cột wiki, thêm `doc_tree_nodes.tree_tokens`); xoá `service/wiki`, `configs/wiki_schemas`, route và tool `wiki_*`, task `wiki:*`, pool `wiki` → `enrich`, trạng thái `enriching`; search §6.6 (mục lục hồ sơ → cây nguyên khối → trang → dòng); `GET /cases/:id/toc` + tool `kb_case_toc`; `kb_document_tree` trả cả cây khi vừa ngân sách; mô tả tool nêu luồng duyệt cây; frontend: thay trang wiki/graph bằng Module 3 hiển thị theo cây (§7) | N19–N22, N37 | ✅ xong (27/09/2026): test tích hợp N16, N20–N22, N37 và test unit cây/mục lục; chạy đầu-cuối với LLM thật (§15.3). Pool `enrich` chưa có vì `document:classify` thuộc P8 |
 | **P10** | VLM gom vùng qua agent + ảnh trang + JSON trang (U36): `agent.Extract` (streaming trên `llm.providers`), adapter `container/vlm.go`, bỏ client HTTP của `parser/vlm`; gom nhóm class theo trang (ảnh ghép đánh số, marker `<<<k>>>`, đọc lại vùng thiếu), tiêu đề/bảng gọi riêng, `seal` gắn nhãn; `GET …/image` stream qua API; migration `0017_page_json.sql` (`raw`, `text_layer` jsonb) | — | ✅ xong (28/09/2026): unit test `parser/vlm`; chưa chạy test tích hợp DB và chưa đo token/lần gọi với model thật (§15.3) |
 | **P11** | VLM hai bước, mỗi trang một lần gọi (U38): bỏ gom vùng/ảnh ghép/marker (`parser/vlm/batch.go`); `page_prompt` kèm text OCR (`[?]` cho dòng confidence thấp, trần `context_max_chars`); `vlm/align.go` căn markdown với OCR cả trang, chia đoạn về vùng, tạo vùng cho dòng ngoài layout, bỏ đoạn không được xác nhận; `assemble/refine.go` chèn lại dòng OCR bị bỏ sót; raw mới (`call`, `markdown`, `align`); cấu hình §11 | — | ✅ xong (30/09/2026): unit test `parser/vlm`, `parser/assemble`, `go test ./...` qua; chưa chạy test tích hợp DB và chưa đo với olmOCR thật (§15.3) |
+| **P12** | Cây dựng bằng code, một cây cho cả case (U39): bỏ lần gọi LLM mỗi trang (`readPages`, `promptPageNodes`), node lấy từ nhóm heading của layout; migration `0018_case_tree.sql` + `IndexRepo.AppendToCaseTree`/`CaseTreeOrder`; `loadViews` sắp file theo cây hồ sơ; bỏ `index.tree.concurrency`, `page_tokens`. U40/U41: không có flow trong prompt, ref `d<n>`/`d<n>.n<k>` cố định theo cây hồ sơ và nhận ở mọi tool (`CaseRefs`), mô tả tool dạng khai báo, hit `kb_search` kèm `node`, `kb_case_toc` nạp nguyên cây của case khi vừa ngân sách, `kb_read_pages(node_id)`, `kb_search` của agent chỉ keyword | — | ✅ code xong (04/10/2026): `go test ./...` qua; `make test-db` qua (gồm `TestAddFileAppendsToCaseTree`, migration `0018`); chạy đầu-cuối với LLM local `qwythos-9b` + TurboOCR giả (tesseract), xem §15.3 |
 | **P7** | Đăng nhập như WeKnora (§10.6): migration `0015_auth.sql`, `service/auth` (bcrypt, JWT access/refresh + `auth_tokens`, OIDC), middleware Bearer JWT → API key, API `/v1/auth/*`, trang `/login` + hộp thoại Tài khoản trong `frontend/`, `cmd/seed -password` | N26–N28 | ✅ xong (test tích hợp N26–N27, chạy trình duyệt N28 với provider OIDC giả); chưa thử với provider OIDC thật |
 
 ---
@@ -2293,7 +2323,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Search duyệt cây (§6.6): mục lục hồ sơ → cây nguyên khối → trang của node → dòng, `GET /cases/:id/toc`, `?format=text` của cây, `tree_tokens` | `internal/application/service/index/{search_tree,treeview,search}.go`, migration `0016_drop_wiki.sql` |
 | Tool agent `kb_*` (`kb_case_toc`, `kb_document_tree` trả cả cây) theo `CaseScope`; session gắn `case_id`; section prompt `<case>` | `internal/tools/knowledge.go`, `internal/agent`, `internal/handler/session_case.go` |
 | Kiểm tra quy tắc module (§3.3) | `internal/archtest` |
-| Migrations `0006`–`0017` (`0018` mới có trong spec, P8) | `migrations/postgres` |
+| Migrations `0006`–`0018` (`0019` mới có trong spec, P8) | `migrations/postgres` |
 | Callback hoàn thành document (tuỳ chọn, retry + lưu trạng thái, §4.7) | `internal/webhook`, `internal/application/service/document/callback.go` |
 | Worker PDFium native (cgo, tag `pdfium_cgo`), Docker target `api` / `worker` | `cmd/pdfium-worker`, `deploy/Dockerfile` |
 | Tài liệu vận hành bàn giao OPN, script kiểm tra trạng thái, bộ SQL kiểm tra (U29) | `spec/van-hanh.md`, `spec/van-hanh/` |
@@ -2322,6 +2352,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 - **VLM (§5.9):** đã chạy thật với `allenai/olmocr-2-7b` qua LM Studio (`localhost:1234`) trên một trang dựng lại từ layout mẫu. Kết quả: 30 vùng, 0 lỗi, ≈ 59 s/trang ở `max_concurrency: 4`, 28 block được refine, 38/38 dòng VLM định vị được offset. Chưa chạy chung với TurboOCR thật và chưa đo trên bản scan thật.
 - **Chạy đầu-cuối (25/09/2026):** Postgres + Redis + MinIO (Docker), `role=all`, engine `turboocr_vlm`, VLM olmOCR-2-7B (LM Studio), LLM `inclusionai/ling-3.0-flash-fin:free` qua OpenRouter. TurboOCR không truy cập được, nên cả hai trang của một PDF scan đi nhánh `full_page` (≈ 70 s cho 2 trang). Cây mục lục dựng từ tiêu đề nhận diện được (Hợp đồng → Điều 1–4). Search `keyword` và `reasoning` (1 lần gọi LLM) trả đúng dòng bảng "Tiền thuê hằng tháng | 12.000.000" và dòng thời hạn thuê. Agent gọi `kb_list_documents` (lọc `ma_ho_so`), `kb_search`, `kb_read_pages` rồi trả lời có trích dẫn `p/l`. Model `inclusionai/ling-3.0-flash` (trả phí) chưa chạy được vì key hết hạn mức. Chế độ cả trang đọc kém hơn chế độ theo vùng (ví dụ "TÍNH" thay cho "TÌNH") vì ảnh bị thu về 1288 px.
 - **Chạy đầu-cuối bản 0.11 (27/09/2026):** server thật (`role=all`, queue in-process) trên DB riêng, LLM `qwen/qwen3.8-27b` qua Groq (`.env`). PDF 4 trang có text layer và bookmark vào case `RT112233` → `completed` ngay sau `index:tree` (không còn `enriching`); tóm tắt node do LLM thật viết. `GET /cases/:id/toc` ≈ 200 token. Search `reasoning` hai câu hỏi (đợt thanh toán 2 + tài khoản; thời gian bảo hành): mỗi câu **2 lần gọi LLM, ≈ 950 token input**, chỉ đọc đúng 1 trang của node được chọn, hit đúng dòng (`via=tree`). Agent chọn `kb_search` hoặc bắt đầu bằng `kb_case_toc` đúng luồng, nhưng câu trả lời cuối bị Groq trả 429 (hạn mức 7.000 token/phút: system prompt của agent ≈ 4.000 token). Trang `/cases` mở bằng trình duyệt: mục lục hồ sơ → cây → ảnh trang, không lỗi console.
+- **Bản 0.15 (U39–U41, 04/10/2026):** server thật trên DB riêng, LLM local `qwythos-9b` (LM Studio, context 32k; 8k không đủ cho system prompt + tool + cây), TurboOCR giả bằng tesseract `vie` với layout theo heuristic. Hai case, 5 PDF scan: cây dựng bằng code đúng (Điều 1–6 dưới tiêu đề hợp đồng), nối nhánh đúng thứ tự upload, cây của file cũ giữ nguyên ID node. 8/9 câu hỏi trả lời đúng có trích dẫn dòng; câu hỏi về case khác không lộ dữ liệu. Agent tự chọn đường: thường `kb_search` → `kb_read_pages(node_id)`, dùng `kb_case_toc`/`kb_document_tree` khi từ khoá không khớp. Lỗi còn lại phụ thuộc model (tính ngày lệch 1, đôi khi in `<tool_call>` dạng text).
 - **Bản 0.14 (U38, 30/09/2026):** unit test `parser/vlm` (một lần gọi mỗi trang, prompt có text OCR, chia markdown về vùng, chèn lại dòng bị bỏ sót, bỏ đoạn không được xác nhận, vùng cho dòng ngoài layout) và `parser/assemble`; `go test ./...` qua. Test mô phỏng 20 trang (`service/index`) đã sửa nhưng **chưa chạy** vì cần DB (Docker không chạy). **Chưa đo với olmOCR thật:** độ khớp (`align.coverage`), số đoạn bị bỏ, token mỗi trang và việc model có chép lỗi OCR hay không khi prompt có text OCR (olmOCR-2 được fine-tune với prompt chỉ có ảnh). Kiểm bằng `TestLiveVLM` và raw của trang thật.
 - **Bản 0.12 (U36, 28/09/2026, cách gom vùng đã thay ở 0.14):** unit test `parser/vlm` (gom nhóm, con dấu, marker, đọc lại vùng thiếu, ảnh ghép) và toàn bộ `go test ./...` qua. **Chưa kiểm:** test tích hợp DB (`make test-db`, cần Docker) cho migration `0017` và cột `raw`/`text_layer`; chưa đo với model thật số lần gọi/token mỗi trang và độ tuân thủ marker `<<<k>>>` của olmOCR (model fine-tune theo prompt riêng, có thể bỏ marker → rơi về đọc lại từng vùng); chưa mở trình duyệt kiểm ảnh trang sau khi đổi sang stream.
 - **LLM thật trên tập lớn:** chưa đo N15 và N19 (recall@5, token trung bình) trên bộ ≥ 30 câu hỏi.
@@ -2354,7 +2385,7 @@ Mục này gom các quy tắc dễ làm sai khi code, rải ở nhiều mục ph
 
 ### 16.2 LLM và chi phí
 
-- **LLM chỉ ở hai chỗ**: tóm tắt node cây lúc index (§6.5), và duyệt cây + chỉ ra dòng trả lời lúc hỏi (§6.6). Không có bước LLM nào khác chạy nền trên toàn file (không wiki, không trích xuất entity). Phân loại là ngoại lệ tuỳ chọn, mặc định tắt (dưới).
+- **LLM chỉ ở hai chỗ**: thẻ tài liệu lúc index (§6.5; cây dựng bằng code), và duyệt cây + chỉ ra dòng trả lời lúc hỏi (§6.6). Không có bước LLM nào khác chạy nền trên toàn file (không wiki, không trích xuất entity). Phân loại là ngoại lệ tuỳ chọn, mặc định tắt (dưới).
 - **Chỉ nạp trang của node đã chọn.** Không nạp toàn văn file trừ khi file ≤ `search.full_doc_token_budget`; không nạp node vượt `search.node_read_budget` mà phải `expand` (§6.6 bước 3).
 - PageIndex: cây vừa `search.tree_token_budget` thì luôn nạp **nguyên khối** (search bước 2, `kb_document_tree`); chỉ cắt theo cấp khi vượt ngân sách. Không đưa cây từng cấp một khi đã vừa ngân sách (§6.5).
 - Mục lục hồ sơ dựng bằng code khi đọc, không lưu, không gọi LLM (§6.6).

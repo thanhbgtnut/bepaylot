@@ -60,10 +60,14 @@ type SectionReader interface {
 type Searcher interface {
 	Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
 	// CaseTOC renders the table of contents of a case (§6.6 step 2): cards
-	// and first tree branches of its searchable documents, narrowed by
-	// metadata; expand lists document refs (d<n>) shown with their whole
-	// tree instead of the first branches.
+	// of its searchable documents, narrowed by metadata, with every tree
+	// whole when they fit search.tree_token_budget together, otherwise the
+	// first branches; expand lists document refs (d<n>) shown with their
+	// whole tree.
 	CaseTOC(ctx context.Context, owner, caseID uuid.UUID, filter types.MetadataFilter, expand []string) (*types.CaseTOC, error)
+	// CaseRefs maps the refs d<n> of the case's documents (their branch in
+	// the case tree) to document ids.
+	CaseRefs(ctx context.Context, owner, caseID uuid.UUID) (map[string]uuid.UUID, error)
 	// FindInDocument searches one document, limited to pages from..to when
 	// they are > 0.
 	FindInDocument(ctx context.Context, owner, doc uuid.UUID, query, mode string, from, to int) ([]types.PageSearchHit, error)

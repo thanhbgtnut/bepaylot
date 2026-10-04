@@ -36,6 +36,9 @@ type assembler struct {
 	failed       bool
 	failErrType  string
 	failErrMsg   string
+
+	// citeRefs maps the case refs d<n> to document ids for citeRefs.
+	citeRefs map[string]string
 }
 
 type openBlock struct {
@@ -47,6 +50,7 @@ type openBlock struct {
 	text      strings.Builder
 	args      strings.Builder
 	guard     *textGuard // text blocks only: see textGuard
+	cite      *citeRefs  // text blocks only: after guard
 }
 
 type toolRef struct {
@@ -86,7 +90,7 @@ func (a *assembler) modelChunk(m *schema.Message) {
 	}
 	if m.Content != "" {
 		a.ensureLocked("text")
-		a.textLocked(a.open.guard.feed(m.Content))
+		a.textLocked(a.open.cite.feed(a.open.guard.feed(m.Content)))
 	}
 	for _, tc := range m.ToolCalls {
 		idx := 0
@@ -250,6 +254,13 @@ func (a *assembler) nextOrder() int {
 	return i
 }
 
+// setCiteRefs sets the case refs used to rewrite citations (see citeRefs).
+func (a *assembler) setCiteRefs(refs map[string]string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.citeRefs = refs
+}
+
 func (a *assembler) ensureLocked(typ string) {
 	if a.open != nil && a.open.typ == typ {
 		return
@@ -257,7 +268,7 @@ func (a *assembler) ensureLocked(typ string) {
 	a.closeLocked()
 	a.open = &openBlock{index: a.nextSSE(), typ: typ}
 	if typ == "text" {
-		a.open.guard = &textGuard{}
+		a.open.guard, a.open.cite = &textGuard{}, &citeRefs{refs: a.citeRefs}
 	}
 	a.emit(events.Event{Kind: events.KindContentBlockStart, Index: a.open.index, BlockType: typ})
 }
@@ -280,7 +291,7 @@ func (a *assembler) closeLocked() {
 	if ob.typ == "text" {
 		// Release anything the guard was still holding (e.g. a JSON block) before
 		// the block is sealed.
-		a.textLocked(ob.guard.flush())
+		a.textLocked(ob.cite.feed(ob.guard.flush()) + ob.cite.flush())
 		a.jsonFixes += ob.guard.fixes
 	}
 	a.open = nil

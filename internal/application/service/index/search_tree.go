@@ -35,11 +35,70 @@ func (v *docView) fullTokens() int {
 	return v.tree.treeTokens(v.tree.root.ID)
 }
 
-// loadViews loads the trees of docs and names them d1, d2… in order.
+// caseRefs numbers the documents of a case by their branch in the case
+// tree: d<n> is the n-th file added. Filters and other cases never change
+// it, and a new file never renames the others.
+func (s *Service) caseRefs(ctx context.Context, caseID uuid.UUID) (map[uuid.UUID]int, error) {
+	ids, err := s.st.Index.CaseTreeDocs(ctx, caseID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]int, len(ids))
+	for i, id := range ids {
+		out[id] = i + 1
+	}
+	return out, nil
+}
+
+// CaseRefs implements interfaces.Searcher: the refs d<n> of a case's
+// documents (§6.5 step 8).
+func (s *Service) CaseRefs(ctx context.Context, owner, caseID uuid.UUID) (map[string]uuid.UUID, error) {
+	if _, err := s.cases.GetCaseOwned(ctx, owner, caseID); err != nil {
+		return nil, ErrNotFound
+	}
+	refs, err := s.caseRefs(ctx, caseID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]uuid.UUID, len(refs))
+	for id, n := range refs {
+		out[fmt.Sprintf("d%d", n)] = id
+	}
+	return out, nil
+}
+
+// loadViews loads the trees of docs (all of one case) in case tree order,
+// named by their case refs d<n>; files not in the case tree yet come last,
+// by upload time, numbered after the others.
 func (s *Service) loadViews(ctx context.Context, docs []types.Document) ([]*docView, error) {
+	if len(docs) == 0 {
+		return nil, nil
+	}
+	refs, err := s.caseRefs(ctx, docs[0].CaseID)
+	if err != nil {
+		return nil, err
+	}
+	docs = append([]types.Document(nil), docs...)
+	sort.SliceStable(docs, func(i, j int) bool {
+		a, aok := refs[docs[i].ID]
+		b, bok := refs[docs[j].ID]
+		if aok != bok {
+			return aok
+		}
+		if aok {
+			return a < b
+		}
+		return docs[i].CreatedAt.Before(docs[j].CreatedAt)
+	})
+	next := len(refs)
 	out := make([]*docView, len(docs))
 	for i, d := range docs {
-		v := &docView{ref: fmt.Sprintf("d%d", i+1), doc: d}
+		n, ok := refs[d.ID]
+		if !ok {
+			next++
+			n = next
+		}
+		v := &docView{ref: fmt.Sprintf("d%d", n), doc: d}
 		nodes, err := s.st.Index.Tree(ctx, d.ID, d.Gen)
 		if err != nil {
 			return nil, err
@@ -611,7 +670,9 @@ func dedupHits(hits []types.SearchHit) []types.SearchHit {
 }
 
 // CaseTOC implements interfaces.Searcher: the case table of contents built
-// from stored cards and trees, without the LLM (§6.6 step 2, §10.3).
+// from stored cards and trees, without the LLM (§6.6 step 2, §10.3). With
+// nothing to expand, every tree is shown whole when they fit
+// search.tree_token_budget together.
 func (s *Service) CaseTOC(ctx context.Context, owner, caseID uuid.UUID, filter types.MetadataFilter, expand []string) (*types.CaseTOC, error) {
 	c, err := s.cases.GetCaseOwned(ctx, owner, caseID)
 	if err != nil {
@@ -653,7 +714,21 @@ func (s *Service) CaseTOC(ctx context.Context, owner, caseID uuid.UUID, filter t
 	for _, e := range expand {
 		want[strings.TrimSpace(e)] = true
 	}
-	out.Text, out.Truncated = tocText(c, views, want, s.cfg.Search.CaseTOCBudget, s.cfg.Search.TreeTokenBudget)
+	budget := s.cfg.Search.CaseTOCBudget
+	if len(want) == 0 {
+		// Every tree whole when they fit together, as in search (§6.6).
+		total := 0
+		for _, v := range views {
+			total += v.fullTokens()
+		}
+		if total <= s.cfg.Search.TreeTokenBudget {
+			for _, v := range views {
+				want[v.ref] = true
+			}
+			budget = 1 << 30
+		}
+	}
+	out.Text, out.Truncated = tocText(c, views, want, budget, s.cfg.Search.TreeTokenBudget)
 	out.TokenCount = textutil.EstimateTokens(out.Text)
 	return out, nil
 }

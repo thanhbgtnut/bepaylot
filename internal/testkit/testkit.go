@@ -255,7 +255,6 @@ func NewScriptLLM() *ScriptLLM {
 var (
 	lineRe     = regexp.MustCompile(`\[L(\d+)\] (.*)`)
 	pageRe     = regexp.MustCompile(`<page n="(\d+)" doc="(d\d+)"`)
-	groupRe    = regexp.MustCompile(`<g id="(g\d+)"(?: heading="([^"]*)" level="(\d+)")?>`)
 	questionRe = regexp.MustCompile(`Question: (.*)`)
 	fileRefRe  = regexp.MustCompile(`(?m)^\[(d\d+)\] `)            // file lines of the case TOC
 	nodeLineRe = regexp.MustCompile(`\[(d\d+\.n\d+)\] ([^\[\n]*)`) // tree nodes (one or two per line)
@@ -275,20 +274,6 @@ func (s *ScriptLLM) CompleteJSON(_ context.Context, system, user string, out any
 	kind := "other"
 	var reply any
 	switch {
-	case strings.Contains(system, "one page at a time"):
-		kind = "page_nodes"
-		lead := ""
-		var nodes []map[string]any
-		for _, x := range groupRe.FindAllStringSubmatch(user, -1) {
-			if x[2] == "" {
-				lead = "Phần tiếp nối"
-				continue
-			}
-			var lvl int
-			fmt.Sscan(x[3], &lvl)
-			nodes = append(nodes, map[string]any{"from": x[1], "title": x[2], "level": lvl, "summary": "Tóm tắt " + x[2]})
-		}
-		reply = map[string]any{"lead": lead, "nodes": nodes}
 	case strings.Contains(system, "catalogue card"):
 		kind = "card"
 		reply = map[string]any{"title": "Tài liệu kiểm thử", "summary": "Tài liệu dùng cho kiểm thử"}

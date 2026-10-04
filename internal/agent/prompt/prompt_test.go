@@ -114,8 +114,10 @@ func TestToolGuidanceStatesTheStepBudget(t *testing.T) {
 func TestCaseSection(t *testing.T) {
 	out := Build(TurnContext{Case: &CaseInfo{ID: "c1", Code: "RT112233", TypeTitle: "Hồ sơ thanh toán", Status: "open",
 		Documents: map[string]int{"completed": 3, "parsing": 1},
-		Fields:    []MetadataField{{Key: "loai_giay_to", Type: "string", Description: "Loại giấy tờ"}}}})
-	for _, want := range []string{"<case>", "RT112233", "Hồ sơ thanh toán", "Files: 4", "3 completed", "loai_giay_to (string): Loại giấy tờ", "<citations>"} {
+		Fields:    []MetadataField{{Key: "loai_giay_to", Type: "string", Description: "Loại giấy tờ"}},
+		Tree:      "<case code=\"RT112233\">\n[d1] hd.pdf (3 tr.)\n[d1.n1] Điều 1 (tr. 1)\n</case>", Pending: []string{"unc.pdf (parsing)"}}})
+	for _, want := range []string{"<case>", "RT112233", "Hồ sơ thanh toán", "Files: 4", "3 completed", "loai_giay_to (string): Loại giấy tờ",
+		"<case_tree>", "[d1.n1] Điều 1 (tr. 1)", "unc.pdf (parsing)", "<citations>"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, out)
 		}
@@ -124,6 +126,9 @@ func TestCaseSection(t *testing.T) {
 		if strings.Contains(out, banned) {
 			t.Fatalf("prompt still mentions %q", banned)
 		}
+	}
+	if strings.Contains(Build(TurnContext{Case: &CaseInfo{Code: "X"}}), "<case_tree>") {
+		t.Fatal("empty case tree rendered")
 	}
 	if strings.Contains(Build(TurnContext{}), "<case>") {
 		t.Fatal("case section rendered without a case")

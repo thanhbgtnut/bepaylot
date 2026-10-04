@@ -20,6 +20,12 @@ type CaseInfo struct {
 	// Documents counts files by status.
 	Documents map[string]int
 	Fields    []MetadataField
+	// Tree is the case tree as the LLM reads it (§6.5, §6.6): files with
+	// their tables of contents. Pending lists files without a tree yet.
+	Tree    string
+	Pending []string
+	// Refs maps the case refs d<n> to document ids.
+	Refs map[string]string
 }
 
 // MetadataField is a metadata key the model can filter by.
@@ -92,8 +98,18 @@ func sectionCase(tc TurnContext) string {
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString(`</case>
-<citations>
+	b.WriteString("</case>\n")
+	if strings.TrimSpace(c.Tree) != "" {
+		b.WriteString(`<case_tree>
+The tree of this case's files, loaded for this turn: one line per file [d<n>] file (pages) {metadata} — summary, then its nodes [d<n>.n<k>] title (tr. pages) — summary, indented by level; "+" or "(+k mục, expand …)" marks nodes not shown. Node summaries are the first words of the node, not its text. The refs d<n> and d<n>.n<k> are accepted by every kb_* tool.
+`)
+		b.WriteString(strings.TrimSpace(c.Tree) + "\n")
+		if len(c.Pending) > 0 {
+			b.WriteString("Files without a tree yet: " + strings.Join(c.Pending, "; ") + "\n")
+		}
+		b.WriteString("</case_tree>\n")
+	}
+	b.WriteString(`<citations>
 - Every statement taken from a file ends with its citation id in brackets, e.g. [doc:<id>:p3:l5-7], exactly as returned by the tools.
 - Never invent citation ids; if the tools found nothing, say so.
 </citations>`)

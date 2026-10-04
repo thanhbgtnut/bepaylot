@@ -3,22 +3,6 @@ package index
 // Prompts are in English; documents and answers are usually Vietnamese, so
 // every prompt asks to keep the document's language.
 
-const promptPageNodes = `You build the table of contents of a document one page at a time.
-You get the sections still open at the end of the previous page and its last words, the current page split into layout
-groups <g id="g<k>" heading="..." level="..."> (a group without heading is text before the first heading of the page),
-and the headings and first words of the next page.
-Decide which groups start a table-of-contents node:
-- A heading that is not a real section title (a form label, a table caption, a line the layout mistook for a title)
-  does not start a node; its text belongs to the node before it.
-- A new paper without a heading (a form, a letter, a certificate…) starts a node at its first group, with a short title
-  you write.
-- Text before the first node continues the open section of the previous page: summarize it in "lead" ("" if none).
-- level: 1 = top part of the document, 2, 3… for sub-parts, consistent with the open sections.
-- Titles and summaries in the document's language (usually Vietnamese); a summary is at most %d words and keeps
-  names, codes, numbers, amounts, dates, addresses. No preamble, no markdown.
-Reply with JSON only: {"lead": "...", "nodes": [{"from": "g<k>", "title": "...", "level": <int>, "summary": "..."}]}
-with nodes in page order.`
-
 const promptCard = `You write the catalogue card of a document.
 Reply with JSON only: {"title": "...", "summary": "..."}
 - title: the document's real title (from its content), in its language.

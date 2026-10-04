@@ -24,12 +24,32 @@ type fakeSearcher struct {
 	counted uuid.UUID
 	toc     uuid.UUID
 	read    int
+	readAt  [2]int
+	located string
 	pages   [2]int
 }
 
 func (f *fakeSearcher) Search(_ context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	f.got = req
-	return &types.SearchResponse{Hits: []types.SearchHit{{CitationID: "doc:x:p1:l1-1", FileName: "a.pdf", PageNo: 1, Quote: "q", Via: "tree"}}}, nil
+	return &types.SearchResponse{Hits: []types.SearchHit{{CitationID: "doc:x:p1:l1-1", FileName: "a.pdf", DocumentID: f.firstAllowed(), PageNo: 5, Quote: "q", Via: "tree"}}}, nil
+}
+
+func (f *fakeSearcher) firstAllowed() uuid.UUID {
+	for id := range f.allowed {
+		return id
+	}
+	return uuid.Nil
+}
+
+// CaseRefs names the in-case document d1; other cases' files have no ref.
+func (f *fakeSearcher) CaseRefs(_ context.Context, _, caseID uuid.UUID) (map[string]uuid.UUID, error) {
+	out := map[string]uuid.UUID{}
+	if caseID == f.caseID {
+		for id := range f.allowed {
+			out["d1"] = id
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSearcher) DocumentInCase(_ context.Context, _, doc, caseID uuid.UUID) (bool, error) {
@@ -40,9 +60,18 @@ func (f *fakeSearcher) CaseAlive(_ context.Context, _, caseID uuid.UUID) bool {
 	return f.alive && caseID == f.caseID
 }
 
-func (f *fakeSearcher) ReadPages(context.Context, uuid.UUID, uuid.UUID, int, int) (string, error) {
+func (f *fakeSearcher) ReadPages(_ context.Context, _, _ uuid.UUID, from, to int) (string, error) {
 	f.read++
+	f.readAt = [2]int{from, to}
 	return "[L1] text", nil
+}
+
+func (f *fakeSearcher) DocumentTree(context.Context, uuid.UUID, uuid.UUID) ([]types.TreeNode, error) {
+	root, n4 := uuid.New(), uuid.New()
+	return []types.TreeNode{{ID: root, ShortID: "n0", PageStart: 1, PageEnd: 30},
+		{ShortID: "n3", ParentID: &root, Level: 1, PageStart: 4, PageEnd: 6},
+		{ID: n4, ShortID: "n4", ParentID: &root, Level: 1, PageStart: 7, PageEnd: 25},
+		{ShortID: "n5", ParentID: &n4, Level: 2, Title: "Điều 5", PageStart: 7, PageEnd: 12}}, nil
 }
 
 func (f *fakeSearcher) PageOverview(context.Context, uuid.UUID, uuid.UUID, int, int) ([]types.PageOverview, error) {
@@ -65,6 +94,7 @@ func (f *fakeSearcher) CaseTOC(_ context.Context, _, caseID uuid.UUID, _ types.M
 }
 
 func (f *fakeSearcher) Locate(_ context.Context, _ uuid.UUID, c string) ([]types.SearchHit, error) {
+	f.located = c
 	id, _ := uuid.Parse(strings.Split(c, ":")[1])
 	return []types.SearchHit{{DocumentID: id, CitationID: c}}, nil
 }
@@ -116,12 +146,15 @@ func TestCaseToolsStayInCase(t *testing.T) {
 	owner := uuid.New()
 	ctx := WithCaseScope(context.Background(), CaseScope{Owner: owner, CaseID: caseA})
 
-	out, err := invoke(t, ctx, s, "kb_search", `{"query":"chủ hộ","page_from":2,"metadata":{"loai":"GCN"},"kb_ids":["`+uuid.NewString()+`"],"case_ids":["`+uuid.NewString()+`"]}`)
+	out, err := invoke(t, ctx, s, "kb_search", `{"query":"chủ hộ","mode":"reasoning","page_from":2,"metadata":{"loai":"GCN"},"kb_ids":["`+uuid.NewString()+`"],"case_ids":["`+uuid.NewString()+`"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fs.got.OwnerID != owner || len(fs.got.CaseIDs) != 1 || fs.got.CaseIDs[0] != caseA || len(fs.got.KBIDs) != 0 {
 		t.Fatalf("search must be limited to the session's case: %+v", fs.got)
+	}
+	if fs.got.Mode != types.SearchKeyword {
+		t.Fatalf("the agent's kb_search must be keyword only, got %q", fs.got.Mode)
 	}
 	if fs.got.PageFrom != 2 || fs.got.Metadata["loai"] != "GCN" {
 		t.Fatalf("filters not passed: %+v", fs.got)
@@ -129,7 +162,7 @@ func TestCaseToolsStayInCase(t *testing.T) {
 	var res struct {
 		Hits []kbHit `json:"hits"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Hits) != 1 || res.Hits[0].CitationID == "" || res.Hits[0].Via != "tree" {
+	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Hits) != 1 || res.Hits[0].CitationID == "" || res.Hits[0].Node != "n3" || res.Hits[0].Ref != "d1.n3" {
 		t.Fatalf("result = %s", out)
 	}
 	if _, err := invoke(t, ctx, s, "kb_list_documents", `{}`); err != nil || fs.listed != caseA {
@@ -157,6 +190,37 @@ func TestCaseToolsStayInCase(t *testing.T) {
 	if fs.read != 1 {
 		t.Fatal("a file of another case was read")
 	}
+	// A node chosen on the tree is read by its page range (§6.6 step 3).
+	if _, err := invoke(t, ctx, s, "kb_read_pages", `{"document_id":"`+in.String()+`","node_id":"d1.n3"}`); err != nil || fs.readAt != [2]int{4, 6} {
+		t.Fatalf("read node n3 = %v %v", fs.readAt, err)
+	}
+	big, err := invoke(t, ctx, s, "kb_read_pages", `{"document_id":"`+in.String()+`","node_id":"n4"}`)
+	if err != nil || fs.readAt != [2]int{7, 25} || !strings.Contains(big, "n5 Điều 5 (tr. 7–12)") {
+		t.Fatalf("read big node n4 = %v %s %v", fs.readAt, big, err)
+	}
+	if _, err := invoke(t, ctx, s, "kb_read_pages", `{"document_id":"`+in.String()+`","node_id":"n99"}`); err == nil {
+		t.Fatal("an unknown node must be refused")
+	}
+	// Refs of the case tree work wherever a document is taken (§6.5 step 8).
+	if _, err := invoke(t, ctx, s, "kb_read_pages", `{"node_id":"d1.n3"}`); err != nil || fs.readAt != [2]int{4, 6} {
+		t.Fatalf("read by ref d1.n3 = %v %v", fs.readAt, err)
+	}
+	fs.readAt = [2]int{}
+	if _, err := invoke(t, ctx, s, "kb_read_pages", `{"document_id":"d1.n3"}`); err != nil || fs.readAt != [2]int{4, 6} {
+		t.Fatalf("node ref as document_id = %v %v", fs.readAt, err)
+	}
+	if _, err := invoke(t, ctx, s, "kb_search", `{"query":"x","document_ids":["d1"]}`); err != nil || len(fs.got.DocumentIDs) != 1 || fs.got.DocumentIDs[0] != in {
+		t.Fatalf("search by ref = %+v %v", fs.got.DocumentIDs, err)
+	}
+	for _, args := range []string{`{"node_id":"d9.n1"}`, `{"document_id":"d9","page_from":1}`} {
+		if _, err := invoke(t, ctx, s, "kb_read_pages", args); err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("unknown ref %s: err = %v", args, err)
+		}
+	}
+	if _, err := invoke(t, ctx, s, "kb_locate", `{"citation_id":"doc:d1.n3:p5:l1-2"}`); err != nil || fs.located != "doc:"+in.String()+":p5:l1-2" {
+		t.Fatalf("locate by ref citation = %q %v", fs.located, err)
+	}
+	fs.read = 1
 	if _, err := invoke(t, ctx, s, "kb_find_in_document", `{"document_id":"`+in.String()+`","query":"so","page_from":2,"page_to":4}`); err != nil || fs.pages != [2]int{2, 4} {
 		t.Fatalf("find page range = %v %v", fs.pages, err)
 	}

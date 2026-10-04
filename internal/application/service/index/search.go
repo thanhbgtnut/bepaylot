@@ -722,7 +722,23 @@ func (s *Service) ListDocuments(ctx context.Context, owner, caseID uuid.UUID, fi
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadRequest, err)
 	}
-	return briefs(docs), nil
+	refs, err := s.caseRefs(ctx, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := briefs(docs)
+	for i := range out {
+		if n, ok := refs[out[i].ID]; ok {
+			out[i].Ref = fmt.Sprintf("d%d", n)
+		}
+	}
+	// Case tree order; files without a tree yet last, newest first as listed.
+	sort.SliceStable(out, func(i, j int) bool {
+		a, aok := refs[out[i].ID]
+		b, bok := refs[out[j].ID]
+		return aok && (!bok || a < b)
+	})
+	return out, nil
 }
 
 func (s *Service) caseSchema(ctx context.Context, c types.Case) *types.MetadataSchema {

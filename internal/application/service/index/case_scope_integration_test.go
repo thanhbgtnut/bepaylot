@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -107,5 +108,53 @@ func TestSearchNeverLeavesTheCase(t *testing.T) {
 	}
 	if toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, caseB.ID, nil, nil); err != nil || len(toc.Documents) != 1 || toc.Documents[0].DocumentID != b {
 		t.Fatalf("toc of B = %+v %v", toc, err)
+	}
+}
+
+// A file added to a case is appended to the case tree: the trees of the
+// files already there are kept as they are and keep their refs (§6.5).
+func TestAddFileAppendsToCaseTree(t *testing.T) {
+	h := testkit.New(t)
+	kb := h.KB(types.KBConfig{}, nil)
+	first := h.UploadTo(kb.ID, "RT-T", "a.pdf", nil, []pdftest.Page{{"Hop dong thue kho", "Tien thue 12000000"}})
+	h.Drain()
+	d, err := h.Store.Documents.Get(h.Ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := h.Index.Tree(h.Ctx, first, d.Gen)
+	if err != nil || len(before) == 0 {
+		t.Fatalf("tree of a.pdf = %+v %v", before, err)
+	}
+
+	second := h.UploadTo(kb.ID, "RT-T", "b.pdf", map[string]any{"loai": "PL"}, []pdftest.Page{{"Phu luc hop dong", "Tien coc 5000000"}})
+	// A file of another case of the same KB never joins RT-T's tree.
+	other := h.UploadTo(kb.ID, "RT-U", "c.pdf", nil, []pdftest.Page{{"Hop dong thue kho", "Tien thue 12000000"}})
+	h.Drain()
+	after, err := h.Index.Tree(h.Ctx, first, d.Gen)
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("tree of a.pdf after adding b.pdf = %+v %v", after, err)
+	}
+	for i := range before {
+		if after[i].ID != before[i].ID {
+			t.Fatalf("a.pdf's tree was rebuilt: node %d %s → %s", i, before[i].ID, after[i].ID)
+		}
+	}
+	toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, h.Case(kb.ID, "RT-T").ID, nil, nil)
+	if err != nil || len(toc.Documents) != 2 || toc.Documents[0].DocumentID != first || toc.Documents[0].Ref != "d1" ||
+		toc.Documents[1].DocumentID != second || toc.Documents[1].Ref != "d2" {
+		t.Fatalf("case tree = %+v %v", toc, err)
+	}
+	if strings.Contains(toc.Text, "c.pdf") {
+		t.Fatalf("RT-T's tree shows a file of RT-U: %s", toc.Text)
+	}
+	// A metadata filter narrows the files but keeps their refs.
+	if toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, h.Case(kb.ID, "RT-T").ID, types.MetadataFilter{"loai": "PL"}, nil); err != nil ||
+		len(toc.Documents) != 1 || toc.Documents[0].DocumentID != second || toc.Documents[0].Ref != "d2" {
+		t.Fatalf("filtered case tree = %+v %v", toc, err)
+	}
+	if toc, err := h.Index.CaseTOC(h.Ctx, h.Owner.ID, h.Case(kb.ID, "RT-U").ID, nil, nil); err != nil || len(toc.Documents) != 1 ||
+		toc.Documents[0].DocumentID != other || toc.Documents[0].Ref != "d1" {
+		t.Fatalf("RT-U's tree = %+v %v", toc, err)
 	}
 }

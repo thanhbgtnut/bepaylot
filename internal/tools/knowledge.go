@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -65,17 +66,72 @@ func (s CaseScope) checkDoc(ctx context.Context, searcher interfaces.Searcher, i
 	return nil
 }
 
-// docArg parses and scope-checks a document id argument.
+// docRef matches a document ref of the case tree, optionally with a node:
+// d2 or d2.n5.
+var docRef = regexp.MustCompile(`^(d\d+)(?:\.(n\d+))?$`)
+
+// refCitation is a citation id written with a case ref: doc:d2:p1:l3 or
+// doc:d2.n5:p1:l3.
+var refCitation = regexp.MustCompile(`^doc:(d\d+)(?:\.n\d+)?(:p.*)$`)
+
+// resolveDoc turns a document id or a case ref (d<n>, d<n>.n<k>) into a
+// document id. Refs are looked up in the session's case only.
+func (s CaseScope) resolveDoc(ctx context.Context, searcher interfaces.Searcher, raw string) (uuid.UUID, error) {
+	raw = strings.TrimSpace(raw)
+	if m := docRef.FindStringSubmatch(raw); m != nil {
+		refs, err := searcher.CaseRefs(ctx, s.Owner, s.CaseID)
+		if err != nil {
+			return uuid.Nil, s.alive(ctx, searcher, err)
+		}
+		if id, ok := refs[m[1]]; ok {
+			return id, nil
+		}
+		return uuid.Nil, fmt.Errorf("document %s not found", raw)
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("document %s not found", raw)
+	}
+	return id, nil
+}
+
+// docArg resolves and scope-checks a document argument (id or ref).
 func docArg(ctx context.Context, searcher interfaces.Searcher, raw string) (CaseScope, uuid.UUID, error) {
 	sc, err := caseScope(ctx)
 	if err != nil {
 		return sc, uuid.Nil, err
 	}
-	id, err := uuid.Parse(strings.TrimSpace(raw))
+	id, err := sc.resolveDoc(ctx, searcher, raw)
 	if err != nil {
-		return sc, uuid.Nil, fmt.Errorf("document %s not found", strings.TrimSpace(raw))
+		return sc, uuid.Nil, err
 	}
 	return sc, id, sc.checkDoc(ctx, searcher, id)
+}
+
+// nodeArg splits a node argument: "d1.n3" gives the document ref d1 (used
+// when document is empty) and n3. A node ref given as the document
+// (document "d1.n3", no node) is that node.
+func nodeArg(document, node string) (string, string) {
+	node = strings.TrimSpace(node)
+	if m := docRef.FindStringSubmatch(node); m != nil && m[2] != "" {
+		if strings.TrimSpace(document) == "" {
+			document = m[1]
+		}
+		return document, m[2]
+	}
+	if m := docRef.FindStringSubmatch(strings.TrimSpace(document)); m != nil && m[2] != "" && node == "" {
+		return m[1], m[2]
+	}
+	return document, node
+}
+
+// refsByID inverts the case refs.
+func refsByID(refs map[string]uuid.UUID) map[uuid.UUID]string {
+	out := make(map[uuid.UUID]string, len(refs))
+	for r, id := range refs {
+		out[id] = r
+	}
+	return out
 }
 
 // SetKnowledgeTools builds the case tools (§8.2): kb_* over the documents of
@@ -112,9 +168,8 @@ func (s *Session) EnableKnowledge() {
 
 type kbSearchArgs struct {
 	Query       string         `json:"query" jsonschema:"required" jsonschema_description:"The question or keywords to find in the case's files."`
-	DocumentIDs []string       `json:"document_ids,omitempty" jsonschema_description:"Restrict to these document ids of the case."`
+	DocumentIDs []string       `json:"document_ids,omitempty" jsonschema_description:"Restrict to these documents of the case (document ids or refs d<n>)."`
 	Metadata    map[string]any `json:"metadata,omitempty" jsonschema_description:"Metadata filter on the case's files, e.g. {\"loai_giay_to\": \"HOP_DONG\"} or {\"ngay_nop\": {\"gte\": \"2026-01-01\"}}. Operators: eq, in, prefix, gte, gt, lte, lt, exists."`
-	Mode        string         `json:"mode,omitempty" jsonschema:"enum=reasoning,enum=keyword" jsonschema_description:"reasoning (default: the server walks the case TOC and the trees, reads the chosen pages and returns the lines) or keyword (fast exact terms, codes, amounts)."`
 	PageFrom    int            `json:"page_from,omitempty" jsonschema_description:"Only pages from this page number (inclusive)."`
 	PageTo      int            `json:"page_to,omitempty" jsonschema_description:"Only pages up to this page number (inclusive)."`
 	TopK        int            `json:"top_k,omitempty"`
@@ -127,12 +182,15 @@ type kbHit struct {
 	Page       int            `json:"page"`
 	Quote      string         `json:"quote"`
 	Section    string         `json:"section,omitempty"`
+	Node       string         `json:"node,omitempty"`
+	Ref        string         `json:"ref,omitempty"`
 	Via        string         `json:"via,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 	Reason     string         `json:"reason,omitempty"`
 }
 
 type docBrief struct {
+	Ref        string         `json:"ref,omitempty"`
 	DocumentID string         `json:"document_id"`
 	File       string         `json:"file"`
 	Title      string         `json:"title,omitempty"`
@@ -145,18 +203,18 @@ type docBrief struct {
 func toBriefs(ds []types.DocumentBrief) []docBrief {
 	out := make([]docBrief, len(ds))
 	for i, d := range ds {
-		out[i] = docBrief{DocumentID: d.ID.String(), File: d.FileName, Title: d.Title, Summary: d.Summary, Pages: d.PageCount, Status: d.Status,
+		out[i] = docBrief{Ref: d.Ref, DocumentID: d.ID.String(), File: d.FileName, Title: d.Title, Summary: d.Summary, Pages: d.PageCount, Status: d.Status,
 			Metadata: d.Metadata}
 	}
 	return out
 }
 
-func parseIDs(raw []string) ([]uuid.UUID, error) {
+func (s CaseScope) parseIDs(ctx context.Context, searcher interfaces.Searcher, raw []string) ([]uuid.UUID, error) {
 	var out []uuid.UUID
 	for _, r := range raw {
-		id, err := uuid.Parse(strings.TrimSpace(r))
+		id, err := s.resolveDoc(ctx, searcher, r)
 		if err != nil {
-			return nil, fmt.Errorf("document %s not found", r)
+			return nil, err
 		}
 		out = append(out, id)
 	}
@@ -178,7 +236,7 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 		Expand   []string       `json:"expand,omitempty" jsonschema_description:"File refs (d<n>) to show with their whole table of contents instead of the first branches."`
 	}
 	if err := add(utils.InferTool("kb_case_toc",
-		"Start here. The table of contents of this case: one line per file ([d<n>] file (pages) {metadata} — summary) with the first branches of its table of contents. Pick the file (and branch) that likely holds the answer, open its tree with kb_document_tree, then read only the pages of the chosen node with kb_read_pages. Do not read whole files when a node fits.",
+		"The tree of this case, as given in <case_tree> at the start of the turn, rebuilt now: narrowed to files matching metadata, or with the files in expand (d<n>) shown whole. One line per file ([d<n>] file (pages) {metadata} — card summary) with nodes [d<n>.n<k>] title (tr. pages) — summary. document_ids maps d<n> to its document_id. Titles, page ranges and summaries only, no page text.",
 		func(ctx context.Context, a tocArgs) (map[string]any, error) {
 			sc, err := caseScope(ctx)
 			if err != nil {
@@ -206,29 +264,43 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 	}
 
 	if err := add(utils.InferTool("kb_search",
-		"Let the server find passages that answer a question in this case's files: mode=reasoning walks the case table of contents and the file trees, reads only the chosen pages and returns quotes verified against the source lines with citation_id, file and page. mode=keyword is fast full-text for exact codes and amounts. metadata/document_ids/pages only narrow the search inside the case. Cite answers with the returned citation_id.",
+		"Full-text search (keywords, accent-insensitive) over this case's files: lines containing the terms, with citation_id, file, page and the tree node holding the line (ref d<n>.n<k>, section). Matches words, not meaning. metadata/document_ids/pages only narrow the search inside the case.",
 		func(ctx context.Context, a kbSearchArgs) (map[string]any, error) {
 			sc, err := caseScope(ctx)
 			if err != nil {
 				return nil, err
 			}
-			docs, err := parseIDs(a.DocumentIDs)
+			docs, err := sc.parseIDs(ctx, searcher, a.DocumentIDs)
 			if err != nil {
 				return nil, err
 			}
 			resp, err := searcher.Search(ctx, types.SearchRequest{Query: a.Query, CaseIDs: []uuid.UUID{sc.CaseID}, DocumentIDs: docs,
-				Metadata: types.MetadataFilter(a.Metadata), Mode: a.Mode, PageFrom: a.PageFrom, PageTo: a.PageTo, TopK: a.TopK, OwnerID: sc.Owner})
+				Metadata: types.MetadataFilter(a.Metadata), Mode: types.SearchKeyword, PageFrom: a.PageFrom, PageTo: a.PageTo, TopK: a.TopK, OwnerID: sc.Owner})
 			if err != nil {
 				return nil, sc.alive(ctx, searcher, err)
 			}
+			refs, _ := searcher.CaseRefs(ctx, sc.Owner, sc.CaseID)
+			refOf := refsByID(refs)
+			trees := map[uuid.UUID][]types.TreeNode{}
 			hits := make([]kbHit, len(resp.Hits))
 			for i, h := range resp.Hits {
 				hits[i] = kbHit{CitationID: h.CitationID, File: h.FileName, DocumentID: h.DocumentID.String(), Page: h.PageNo, Quote: h.Quote,
 					Section: strings.Join(h.NodePath, " › "), Via: h.Via, Metadata: h.Metadata, Reason: h.Reason}
+				nodes, ok := trees[h.DocumentID]
+				if !ok {
+					nodes, _ = searcher.DocumentTree(ctx, sc.Owner, h.DocumentID)
+					trees[h.DocumentID] = nodes
+				}
+				if n, ok := nodeAt(nodes, h.PageNo); ok {
+					hits[i].Node = n.ShortID
+					if r := refOf[h.DocumentID]; r != "" {
+						hits[i].Ref = r + "." + n.ShortID
+					}
+				}
 			}
 			res := map[string]any{"hits": hits, "documents_considered": resp.Trace.CandidateDocs}
 			if len(hits) == 0 {
-				res["note"] = "No passage found. Try other wording, mode=keyword for exact codes, or kb_case_toc and kb_document_tree to choose pages yourself."
+				res["note"] = "No line contains these terms."
 			}
 			return res, nil
 		})); err != nil {
@@ -241,7 +313,7 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 		Limit    int            `json:"limit,omitempty"`
 	}
 	if err := add(utils.InferTool("kb_list_documents",
-		"List the files of this case (optionally filtered by metadata or status) with their status, page count and card summary.",
+		"List the files of this case in case tree order (optionally filtered by metadata or status): ref d<n>, document_id, status, page count and card summary.",
 		func(ctx context.Context, a listArgs) (map[string]any, error) {
 			sc, err := caseScope(ctx)
 			if err != nil {
@@ -276,7 +348,7 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 	}
 
 	type findArgs struct {
-		DocumentID string `json:"document_id" jsonschema:"required"`
+		DocumentID string `json:"document_id" jsonschema:"required" jsonschema_description:"Document id or ref d<n>."`
 		Query      string `json:"query" jsonschema:"required"`
 		PageFrom   int    `json:"page_from,omitempty" jsonschema_description:"Only pages from this page number (inclusive)."`
 		PageTo     int    `json:"page_to,omitempty" jsonschema_description:"Only pages up to this page number (inclusive)."`
@@ -298,24 +370,48 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 	}
 
 	type readArgs struct {
-		DocumentID string `json:"document_id" jsonschema:"required"`
-		PageFrom   int    `json:"page_from" jsonschema:"required"`
+		DocumentID string `json:"document_id,omitempty" jsonschema_description:"Document id or ref d<n>; may be left out when node_id is d<n>.n<k>."`
+		NodeID     string `json:"node_id,omitempty" jsonschema_description:"A node of the file's tree (d<n>.n<k> or n<k>): the pages of that node."`
+		PageFrom   int    `json:"page_from,omitempty" jsonschema_description:"Without node_id: first page to read."`
 		PageTo     int    `json:"page_to,omitempty" jsonschema_description:"Inclusive; at most 10 pages per call."`
 	}
 	if err := add(utils.InferTool("kb_read_pages",
-		"Read pages of a file of this case as numbered lines ([L<n>] text), at most 10 pages per call. Read the page range of the node chosen on the table of contents, not whole files. Cite as doc:<document_id>:p<page>:l<a>-<b>.",
+		"The text of pages of a file of this case as numbered lines ([L<n>] text), at most 10 pages per call: the pages of a tree node (node_id) or a page range. Lines are cited as doc:<document_id>:p<page>:l<a>-<b>.",
 		func(ctx context.Context, a readArgs) (string, error) {
-			sc, id, err := docArg(ctx, searcher, a.DocumentID)
+			document, node := nodeArg(a.DocumentID, a.NodeID)
+			sc, id, err := docArg(ctx, searcher, document)
 			if err != nil {
 				return "", err
 			}
-			return searcher.ReadPages(ctx, sc.Owner, id, a.PageFrom, max(a.PageTo, a.PageFrom))
+			from, to, note := a.PageFrom, max(a.PageTo, a.PageFrom), ""
+			if node != "" {
+				nodes, err := searcher.DocumentTree(ctx, sc.Owner, id)
+				if err != nil {
+					return "", err
+				}
+				var hit *types.TreeNode
+				for i := range nodes {
+					if nodes[i].ShortID == node {
+						hit = &nodes[i]
+						break
+					}
+				}
+				if hit == nil {
+					return "", fmt.Errorf("node %s not found in document %s", a.NodeID, document)
+				}
+				from, to = hit.PageStart, hit.PageEnd
+				if to-from >= 10 {
+					note = fmt.Sprintf("Node %s spans pages %d–%d; pages %d–%d are shown.%s\n", node, from, to, from, from+9, childList(nodes, hit.ID))
+				}
+			}
+			text, err := searcher.ReadPages(ctx, sc.Owner, id, from, to)
+			return note + text, err
 		})); err != nil {
 		return nil, err
 	}
 
 	type overviewArgs struct {
-		DocumentID string `json:"document_id" jsonschema:"required"`
+		DocumentID string `json:"document_id" jsonschema:"required" jsonschema_description:"Document id or ref d<n>."`
 		PageFrom   int    `json:"page_from,omitempty" jsonschema_description:"First page (default 1)."`
 		PageTo     int    `json:"page_to,omitempty" jsonschema_description:"Last page, inclusive (default: the last page)."`
 	}
@@ -336,24 +432,25 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 	}
 
 	type treeArgs struct {
-		DocumentID string `json:"document_id" jsonschema:"required"`
-		NodeID     string `json:"node_id,omitempty" jsonschema_description:"Only the subtree of this node (e.g. n3), for a node marked (+k mục, expand n3)."`
+		DocumentID string `json:"document_id,omitempty" jsonschema_description:"Document id or ref d<n>; may be left out when node_id is d<n>.n<k>."`
+		NodeID     string `json:"node_id,omitempty" jsonschema_description:"Only the subtree of this node (d<n>.n<k> or n<k>)."`
 	}
 	if err := add(utils.InferTool("kb_document_tree",
-		"The table of contents of a file of this case (PageIndex): one line per node, [n<k>] title (tr. pages) — summary, indented by level; the whole tree when it fits, otherwise deep levels are collapsed as (+k mục, expand n<k>) — call again with that node_id. Choose the most specific node, then kb_read_pages on its page range.",
+		"The table of contents of a file of this case (or the subtree of node_id): one line per node, [n<k>] title (tr. pages) — summary, indented by level; the whole tree when it fits, otherwise deep levels are collapsed as (+k mục, expand n<k>).",
 		func(ctx context.Context, a treeArgs) (string, error) {
-			sc, id, err := docArg(ctx, searcher, a.DocumentID)
+			document, node := nodeArg(a.DocumentID, a.NodeID)
+			sc, id, err := docArg(ctx, searcher, document)
 			if err != nil {
 				return "", err
 			}
-			return searcher.DocumentTreeText(ctx, sc.Owner, id, a.NodeID)
+			return searcher.DocumentTreeText(ctx, sc.Owner, id, node)
 		})); err != nil {
 		return nil, err
 	}
 
 	type locateArgs struct {
 		CitationID string `json:"citation_id,omitempty" jsonschema_description:"doc:<id>:p<page>:l<a>-<b>"`
-		DocumentID string `json:"document_id,omitempty" jsonschema_description:"With text: the file to look in."`
+		DocumentID string `json:"document_id,omitempty" jsonschema_description:"With text: the file to look in (document id or ref d<n>)."`
 		Text       string `json:"text,omitempty" jsonschema_description:"With document_id: the text to find."`
 	}
 	if err := add(utils.InferTool("kb_locate",
@@ -377,7 +474,15 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 				}
 				return map[string]any{"pages": pages}, nil
 			}
-			hits, err := searcher.Locate(ctx, sc.Owner, a.CitationID)
+			citation := strings.TrimSpace(a.CitationID)
+			if m := refCitation.FindStringSubmatch(citation); m != nil {
+				id, err := sc.resolveDoc(ctx, searcher, m[1])
+				if err != nil {
+					return nil, fmt.Errorf("citation %s not found", a.CitationID)
+				}
+				citation = "doc:" + id.String() + m[2]
+			}
+			hits, err := searcher.Locate(ctx, sc.Owner, citation)
 			if err != nil {
 				return nil, fmt.Errorf("citation %s not found", a.CitationID)
 			}
@@ -391,4 +496,32 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 		return nil, err
 	}
 	return out, nil
+}
+
+// nodeAt returns the deepest node of a document tree whose pages contain
+// page (the root when no other does).
+func nodeAt(nodes []types.TreeNode, page int) (types.TreeNode, bool) {
+	var best types.TreeNode
+	found := false
+	for _, n := range nodes {
+		if page >= n.PageStart && page <= n.PageEnd && (!found || n.Level > best.Level) {
+			best, found = n, true
+		}
+	}
+	return best, found
+}
+
+// childList names the children of a node with their pages, for a node too
+// long to read at once.
+func childList(nodes []types.TreeNode, parent uuid.UUID) string {
+	var parts []string
+	for _, n := range nodes {
+		if n.ParentID != nil && *n.ParentID == parent {
+			parts = append(parts, fmt.Sprintf("%s %s (tr. %d–%d)", n.ShortID, n.Title, n.PageStart, n.PageEnd))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " Its children: " + strings.Join(parts, "; ") + "."
 }

@@ -118,7 +118,9 @@ func TestIndexAndReasoningSearch(t *testing.T) {
 	}
 	treePrompt := h.LLM.Prompts["tree_search"][treeCalls]
 	pagesPrompt := h.LLM.Prompts["locate"][locateCalls]
-	if !strings.Contains(treePrompt, "CHU HO") || strings.Contains(treePrompt, "50.000.000") {
+	// Node summaries are the first words of the node (§6.5), but page lines
+	// ([L<n>]) are only read at step 3.
+	if !strings.Contains(treePrompt, "CHU HO") || strings.Contains(treePrompt, "[L") {
 		t.Fatalf("step 2 must show the whole tree and no page text:\n%s", treePrompt)
 	}
 	if !strings.Contains(pagesPrompt, `<page n="2"`) || strings.Contains(pagesPrompt, `<page n="1"`) || strings.Contains(pagesPrompt, `<page n="3"`) {

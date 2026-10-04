@@ -102,23 +102,3 @@ func TestBuildTreeLeadWithoutHeading(t *testing.T) {
 		t.Fatalf("tree = %+v", root.children)
 	}
 }
-
-func TestPageReplyResult(t *testing.T) {
-	gs := []layoutGroup{{id: "g1", body: "tiếp", tokens: 5}, {id: "g2", heading: "Nhãn", level: 2, tokens: 3}, {id: "g3", heading: "A", level: 1, body: "x", tokens: 7}}
-	var r pageReply
-	r.Lead = "phần trước"
-	r.Nodes = append(r.Nodes, struct {
-		From    string `json:"from"`
-		Title   string `json:"title"`
-		Level   int    `json:"level"`
-		Summary string `json:"summary"`
-	}{From: "g3", Title: "A", Level: 1, Summary: "tóm tắt"})
-	res, ok := r.result(gs, 60)
-	if !ok || res.leadTokens != 8 || res.leadSummary != "phần trước" || len(res.nodes) != 1 || res.nodes[0].tokens != 7 {
-		t.Fatalf("result = %+v ok %v", res, ok)
-	}
-	r.Nodes[0].From = "g9"
-	if _, ok := r.result(gs, 60); ok {
-		t.Fatal("unknown group accepted")
-	}
-}
