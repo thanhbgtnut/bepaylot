@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BePaylot U43–U46 Prototype</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+<style>
+/* Same Material 3 tokens as frontend/src/index.css (Google Drive flavour) */
+:root {
+  --bg:#f8fafd; --surface:#ffffff; --surface-2:#f0f4f9; --surface-3:#e9eef6; --line:#e1e3e1; --outline:#747775;
+  --fg:#1f1f1f; --muted:#444746; --subtle:#747775;
+  --accent:#0b57d0; --on-accent:#ffffff; --accent-soft:#c2e7ff; --on-accent-soft:#001d35; --accent-container:#d3e3fd;
+  --ok:#146c2e; --ok-soft:#c4eed0; --warn:#8a5000; --warn-soft:#ffdf99; --err:#b3261e; --err-soft:#f9dedc;
+  --vlm:#6d3fc0; --vlm-soft:#eaddff; --xl:#107c41; --xl-soft:#ddf2e5; --scrim:rgba(0,0,0,.32);
+  --shadow-1:0 1px 2px rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15);
+  --shadow-2:0 1px 2px rgba(60,64,67,.3),0 2px 6px 2px rgba(60,64,67,.15);
+  --shadow-3:0 4px 8px 3px rgba(60,64,67,.15),0 1px 3px rgba(60,64,67,.3);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#1b1b1b; --surface:#131314; --surface-2:#282a2c; --surface-3:#333537; --line:#3c4043; --outline:#8e918f;
+  --fg:#e3e3e3; --muted:#c4c7c5; --subtle:#8e918f;
+  --accent:#a8c7fa; --on-accent:#062e6f; --accent-soft:#004a77; --on-accent-soft:#c2e7ff; --accent-container:#0842a0;
+  --ok:#6dd58c; --ok-soft:#0f5223; --warn:#ffb95c; --warn-soft:#5c3c00; --err:#f2b8b5; --err-soft:#8c1d18;
+  --vlm:#d0bcff; --vlm-soft:#4f378b; --xl:#7fd6a2; --xl-soft:#173d28; --scrim:rgba(0,0,0,.6);
+  --shadow-1:0 1px 3px rgba(0,0,0,.5); --shadow-2:0 2px 6px 2px rgba(0,0,0,.45); --shadow-3:0 4px 8px 3px rgba(0,0,0,.5);
+  color-scheme:dark; } }
+:root[data-theme="dark"] {
+  --bg:#1b1b1b; --surface:#131314; --surface-2:#282a2c; --surface-3:#333537; --line:#3c4043; --outline:#8e918f;
+  --fg:#e3e3e3; --muted:#c4c7c5; --subtle:#8e918f;
+  --accent:#a8c7fa; --on-accent:#062e6f; --accent-soft:#004a77; --on-accent-soft:#c2e7ff; --accent-container:#0842a0;
+  --ok:#6dd58c; --ok-soft:#0f5223; --warn:#ffb95c; --warn-soft:#5c3c00; --err:#f2b8b5; --err-soft:#8c1d18;
+  --vlm:#d0bcff; --vlm-soft:#4f378b; --xl:#7fd6a2; --xl-soft:#173d28; --scrim:rgba(0,0,0,.6);
+  --shadow-1:0 1px 3px rgba(0,0,0,.5); --shadow-2:0 2px 6px 2px rgba(0,0,0,.45); --shadow-3:0 4px 8px 3px rgba(0,0,0,.5);
+  color-scheme:dark; }
+html, body { height:100%; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/20px "Google Sans","Google Sans Text",Roboto,-apple-system,"Segoe UI",Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+.material-symbols-rounded { font-family:"Material Symbols Rounded"; font-weight:normal; font-style:normal; line-height:1; display:inline-block; white-space:nowrap; direction:ltr; font-size:24px; font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 24; user-select:none; flex:none; -webkit-font-feature-settings:"liga"; font-feature-settings:"liga"; }
+.icon-fill { font-variation-settings:"FILL" 1,"wght" 400,"GRAD" 0,"opsz" 24; }
+.cite { display:inline-flex; align-items:center; height:20px; padding:0 8px; margin:0 2px; border-radius:10px; background:var(--accent-soft); color:var(--on-accent-soft); font:500 11.5px/20px inherit; border:0; cursor:pointer; vertical-align:1px; }
+.gradient-text { background:linear-gradient(74deg,#4285f4 0%,#9b72cb 9%,#d96570 20%,#d96570 24%,#9b72cb 35%,#4285f4 44%,#9b72cb 50%,#d96570 56%,var(--fg) 75%); background-size:400% 100%; -webkit-background-clip:text; background-clip:text; color:transparent; }
+/* Excel grid */
+.sheet { border-collapse:collapse; font-size:13px; min-width:860px; width:100%; }
+.sheet th, .sheet td { border:1px solid var(--line); padding:0; height:32px; }
+.sheet thead th { background:var(--surface-2); color:var(--subtle); font-weight:400; font-size:11.5px; text-align:center; position:sticky; top:0; z-index:1; }
+.sheet td.rh { background:var(--surface-2); color:var(--subtle); text-align:center; font-size:11.5px; width:40px; }
+.sheet td > .c { padding:6px 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sheet td.hd > .c { font-weight:500; background:var(--xl-soft); color:var(--fg); }
+.sheet input.cell { width:100%; height:100%; min-height:31px; border:0; outline:0; background:transparent; color:var(--fg); font:inherit; padding:6px 10px; font-variant-numeric:tabular-nums; }
+.sheet td.val:focus-within { outline:2px solid var(--xl); outline-offset:-2px; }
+.sheet td.low { background:var(--warn-soft); }
+.sheet td.calc { background:var(--vlm-soft); }
+.sheet td.edited { background:var(--accent-container); position:relative; }
+.sheet td.edited::after { content:""; position:absolute; top:0; right:0; border:5px solid transparent; border-top-color:var(--accent); border-right-color:var(--accent); }
+.sheet tr.sel td.rh { background:var(--xl); color:#fff; }
+.num { font-variant-numeric:tabular-nums; }
+.proto { background:repeating-linear-gradient(135deg,var(--surface-2) 0 10px,var(--surface-3) 10px 20px); }
+dialog::backdrop { background:var(--scrim); }
+@media (prefers-reduced-motion:reduce) { * { animation:none!important; transition:none!important; } }
+</style>
+<style type="text/tailwindcss">
+@theme inline {
+  --color-bg:var(--bg); --color-surface:var(--surface); --color-surface-2:var(--surface-2); --color-surface-3:var(--surface-3);
+  --color-line:var(--line); --color-outline:var(--outline); --color-fg:var(--fg); --color-muted:var(--muted); --color-subtle:var(--subtle);
+  --color-accent:var(--accent); --color-on-accent:var(--on-accent); --color-accent-soft:var(--accent-soft); --color-on-accent-soft:var(--on-accent-soft);
+  --color-accent-container:var(--accent-container); --color-ok:var(--ok); --color-ok-soft:var(--ok-soft); --color-warn:var(--warn); --color-warn-soft:var(--warn-soft);
+  --color-err:var(--err); --color-err-soft:var(--err-soft); --color-vlm:var(--vlm); --color-vlm-soft:var(--vlm-soft); --color-xl:var(--xl); --color-xl-soft:var(--xl-soft);
+  --shadow-1:var(--shadow-1); --shadow-2:var(--shadow-2); --shadow-3:var(--shadow-3);
+  --font-mono:"Roboto Mono",ui-monospace,Menlo,monospace;
+}
+@layer components {
+  .btn { @apply inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-full border border-outline bg-transparent px-5 text-sm font-medium whitespace-nowrap text-accent select-none hover:bg-accent/8 disabled:cursor-default disabled:border-line disabled:text-fg/38 disabled:hover:bg-transparent; }
+  .btn-primary { @apply border-transparent bg-accent text-on-accent hover:bg-accent hover:shadow-1 disabled:bg-fg/12 disabled:text-fg/38; }
+  .btn-tonal { @apply border-transparent bg-accent-soft text-on-accent-soft hover:bg-accent-soft hover:shadow-1; }
+  .btn-text { @apply border-transparent px-3; }
+  .btn-danger { @apply text-err hover:bg-err/8; }
+  .btn-sm { @apply h-8 gap-1.5 px-3.5 text-[13px]; }
+  .btn-icon { @apply inline-flex size-10 flex-none cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-muted hover:bg-fg/8 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent; }
+  .btn-icon.btn-sm { @apply size-8; }
+  .input { @apply h-10 min-w-0 rounded-lg border border-outline bg-transparent px-3 text-sm text-fg outline-none placeholder:text-subtle focus:border-2 focus:border-accent focus:px-[11px]; }
+  textarea.input { @apply h-auto py-2.5 focus:py-[9px]; }
+  .field { @apply flex flex-col gap-1.5 text-xs font-medium text-muted; }
+  .badge { @apply inline-flex h-5 items-center gap-1 rounded-md bg-surface-2 px-1.5 text-[11px] font-medium whitespace-nowrap text-muted; }
+  .badge-ok { @apply bg-ok-soft text-ok; } .badge-warn { @apply bg-warn-soft text-warn; } .badge-err { @apply bg-err-soft text-err; }
+  .badge-info { @apply bg-accent-soft text-on-accent-soft; } .badge-vlm { @apply bg-vlm-soft text-vlm; }
+  .chip { @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-outline bg-transparent px-3 text-[13px] font-medium whitespace-nowrap text-muted select-none hover:bg-fg/8; }
+  .chip-on { @apply border-transparent bg-accent-soft text-on-accent-soft hover:bg-accent-soft; }
+  .tag { @apply inline-flex h-6 items-center gap-1 rounded-md bg-surface-2 px-2 text-xs whitespace-nowrap text-muted; }
+  .tab { @apply relative h-12 flex-none cursor-pointer px-3 text-sm font-medium whitespace-nowrap text-muted hover:bg-fg/5; }
+  .tab-active { @apply text-accent after:absolute after:inset-x-3 after:bottom-0 after:h-[3px] after:rounded-t-full after:bg-accent; }
+  .spinner { @apply inline-block size-5 animate-spin rounded-full border-[2.5px] border-accent/25 border-t-accent; }
+  .menu-item { @apply flex h-10 w-full cursor-pointer items-center gap-3 px-4 text-left text-sm text-fg hover:bg-fg/8; }
+}
+</style>
+
+<div id="app" class="flex h-full flex-col bg-bg"></div>
+<div id="dlg"></div>
+<div id="toast" class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-fg px-4 py-3 text-sm text-bg shadow-3" hidden></div>
+
+<script>
+/* ------------------------------------------------------------ sample data (fictional) */
+const CASE = { code:'TD-2026-000123', title:'Phương án vay vốn lưu động 2026 · Công ty CP Thương mại An Phát (ví dụ)', type:'tin_dung_dn' };
+const FILES = [
+  { n:'01_Giay_DKKD.pdf', p:4, s:'Giấy chứng nhận đăng ký doanh nghiệp, thay đổi lần 5.' },
+  { n:'02_BCTC_kiem_toan_2025.pdf', p:38, s:'Báo cáo tài chính đã kiểm toán năm 2025.' },
+  { n:'03_Phuong_an_SXKD_2026.pdf', p:22, s:'Phương án kinh doanh và nhu cầu vốn lưu động 2026.',
+    tree:[['I. Thông tin khách hàng','tr. 1–3'],['II. Nhu cầu vốn','tr. 3–6'],['III. Hiệu quả phương án','tr. 7–15'],['IV. Tài sản bảo đảm','tr. 16–22']] },
+  { n:'04_HD_the_chap_QSDD.pdf', p:11, s:'Hợp đồng thế chấp quyền sử dụng đất.' },
+  { n:'05_BB_dinh_gia_TSBD.pdf', p:6, s:'Biên bản định giá tài sản bảo đảm.' },
+];
+// key, label, AI value, confidence, file idx, page, quote, kind
+const FIELDS = [
+  ['ten_doanh_nghiep','Tên doanh nghiệp','Công ty CP Thương mại An Phát',.98,0,1,'Tên công ty viết bằng tiếng Việt: CÔNG TY CỔ PHẦN THƯƠNG MẠI AN PHÁT',''],
+  ['ma_so_thue','Mã số thuế','0109876543',.97,0,1,'Mã số doanh nghiệp: 0109876543',''],
+  ['nguoi_dai_dien','Người đại diện theo pháp luật','Trần Minh Khoa',.95,0,2,'Họ và tên: TRẦN MINH KHOA  Chức danh: Tổng giám đốc',''],
+  ['von_dieu_le','Vốn điều lệ (đồng)','25.000.000.000',.93,0,2,'Vốn điều lệ: 25.000.000.000 đồng',''],
+  ['doanh_thu_2025','Doanh thu thuần 2025 (đồng)','184.562.300.000',.91,1,7,'10. Doanh thu thuần về bán hàng … 184.562.300.000',''],
+  ['loi_nhuan_st_2025','Lợi nhuận sau thuế 2025 (đồng)','6.214.800.000',.64,1,9,'60. Lợi nhuận sau thuế TNDN … 6.124.800.000','low'],
+  ['tong_tai_san','Tổng tài sản 31/12/2025 (đồng)','97.310.450.000',.92,1,5,'270. TỔNG CỘNG TÀI SẢN … 97.310.450.000',''],
+  ['so_tien_vay','Số tiền đề nghị vay (đồng)','15.000.000.000',.96,2,3,'Hạn mức tín dụng đề nghị: 15.000.000.000 đồng',''],
+  ['thoi_han_vay','Thời hạn duy trì hạn mức (tháng)','12',.9,2,3,'Thời hạn duy trì hạn mức: 12 tháng',''],
+  ['muc_dich_vay','Mục đích vay','Bổ sung vốn lưu động mua hàng điện máy',.88,2,4,'Mục đích: bổ sung vốn lưu động phục vụ mua hàng điện máy, điện lạnh',''],
+  ['tai_san_dam_bao','Tài sản bảo đảm','QSDĐ thửa 112, tờ bản đồ 07, P. Dịch Vọng',.71,3,2,'Thửa đất số 112, tờ bản đồ số 07, phường Dịch Vọng Hậu','low'],
+  ['gia_tri_tsbd','Giá trị TSBĐ định giá (đồng)','21.400.000.000',.94,4,5,'Tổng giá trị tài sản định giá: 21.400.000.000 đồng',''],
+  ['ty_le_vay_tsbd','Tỷ lệ vay / TSBĐ','70,1%',.99,4,5,'= so_tien_vay / gia_tri_tsbd (agent tính)','calc'],
+];
+const PRESETS = [
+  { id:'default', name:'Mặc định', desc:'Agent tra cây hồ sơ, đọc đúng trang rồi trả lời có trích dẫn.' },
+  { id:'tham_dinh', name:'Thẩm định phương án vay', desc:'Tập trung năng lực tài chính, nhu cầu vốn, khả năng trả nợ. Do lan.nt soạn · v4.' },
+  { id:'tsbd', name:'Kiểm tra tài sản bảo đảm', desc:'Đối chiếu hợp đồng thế chấp với biên bản định giá. Do lan.nt soạn · v2.' },
+  { id:'doi_chieu', name:'Đối chiếu số liệu giữa các file', desc:'So số tiền, ngày, mã giữa các tài liệu và chỉ ra chỗ lệch. Do hung.pv soạn · v7.' },
+];
+const SHEET_TPLS = [
+  { id:'pa_vay', name:'Bảng tổng hợp phương án vay', fields:13, v:4 },
+  { id:'tsbd', name:'Bảng tài sản bảo đảm', fields:6, v:2 },
+];
+const USERS = [
+  { name:'Quản trị hệ thống', email:'admin@bank.vn', role:'admin', keys:1, limit:0, spent:96000 },
+  { name:'Nguyễn Thị Lan', email:'lan.nt@bank.vn', role:'editor', keys:2, limit:3000000, spent:1184000 },
+  { name:'Phạm Văn Hùng', email:'hung.pv@bank.vn', role:'editor', keys:1, limit:3000000, spent:2610000 },
+  { name:'Lê Thu Trang', email:'trang.lt@bank.vn', role:'user', keys:1, limit:500000, spent:212000 },
+  { name:'Đỗ Quang Huy', email:'huy.dq@bank.vn', role:'user', keys:1, limit:500000, spent:500000 },
+];
+const ROLE = { admin:'Quản trị', editor:'Được đặt prompt', user:'Người dùng' };
+const ME = { admin:USERS[0], editor:USERS[1], user:USERS[3] };
+
+/* ------------------------------------------------------------ state */
+const S = {
+  role:'user', route:'case', mobileCol:'chat',
+  preset:'tham_dinh', customPrompt:'', sheetTpl:'pa_vay',
+  exports:[{ id:'e1', name:'Bảng tổng hợp phương án vay', tpl:'v4', at:'Hôm nay, 10:31', rows:13, status:'done' }],
+  openExport:'e1', values:FIELDS.map(f => f[2]), saved:FIELDS.map(f => f[2]), fromFile:new Set(),
+  sel:5, side:'edits', sheetTab:'tong_hop', dialog:null, setTab:'keys', issued:'',
+};
+const fmt = n => n.toLocaleString('vi-VN');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ic = (n, size=20, cls='', fill=false) => `<span class="material-symbols-rounded ${fill?'icon-fill ':''}${cls}" style="font-size:${size}px" aria-hidden="true">${n}</span>`;
+const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[\s.,]/g,'');
+const pdf = (size=18) => ic('picture_as_pdf', size, 'text-[#ea4335]', true);
+const canPrompt = () => S.role !== 'user';
+const meBudget = () => ME[S.role];
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2800); }
+const edits = () => S.values.map((v,i) => ({ i, v })).filter(x => norm(x.v) !== norm(FIELDS[x.i][2]));
+const unsaved = () => S.values.some((v,i) => v !== S.saved[i]);
+
+/* ------------------------------------------------------------ shell (same as Layout.tsx) */
+function shell(content) {
+  const nav = [['folder_open','Tài liệu',false],['forum','Hỏi đáp',false],['account_tree','Hồ sơ',true]];
+  return `
+  <div class="proto flex flex-none flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs text-muted">
+    <b class="text-fg">Prototype U43–U46</b><span>dữ liệu mẫu</span>
+    <span class="flex items-center gap-1">Xem với vai trò:
+      ${['user','editor','admin'].map(r => `<button data-act="role" data-v="${r}" class="chip h-6 px-2 text-xs ${S.role===r?'chip-on':''}">${ROLE[r]}</button>`).join('')}</span>
+    <button data-act="notes" class="ml-auto underline">Ghi chú spec</button>
+  </div>
+  <header class="flex h-16 flex-none items-center gap-2 pr-3 pl-2 md:pl-4">
+    <a class="flex w-59 flex-none items-center gap-2.5 pl-1 text-[22px] text-muted max-md:w-auto">
+      <svg viewBox="0 0 32 32" class="size-9" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)"/><path d="M11 7.7v16.6M11 7.7h5.6c2.4 0 4 1.6 4 4.2s-1.6 4.2-4 4.2H11M11 16.1h6.3c2.8 0 4.6 1.6 4.6 4.1s-1.8 4.1-4.6 4.1H11" fill="none" stroke="var(--on-accent)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
+      <span class="max-sm:hidden">BePaylot</span></a>
+    <div class="flex h-12 max-w-180 min-w-0 flex-1 items-center gap-2 rounded-full bg-surface-3 px-2">
+      <span class="btn-icon">${ic('search',24)}</span><span class="text-base text-muted truncate">Tìm trong Tín dụng DN 2026</span></div>
+    <div class="flex-1 max-md:hidden"></div>
+    <button class="btn-icon" title="Cài đặt" data-act="settings">${ic('settings',24)}</button>
+    <button class="grid size-8 flex-none place-items-center rounded-full bg-accent text-sm font-medium text-on-accent" data-act="settings" data-tab="account" title="${esc(ME[S.role].email)}">${ME[S.role].name[0]}</button>
+  </header>
+  <div class="flex min-h-0 flex-1">
+    <aside class="hidden md:block"><div class="flex h-full w-64 flex-col gap-1 overflow-y-auto pr-3 pb-3 pl-3">
+      <button class="mt-1 mb-4 flex h-14 w-fit items-center gap-3 rounded-2xl bg-surface pr-5 pl-4 text-sm font-medium text-fg shadow-1">${ic('add',24)} Mới</button>
+      ${nav.map(([i,l,on]) => `<a class="flex h-8 items-center gap-4 rounded-full px-4 text-sm ${on?'bg-accent-soft font-semibold text-on-accent-soft':'text-fg hover:bg-fg/8'}">${ic(i,20,'',on)}${l}</a>`).join('')}
+      <div class="mt-4 flex items-center pr-1 pl-4"><span class="flex-1 text-xs font-medium text-muted">Knowledge base</span></div>
+      <a class="flex h-8 items-center gap-4 rounded-full bg-surface-3 px-4 text-sm font-medium">${ic('folder_shared',20,'text-accent',true)}Tín dụng DN 2026</a>
+      <a class="flex h-8 items-center gap-4 rounded-full px-4 text-sm hover:bg-fg/8">${ic('folder_shared',20,'text-muted')}Thanh toán</a>
+      <div class="flex-1"></div>
+    </div></aside>
+    <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface md:mr-4 md:mb-4 md:rounded-2xl">${content}</main>
+  </div>`;
+}
+/* ------------------------------------------------------------ phương án = NotebookLM workspace */
+function caseView() {
+  const col = c => S.mobileCol === c ? 'flex' : 'hidden md:flex';
+  return `
+  <header class="flex min-h-16 flex-none flex-wrap items-center gap-2 px-6 pt-3 pb-2">
+    <div class="min-w-0 flex-1"><h1 class="truncate text-[22px] leading-7 font-normal">${CASE.code}</h1>
+      <div class="truncate text-xs text-muted">${FILES.length} file đã có mục lục · ${esc(CASE.title)}</div></div>
+    <button class="chip chip-on max-w-72">${ic('folder_open',18)}<span class="truncate">${CASE.code}</span>${ic('arrow_drop_down',18,'-mr-1')}</button>
+  </header>
+  <div class="flex flex-none border-t border-line md:hidden">
+    ${[['sources','Nguồn'],['chat','Trò chuyện'],['studio','Studio']].map(([k,l]) => `<button data-act="mcol" data-v="${k}" class="tab flex-1 ${S.mobileCol===k?'tab-active':''}">${l}</button>`).join('')}
+  </div>
+  <div class="flex min-h-0 flex-1 border-t border-line">
+    <aside class="${col('sources')} w-full flex-none flex-col overflow-auto border-r border-line px-2 py-3 md:w-72">
+      <div class="flex items-center px-3 pb-2"><span class="flex-1 text-sm font-medium">Nguồn</span><button class="btn-icon btn-sm" title="Thêm nguồn">${ic('add',20)}</button></div>
+      <label class="flex h-8 items-center gap-2 rounded-full px-3 text-xs text-muted"><input type="checkbox" checked> Chọn tất cả nguồn</label>
+      ${FILES.map((f,i) => `
+        <div class="mb-px">
+          <div class="flex min-h-8 items-center gap-2 rounded-full py-1 pr-3 pl-1 text-sm hover:bg-fg/8">
+            <span class="btn-icon btn-sm -my-1">${ic('arrow_right',20, f.tree?'rotate-90':'')}</span>
+            ${pdf()}<span class="min-w-0 flex-1 truncate" title="${esc(f.s)}">${f.n}</span>
+            <input type="checkbox" checked aria-label="Dùng nguồn ${f.n}"></div>
+          ${f.tree ? f.tree.map(([t,p]) => `<div class="flex min-h-8 items-center gap-2 rounded-full py-1 pr-3 text-sm hover:bg-fg/8" style="padding-left:44px"><span class="min-w-0 flex-1 truncate">${t}</span><span class="text-xs text-muted">${p}</span></div>`).join('') : ''}
+        </div>`).join('')}
+    </aside>
+
+    <section class="${col('chat')} min-w-0 flex-1 flex-col">
+      <div class="min-h-0 flex-1 overflow-auto"><div class="mx-auto flex max-w-200 flex-col gap-6 px-6 pt-5 pb-6">
+        <div class="rounded-2xl bg-surface-2 p-5">
+          <div class="flex items-center gap-2 text-xs text-muted">${ic('folder_open',16)} ${CASE.code} · ${FILES.length} nguồn · ${FILES.reduce((a,f)=>a+f.p,0)} trang</div>
+          <h2 class="mt-2 text-[22px] leading-8">${esc(CASE.title)}</h2>
+          <p class="mt-2 text-[15px] leading-6">Hồ sơ đề nghị cấp hạn mức tín dụng 15 tỷ đồng trong 12 tháng để bổ sung vốn lưu động mua hàng điện máy. Kèm BCTC kiểm toán 2025, phương án kinh doanh 2026 và tài sản bảo đảm là QSDĐ định giá 21,4 tỷ đồng.</p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            ${['Khả năng trả nợ từ dòng tiền 2026?','Tỷ lệ vay trên TSBĐ có đạt quy định?','Số liệu BCTC có khớp phương án?'].map(q => `<button class="chip">${q}</button>`).join('')}</div>
+        </div>
+        <div class="max-w-[80%] self-end rounded-3xl rounded-tr-md bg-surface-2 px-5 py-3 text-[15px] leading-6">Lợi nhuận sau thuế 2025 là bao nhiêu, có đủ trả lãi vay không?</div>
+        <div class="flex gap-4">
+          <svg viewBox="0 0 24 24" class="size-7 flex-none" aria-hidden="true"><defs><linearGradient id="sp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4285f4"/><stop offset=".55" stop-color="#9b72cb"/><stop offset="1" stop-color="#d96570"/></linearGradient></defs><path d="M12 2c.6 4.8 3.2 8.4 10 10-6.8 1.6-9.4 5.2-10 10-.6-4.8-3.2-8.4-10-10 6.8-1.6 9.4-5.2 10-10z" fill="url(#sp)"/></svg>
+          <div class="flex min-w-0 flex-1 flex-col gap-3 pt-1 text-[15px] leading-7">
+            <details class="rounded-2xl border border-line"><summary class="flex h-11 cursor-pointer list-none items-center gap-2 px-4 text-sm text-muted">${ic('construction',18)}<span class="flex-1">Đã dùng 3 công cụ · kb_case_toc, kb_read_pages</span>${ic('expand_more',20)}</summary></details>
+            <p>Lợi nhuận sau thuế năm 2025 là <b>6.124.800.000 đồng</b><button class="cite">02 · tr.9</button>. Với hạn mức 15 tỷ và lãi suất dự kiến 7,5%/năm, lãi vay tối đa khoảng 1,125 tỷ đồng/năm<button class="cite">03 · tr.5</button>, tức bằng khoảng 18% lợi nhuận sau thuế.</p>
+          </div>
+        </div>
+      </div></div>
+      <div class="flex-none px-4 pb-4">
+        <div class="mx-auto mb-2 flex max-w-200 items-center gap-2">
+          <button class="chip" data-act="chatcfg" title="Cấu hình cuộc trò chuyện">${ic('tune',18)}${esc(presetLabel())}${ic('arrow_drop_down',18,'-mr-1')}</button>
+          ${!canPrompt() ? `<span class="text-xs text-subtle">${ic('lock',14,'align-[-2px]')} dùng mẫu có sẵn</span>` : ''}
+        </div>
+        <div class="mx-auto flex max-w-200 items-end gap-2 rounded-[28px] bg-surface-2 py-2 pr-2 pl-6">
+          <textarea rows="1" placeholder="Hỏi về phương án này…" class="max-h-55 min-h-10 flex-1 resize-none bg-transparent py-2.5 text-base text-fg outline-none placeholder:text-muted"></textarea>
+          <button class="btn-icon size-12" disabled>${ic('send',24,'',true)}</button>
+        </div>
+        <p class="mx-auto mt-2 max-w-200 text-center text-xs text-subtle">Agent chỉ đọc các nguồn đã chọn của hồ sơ này. Bấm nhãn trích dẫn để xem vùng trên trang gốc.</p>
+      </div>
+    </section>
+
+    <aside class="${col('studio')} w-full flex-none flex-col overflow-auto border-l border-line px-3 py-3 md:w-80">
+      <div class="px-1 pb-3 text-sm font-medium">Studio</div>
+      <div class="rounded-2xl bg-xl-soft p-4">
+        <div class="flex items-start gap-3">
+          <span class="grid size-10 flex-none place-items-center rounded-xl bg-surface">${ic('table_view',24,'text-xl',true)}</span>
+          <div class="min-w-0 flex-1"><div class="text-sm font-medium">Xuất Excel</div>
+            <div class="truncate text-xs text-muted">${esc(SHEET_TPLS.find(t=>t.id===S.sheetTpl).name)}</div></div>
+          <button class="btn-icon btn-sm" data-act="sheetcfg" title="${canPrompt()?'Tuỳ chỉnh trường và prompt':'Chọn mẫu bảng'}">${ic(canPrompt()?'edit':'tune',18)}</button>
+        </div>
+        <button class="btn mt-3 w-full border-transparent bg-xl text-white hover:bg-xl hover:shadow-1" data-act="export">${ic('auto_awesome',18)}Tạo bảng từ ${FILES.length} nguồn</button>
+        <div class="mt-2 text-xs text-muted">Trường đã duyệt được dùng lại, không bóc tách lại.</div>
+      </div>
+      <div class="mt-4 border-t border-line pt-3">
+        <div class="px-1 pb-1 text-xs font-medium text-muted">Đã tạo</div>
+        ${S.exports.map(e => `
+          <button data-act="openx" data-v="${e.id}" ${e.status!=='done'?'disabled':''} class="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-fg/5">
+            ${e.status==='done' ? ic('table_view',22,'text-xl',true) : '<span class="spinner size-5"></span>'}
+            <span class="min-w-0 flex-1"><span class="block truncate text-sm">${esc(e.name)}</span>
+              <span class="block truncate text-xs text-muted">${e.status==='done' ? `${e.rows} trường · mẫu ${e.tpl} · ${e.at}` : `Đang bóc tách ${e.progress}/13 trường…`}</span></span>
+            ${e.status==='done' && e.id===S.openExport && edits().length ? `<span class="badge badge-info">${edits().length} sửa</span>` : ''}
+            ${e.status==='done' ? ic('chevron_right',20,'text-muted') : ''}
+          </button>`).join('')}
+      </div>
+    </aside>
+  </div>`;
+}
+const presetLabel = () => S.preset === 'custom' ? 'Prompt tuỳ chỉnh' : 'Mẫu: ' + PRESETS.find(p => p.id === S.preset).name;
+
+/* ------------------------------------------------------------ Excel page (separate route) */
+function excelView() {
+  const ex = S.exports.find(e => e.id === S.openExport);
+  const E = edits(), changed = unsaved();
+  const rows = FIELDS.map((f,i) => {
+    const ed = norm(S.values[i]) !== norm(f[2]);
+    const cls = ed ? 'edited' : f[7];
+    return `<tr class="${S.sel===i?'sel':''}" data-row="${i}">
+      <td class="rh">${i+4}</td>
+      <td><div class="c">${esc(f[1])}</div></td>
+      <td class="val ${cls}"><input class="cell" data-cell="${i}" value="${esc(S.values[i])}" aria-label="${esc(f[1])}"></td>
+      <td class="num"><div class="c text-right">${Math.round(f[3]*100)}%</div></td>
+      <td><div class="c"><button class="cite" data-act="src" data-v="${i}">${FILES[f[4]].n.slice(0,2)} · tr.${f[5]}</button></div></td>
+      <td><div class="c">${ed ? '<span class="badge badge-info">người dùng sửa</span>' : f[7]==='calc' ? '<span class="badge badge-vlm">agent tính</span>' : f[3] < .75 ? '<span class="badge badge-warn">cần xem</span>' : '<span class="badge">AI đề xuất</span>'}</div></td></tr>`;
+  }).join('');
+  const srcRows = FIELDS.map((f,i) => `<tr><td class="rh">${i+2}</td><td><div class="c font-mono text-xs">${f[0]}</div></td><td><div class="c">${FILES[f[4]].n}</div></td><td class="num"><div class="c">${f[5]}</div></td><td><div class="c">${esc(f[6])}</div></td></tr>`).join('');
+  const f = FIELDS[S.sel];
+  const side = S.side === 'edits' ? `
+      ${E.length ? E.map(({i,v}) => `
+        <div class="rounded-xl border border-line p-3">
+          <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium">${esc(FIELDS[i][1])}</span><span class="font-mono text-[11px] text-subtle">C${i+4}</span></div>
+          <div class="mt-1 text-[13px] text-err line-through">${esc(FIELDS[i][2])}</div>
+          <div class="text-[13px] font-medium text-ok">${esc(v) || '(để trống)'}</div>
+          <div class="mt-2 flex items-center gap-2">
+            <span class="badge ${S.fromFile.has(i)?'badge-vlm':'badge-info'}">${S.fromFile.has(i)?'từ file Excel tải lên':'sửa trên trang này'}</span>
+            <span class="flex-1"></span><button class="btn btn-text btn-sm" data-act="undo" data-v="${i}">Hoàn tác</button></div>
+        </div>`).join('') : `<div class="px-2 py-6 text-center text-sm text-subtle">Chưa có ô nào khác giá trị AI.<br>Sửa trực tiếp ở cột C hoặc tải lên file .xlsx đã sửa.</div>`}
+      <p class="px-1 text-xs text-muted">Khi lưu, mỗi chỉnh sửa thành giá trị đã duyệt của trường và được ghi là <b>AI sai</b> cho mẫu "${esc(SHEET_TPLS[0].name)}" v4. Người soạn mẫu xem tỷ lệ sai theo trường để sửa prompt.</p>`
+    : `
+      <div class="text-sm font-medium">${esc(f[1])}</div>
+      <div class="flex items-center gap-2 text-xs text-muted">${pdf(16)} ${FILES[f[4]].n} · trang ${f[5]}</div>
+      <div class="relative overflow-hidden rounded-xl border border-line bg-surface-2 p-4" style="aspect-ratio:1/1.3;max-width:100%">
+        ${[...Array(14)].map((_,k) => `<div class="mb-2 h-2 rounded bg-fg/10" style="width:${55 + (k*37)%40}%"></div>`).join('')}
+        <div class="absolute inset-x-3 rounded border-2 border-[#f9ab00] bg-[#fbbc04]/35 px-2 py-1 text-[11px] text-fg" style="top:46%">${esc(f[6])}</div>
+      </div>
+      <div class="rounded-lg bg-surface-2 p-3 text-[13px]"><div class="text-xs text-muted">Câu gốc</div>${esc(f[6])}</div>
+      ${norm(f[6]).includes(norm(f[2])) ? '' : `<div class="rounded-lg bg-warn-soft p-2 text-xs text-warn">Giá trị AI không xuất hiện nguyên văn trong câu gốc.</div>`}`;
+  return `
+  <header class="flex min-h-16 flex-none flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+    <button class="btn btn-text" data-act="back" title="Quay lại phương án">${ic('arrow_back',20)}Phương án ${CASE.code}</button>
+    <span class="h-6 border-l border-line"></span>
+    <div class="min-w-0 flex-1 px-2">
+      <h1 class="flex items-center gap-2 truncate text-[22px] leading-7 font-normal">${ic('table_view',24,'text-xl',true)}${esc(ex.name)}</h1>
+      <div class="truncate text-xs text-muted">Mẫu ${esc(SHEET_TPLS[0].name)} ${ex.tpl} · tạo ${ex.at} · ${FIELDS.length} trường từ ${FILES.length} nguồn</div></div>
+    <button class="btn" data-act="upload">${ic('upload_file',18)}Tải lên bản đã sửa</button>
+    <button class="btn" data-act="dl">${ic('download',18)}Tải .xlsx</button>
+    <button class="btn btn-primary" data-act="save" ${changed?'':'disabled'}>${ic('save',18)}Lưu${E.length?` ${E.length} chỉnh sửa`:''}</button>
+  </header>
+  <div class="flex min-h-0 flex-1 border-t border-line max-lg:flex-col">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div class="min-h-0 flex-1 overflow-auto">
+        <table class="sheet">
+          ${S.sheetTab === 'tong_hop' ? `
+          <thead><tr><th></th><th style="width:26%">B</th><th style="width:30%">C</th><th style="width:8%">D</th><th style="width:12%">E</th><th>F</th></tr></thead>
+          <tbody>
+            <tr><td class="rh">1</td><td colspan="5" class="hd"><div class="c">BẢNG TỔNG HỢP PHƯƠNG ÁN VAY · ${CASE.code}</div></td></tr>
+            <tr><td class="rh">2</td><td colspan="5"><div class="c text-xs text-muted">Giá trị AI chưa duyệt. Sửa ở cột C; ô khác giá trị AI được đánh dấu xanh.</div></td></tr>
+            <tr><td class="rh">3</td><td class="hd"><div class="c">Trường</div></td><td class="hd"><div class="c">Giá trị</div></td><td class="hd"><div class="c">Tin cậy</div></td><td class="hd"><div class="c">Nguồn</div></td><td class="hd"><div class="c">Trạng thái</div></td></tr>
+            ${rows}</tbody>` : `
+          <thead><tr><th></th><th>A · key</th><th>B · file</th><th>C · trang</th><th>D · câu gốc</th></tr></thead><tbody>${srcRows}</tbody>`}
+        </table>
+      </div>
+      <div class="flex flex-none gap-1 border-t border-line bg-surface-2 px-2 pt-1">
+        ${[['tong_hop','Tổng hợp'],['nguon','Nguồn']].map(([k,l]) => `<button data-act="stab" data-v="${k}" class="rounded-t-md px-4 py-1.5 text-[13px] ${S.sheetTab===k?'border-b-2 border-xl bg-surface font-medium text-xl':'text-muted'}">${l}</button>`).join('')}
+        <span class="flex-1"></span>
+        <div class="flex flex-wrap items-center gap-3 px-2 text-[11.5px] text-muted">
+          <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-accent-container"></i>người dùng sửa</span>
+          <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-warn-soft"></i>tin cậy thấp</span>
+          <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-vlm-soft"></i>agent tính</span></div>
+      </div>
+    </div>
+    <aside class="flex w-full flex-none flex-col border-line lg:w-88 lg:border-l max-lg:max-h-[45%] max-lg:border-t">
+      <div class="flex flex-none border-b border-line px-2">
+        <button data-act="side" data-v="edits" class="tab ${S.side==='edits'?'tab-active':''}">Chỉnh sửa so với AI ${E.length?`(${E.length})`:''}</button>
+        <button data-act="side" data-v="src" class="tab ${S.side==='src'?'tab-active':''}">Nguồn ô C${S.sel+4}</button>
+      </div>
+      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">${side}</div>
+    </aside>
+  </div>`;
+}
+
+/* ------------------------------------------------------------ dialogs (Modal of ui.tsx) */
+function modal(title, icon, body, footer, width=560) {
+  return `<dialog id="modal" class="m-auto rounded-[28px] border-0 bg-surface p-0 text-fg shadow-3 outline-none" style="width:min(${width}px,calc(100vw - 32px))">
+    <div class="flex items-start gap-3 px-6 pt-6 pb-4">${ic(icon,24,'mt-0.5 text-accent')}<h2 class="flex-1 text-2xl font-normal">${title}</h2>
+      <button class="btn-icon btn-sm -mt-1 -mr-2" data-act="close" aria-label="Đóng">${ic('close',24)}</button></div>
+    <div class="flex max-h-[68vh] flex-col gap-4 overflow-auto px-6 pb-2 text-muted">${body}</div>
+    ${footer ? `<div class="flex justify-end gap-2 px-6 pt-4 pb-6">${footer}</div>` : '<div class="h-6"></div>'}</dialog>`;
+}
+const closeFooter = (label='Xong') => `<button class="btn btn-primary" data-act="close">${label}</button>`;
+
+function chatCfgDialog() {
+  const opt = (p) => `<label class="flex cursor-pointer gap-3 rounded-xl border px-4 py-3 ${S.preset===p.id?'border-accent bg-accent/5':'border-line hover:bg-fg/4'}">
+      <input type="radio" name="preset" value="${p.id}" ${S.preset===p.id?'checked':''} class="mt-1">
+      <span class="min-w-0"><span class="block text-sm font-medium text-fg">${esc(p.name)}</span><span class="block text-xs">${esc(p.desc)}</span></span></label>`;
+  const custom = canPrompt() ? `
+    <label class="flex cursor-pointer gap-3 rounded-xl border px-4 py-3 ${S.preset==='custom'?'border-accent bg-accent/5':'border-line'}">
+      <input type="radio" name="preset" value="custom" ${S.preset==='custom'?'checked':''} class="mt-1">
+      <span class="flex min-w-0 flex-1 flex-col gap-2"><span class="text-sm font-medium text-fg">Tuỳ chỉnh</span>
+        <textarea id="customPrompt" class="input" rows="4" placeholder="Ví dụ: Đóng vai chuyên viên thẩm định. Mọi số liệu phải có trích dẫn trang. Nêu rõ rủi ro nếu tỷ lệ vay/TSBĐ trên 70%.">${esc(S.customPrompt)}</textarea>
+        <label class="flex items-center gap-2 text-xs"><input type="checkbox" id="shareTpl"> Lưu thành mẫu dùng chung cho mọi người</label></span></label>`
+  : `<div class="flex gap-3 rounded-xl border border-dashed border-outline px-4 py-3 text-xs">${ic('lock',20,'text-subtle')}
+      <div><span class="block text-sm font-medium text-fg">Tuỳ chỉnh</span>Tài khoản của bạn dùng mẫu có sẵn. Chỉ người được quản trị cấp quyền "Được đặt prompt" mới viết được prompt riêng. Câu hỏi trong khung chat vẫn gửi tự do.</div></div>`;
+  return modal('Cấu hình cuộc trò chuyện','tune', `
+    <p class="text-sm">Chọn cách agent làm việc với hồ sơ này. Áp dụng cho các câu hỏi tiếp theo trong phương án.</p>
+    <div class="flex flex-col gap-2">${PRESETS.map(opt).join('')}${custom}</div>`,
+    `<button class="btn btn-text" data-act="close">Huỷ</button><button class="btn btn-primary" data-act="saveChatCfg">Lưu</button>`, 600);
+}
+
+function sheetCfgDialog() {
+  const list = SHEET_TPLS.map(t => `<label class="flex cursor-pointer gap-3 rounded-xl border px-4 py-3 ${S.sheetTpl===t.id?'border-xl bg-xl-soft':'border-line hover:bg-fg/4'}">
+      <input type="radio" name="sheetTpl" value="${t.id}" ${S.sheetTpl===t.id?'checked':''} class="mt-1">
+      <span><span class="block text-sm font-medium text-fg">${esc(t.name)}</span><span class="block text-xs">${t.fields} trường · v${t.v}</span></span></label>`).join('');
+  const editor = canPrompt() ? `
+    <div class="flex items-center"><h3 class="flex-1 text-sm font-medium text-fg">Trường của bảng</h3><span class="text-xs">sửa sẽ tạo v5, bản v4 vẫn chạy cho tới khi phát hành</span></div>
+    <div class="overflow-x-auto rounded-xl border border-line"><table class="w-full text-[13px]">
+      <thead><tr class="bg-surface-2 text-left text-xs"><th class="px-3 py-2 font-medium">Key</th><th class="px-3 py-2 font-medium">Nhãn cột</th><th class="px-3 py-2 font-medium">Kiểu</th><th></th></tr></thead>
+      <tbody>${FIELDS.slice(0,6).map(f => `<tr class="border-t border-line"><td class="px-3 py-1.5 font-mono text-xs text-fg">${f[0]}</td><td class="px-3 py-1.5 text-fg">${esc(f[1])}</td><td class="px-3 py-1.5">${/đồng/.test(f[1])?'money':'string'}</td><td class="pr-2 text-right"><button class="btn-icon btn-sm">${ic('drag_indicator',18)}</button></td></tr>`).join('')}
+      <tr class="border-t border-line"><td colspan="4" class="px-3 py-1.5 text-xs">… 7 trường nữa · <button class="text-accent">+ Thêm trường</button></td></tr></tbody></table></div>
+    <label class="field"><span>Prompt bóc tách</span><textarea class="input font-mono text-xs" rows="5">Bóc tách các trường dưới đây từ các nguồn của phương án. Tìm đúng trang qua cây hồ sơ, ghi bằng kb_save_fields kèm trích dẫn. Không tìm thấy thì để trống và ghi lý do. Giá trị tính (tỷ lệ, tổng) phải ghi cách tính.</textarea></label>`
+  : `<div class="flex gap-3 rounded-xl bg-surface-2 px-4 py-3 text-xs">${ic('lock',20,'text-subtle')}<div>Danh sách trường và prompt của mẫu do người được cấp quyền đặt prompt quản lý. Bạn chọn mẫu có sẵn.</div></div>`;
+  return modal(canPrompt() ? 'Tuỳ chỉnh bảng Excel' : 'Chọn mẫu bảng Excel', 'table_view', `
+    <div class="flex flex-col gap-2">${list}</div>${editor}`,
+    `<button class="btn btn-text" data-act="close">Huỷ</button>${canPrompt()?'<button class="btn" data-act="close">Lưu nháp v5</button>':''}<button class="btn btn-primary" data-act="saveSheetCfg">Dùng mẫu này</button>`, 640);
+}
+
+function uploadDialog() {
+  return modal('Tải lên bản đã sửa','upload_file', `
+    <p class="text-sm">Chọn file .xlsx đã tải từ trang này rồi sửa trong Excel. Hệ thống đọc mã ẩn trong file để biết mỗi ô là trường nào, rồi so với giá trị AI.</p>
+    <div class="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-outline px-6 py-8 text-center">
+      ${ic('upload_file',36,'text-subtle')}<span class="text-sm text-fg">Kéo file vào đây</span>
+      <button class="btn btn-tonal btn-sm" data-act="doUpload">${ic('science',18)}Dùng file mẫu: ${CASE.code}_tong-hop (da sua).xlsx</button></div>
+    <ul class="list-disc pl-5 text-xs">
+      <li>Ô chỉ khác định dạng (15.000.000.000 và 15000000000) không bị tính là sửa.</li>
+      <li>Dòng thêm tay hoặc file không phải xuất từ bepaylot sẽ bị bỏ qua và liệt kê lý do.</li>
+      <li>Trường đã bị sửa trên web sau lúc tải file sẽ hiện là xung đột để bạn chọn.</li></ul>`, '<button class="btn btn-text" data-act="close">Huỷ</button>');
+}
+
+function usageBar(label, spent, limit, reset) {
+  const p = limit ? Math.min(100, Math.round(spent / limit * 100)) : 0;
+  return `<div class="flex flex-col gap-1.5">
+    <div class="flex items-baseline gap-2"><span class="flex-1 text-sm text-fg">${label}</span><span class="text-xs">${limit ? p + '% đã dùng' : ''}</span></div>
+    ${limit ? `<div class="h-2 overflow-hidden rounded-full bg-surface-3"><i class="block h-full rounded-full ${p>=90?'bg-err':'bg-accent'}" style="width:${p}%"></i></div>` : ''}
+    <div class="flex text-xs"><span class="num flex-1 text-fg">${fmt(spent)} đ${limit ? ' / ' + fmt(limit) + ' đ' : ''}</span><span>${reset}</span></div></div>`;
+}
+function settingsDialog() {
+  const tabs = [['account','Tài khoản'],['keys','Key & chi phí']].concat(S.role==='admin' ? [['users','Người dùng']] : []).concat([['server','Máy chủ']]);
+  if (!tabs.some(t => t[0]===S.setTab)) S.setTab = 'keys';
+  const u = ME[S.role], b = S.role==='admin' ? { spent:USERS.reduce((a,x)=>a+x.spent,0), limit:0 } : meBudget();
+  let body = '';
+  if (S.setTab === 'account') body = `
+    <div class="flex items-center gap-4 rounded-2xl bg-surface-2 p-4">
+      <div class="grid size-12 flex-none place-items-center rounded-full bg-accent text-xl text-on-accent">${u.name[0]}</div>
+      <div class="min-w-0 flex-1"><div class="truncate text-base text-fg">${u.name}</div><div class="truncate text-xs">${u.email}</div>
+        <div class="mt-1 flex gap-1"><span class="badge">Email + mật khẩu</span><span class="badge ${S.role==='admin'?'badge-info':S.role==='editor'?'badge-vlm':''}">${ROLE[S.role]}</span></div></div>
+      <button class="btn btn-sm">${ic('logout',18)} Đăng xuất</button></div>
+    <section class="flex items-center"><h3 class="flex-1 text-sm font-medium text-fg">Mật khẩu</h3><button class="btn btn-text btn-sm">Đổi mật khẩu</button></section>`;
+  if (S.setTab === 'keys') body = `
+    <section class="flex flex-col gap-4">
+      <div><h3 class="text-base font-medium text-fg">Chi phí đã sử dụng</h3>
+        <p class="text-xs">Tính từ token thực tế của mọi model dùng chung một key LLM. Cập nhật 1 phút trước.</p></div>
+      ${usageBar(S.role==='admin' ? 'Toàn hệ thống · tháng này' : 'Của bạn · tháng này', b.spent, b.limit, 'Đặt lại vào 01/11/2026')}
+      ${usageBar('Hôm nay', Math.round(b.spent*0.11), 0, 'Đặt lại lúc 00:00')}
+      <div class="grid grid-cols-3 gap-2 text-center">
+        ${[['Hỏi đáp',.46],['Xuất Excel',.38],['Xử lý file',.16]].map(([l,r]) => `<div class="rounded-xl bg-surface-2 px-2 py-3"><div class="num text-base text-fg">${fmt(Math.round(b.spent*r))} đ</div><div class="text-xs">${l}</div></div>`).join('')}
+      </div>
+    </section>
+    <section class="flex flex-col gap-3 border-t border-line pt-4">
+      ${S.role==='admin' ? `
+      <h3 class="text-sm font-medium text-fg">Key LLM dùng chung</h3>
+      <p class="text-xs">Một key cho mọi model (hỏi đáp, VLM, thẻ tài liệu). Chi phí ở trên tính trên key này.</p>
+      <div class="flex items-center gap-3 rounded-xl border border-line px-3 py-2">${ic('key',18,'text-accent')}
+        <div class="min-w-0 flex-1"><div class="truncate text-sm text-fg">OpenAI-compatible · api.groq.com</div>
+          <div class="truncate font-mono text-[11px] text-subtle">gsk_••••••••••••3f9A · 3 model đang dùng</div></div>
+        <button class="btn btn-text btn-sm">Đổi key</button></div>` : `
+      <h3 class="text-sm font-medium text-fg">Key của bạn</h3>
+      <p class="text-xs">Key do quản trị cấp. Chi phí ở trên tính theo key này; giới hạn do quản trị đặt.</p>
+      <div class="flex items-center gap-3 rounded-xl border border-line px-3 py-2">${ic('key',18,'text-accent')}
+        <div class="min-w-0 flex-1"><div class="truncate text-sm text-fg">Web + script</div>
+          <div class="truncate font-mono text-[11px] text-subtle">sk-bepaylot-7Hq2… · cấp bởi admin@bank.vn</div></div></div>`}
+    </section>`;
+  if (S.setTab === 'users') body = `
+    <div class="flex items-center gap-2"><p class="flex-1 text-sm">Gán quyền đặt prompt, cấp key và đặt giới hạn chi phí theo tháng cho từng người.</p>
+      <button class="btn btn-tonal btn-sm" data-act="issue">${ic('key',18)}Cấp key</button></div>
+    ${S.issued ? `<div class="flex flex-col gap-2 rounded-xl bg-ok-soft p-3 text-ok"><span class="text-xs font-medium">Key mới cho trang.lt@bank.vn (giới hạn 500.000 đ/tháng). Chỉ hiện một lần, hãy sao chép rồi gửi cho người dùng:</span>
+      <code class="truncate rounded-md bg-surface px-2 py-1 font-mono text-xs text-fg">${S.issued}</code></div>` : ''}
+    <div class="overflow-x-auto rounded-xl border border-line"><table class="w-full min-w-[620px] text-[13px]">
+      <thead><tr class="bg-surface-2 text-left text-xs"><th class="px-3 py-2 font-medium">Người dùng</th><th class="px-3 py-2 font-medium">Quyền</th><th class="px-3 py-2 font-medium">Đã dùng tháng này</th><th class="px-3 py-2 font-medium">Giới hạn / tháng</th><th class="px-3 py-2 text-right font-medium">Key</th></tr></thead>
+      <tbody>${USERS.map((x,i) => { const pp = x.limit ? Math.min(100, Math.round(x.spent/x.limit*100)) : 0; return `
+        <tr class="border-t border-line"><td class="px-3 py-2"><div class="text-fg">${x.name}</div><div class="text-xs">${x.email}</div></td>
+          <td class="px-3 py-2"><select class="input h-8 text-[13px]" id="role${i}" ${x.role==='admin'?'disabled':''}>${['user','editor','admin'].map(r => `<option value="${r}" ${x.role===r?'selected':''}>${ROLE[r]}</option>`).join('')}</select></td>
+          <td class="px-3 py-2" style="min-width:150px">${x.limit ? `<div class="h-1.5 overflow-hidden rounded-full bg-surface-3"><i class="block h-full rounded-full ${pp>=100?'bg-err':pp>=80?'bg-warn':'bg-accent'}" style="width:${pp}%"></i></div><div class="num mt-1 text-xs">${fmt(x.spent)} đ · ${pp}%</div>` : `<span class="num text-xs">${fmt(x.spent)} đ</span>`}</td>
+          <td class="px-3 py-2">${x.role==='admin'?'<span class="text-xs">không giới hạn</span>':`<input class="input num h-8 w-32 text-[13px]" id="lim${i}" value="${fmt(x.limit)}">`}</td>
+          <td class="num px-3 py-2 text-right">${x.keys}</td></tr>`; }).join('')}</tbody></table></div>
+    <p class="text-xs">Quyền <b>Được đặt prompt</b>: viết prompt tuỳ chỉnh, tạo và phát hành mẫu dùng chung, sửa trường của bảng Excel, xem tỷ lệ AI sai theo trường. <b>Người dùng</b>: chọn mẫu có sẵn, hỏi đáp, xuất và sửa Excel.</p>`;
+  if (S.setTab === 'server') body = `
+    <section class="flex flex-col gap-3"><h3 class="text-sm font-medium text-fg">Máy chủ API</h3>
+      <div class="flex gap-2"><input class="input flex-1" placeholder="để trống = cùng origin (proxy /v1 của Vite)"><button class="btn btn-text">Kiểm tra</button></div></section>`;
+  return modal('Cài đặt','settings', `
+    <div class="-mx-6 -mt-2 flex overflow-x-auto border-b border-line px-3">${tabs.map(([k,l]) => `<button data-act="stTab" data-v="${k}" class="tab ${S.setTab===k?'tab-active':''}">${l}</button>`).join('')}</div>
+    ${body}`, S.setTab==='users' ? `<button class="btn btn-text" data-act="close">Huỷ</button><button class="btn btn-primary" data-act="saveUsers">Lưu</button>` : closeFooter(), 720);
+}
+
+function notesDialog() {
+  const row = (a,b) => `<tr class="border-t border-line"><td class="px-3 py-2 align-top text-fg">${a}</td><td class="px-3 py-2 align-top">${b}</td></tr>`;
+  return modal('Ghi chú spec','description', `
+    <p class="text-sm">Đã đưa vào spec.md bản 0.16: §6.9.6, §7.2–§7.8, §8.4–§8.5, §10.8, migration <code>0020</code>, lộ trình P13–P16. Màn hình bám theo frontend hiện tại: <code>Layout</code>, <code>CasePage</code>, <code>ChatPage</code>, hộp thoại Tài khoản trong <code>AppContext</code>.</p>
+    <div class="overflow-x-auto rounded-xl border border-line"><table class="w-full text-[13px]"><tbody>
+      ${row('Phương án (U43)','<code>/cases/:id</code> đổi thành 3 cột kiểu NotebookLM: Nguồn (mục lục hiện có) · Trò chuyện (ChatPage gắn sẵn case) · Studio. Nút <b>Xuất Excel</b> nằm ở Studio, chạy task <code>case:export</code>. Kết quả nằm trong danh sách "Đã tạo".')}
+      ${row('Trang Excel (U43, U44)','Route riêng <code>/cases/:id/sheets/:sheetId</code>, có nút quay lại phương án. Bảng sửa trực tiếp được, tải .xlsx (có sheet ẩn chứa field_id), tải lên bản đã sửa. Ô khác giá trị AI được đánh dấu; lưu thì ghi field <code>source=user, confirmed</code> và bản ghi AI sai (<code>field_corrections</code>).')}
+      ${row('Mẫu prompt (U45)','Nút "Cấu hình cuộc trò chuyện" giống NotebookLM. Người dùng chọn mẫu; mục Tuỳ chỉnh và sửa trường của bảng chỉ mở cho quyền <code>prompt_editor</code>. Server trả 403 nếu user thường gửi <code>system</code>.')}
+      ${row('Key & hạn mức (U46)','Chỉ hiển thị trong Cài đặt, tab "Key & chi phí", kiểu trang Usage của ChatGPT/Claude: thanh đã dùng tháng này và hôm nay, chia theo việc. Một key LLM dùng chung cho mọi model; chi phí = token thực tế × đơn giá model trong config. Quản trị thấy tổng hệ thống, đổi key và đặt giới hạn cho từng user ở tab "Người dùng".')}
+      ${row('Phụ thuộc','U43, U44 cần P8 (<code>extracted_fields</code>, evidence, <code>kb_save_fields</code>) mới có trong spec. U45, U46 làm độc lập.')}
+    </tbody></table></div>`, closeFooter('Đóng'), 680);
+}
+
+/* ------------------------------------------------------------ render + events */
+function render() {
+  document.getElementById('app').innerHTML = shell(S.route === 'excel' ? excelView() : caseView());
+  const D = { chatcfg:chatCfgDialog, sheetcfg:sheetCfgDialog, upload:uploadDialog, settings:settingsDialog, notes:notesDialog }[S.dialog];
+  const host = document.getElementById('dlg');
+  host.innerHTML = D ? D() : '';
+  const m = document.getElementById('modal');
+  if (m) { m.showModal(); m.addEventListener('cancel', e => { e.preventDefault(); S.dialog = null; render(); }); }
+}
+function startExport() {
+  const id = 'e' + (S.exports.length + 1);
+  const ex = { id, name:SHEET_TPLS.find(t=>t.id===S.sheetTpl).name, tpl:'v4', at:'Vừa xong', rows:13, status:'running', progress:9 };
+  S.exports.unshift(ex); render(); toast('Đang tạo bảng: 9 trường đã duyệt dùng lại, 4 trường gửi agent');
+  const tick = setInterval(() => { ex.progress++; if (ex.progress >= 13) { clearInterval(tick); ex.status = 'done'; toast('Bảng đã xong. Bấm để mở.'); } render(); }, 700);
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act]'); if (!t) return;
+  const v = t.dataset.v;
+  switch (t.dataset.act) {
+    case 'role': S.role = v; break;
+    case 'notes': S.dialog = 'notes'; break;
+    case 'settings': S.dialog = 'settings'; if (t.dataset.tab) S.setTab = t.dataset.tab; break;
+    case 'stTab': S.setTab = v; break;
+    case 'close': S.dialog = null; break;
+    case 'mcol': S.mobileCol = v; break;
+    case 'chatcfg': S.dialog = 'chatcfg'; break;
+    case 'saveChatCfg': { const r = document.querySelector('input[name=preset]:checked'); if (r) S.preset = r.value; const ta = document.getElementById('customPrompt'); if (ta) S.customPrompt = ta.value; S.dialog = null; toast(document.getElementById('shareTpl')?.checked ? 'Đã lưu và gửi thành mẫu dùng chung (bản nháp)' : 'Đã lưu cấu hình cuộc trò chuyện'); break; }
+    case 'sheetcfg': S.dialog = 'sheetcfg'; break;
+    case 'saveSheetCfg': { const r = document.querySelector('input[name=sheetTpl]:checked'); if (r) S.sheetTpl = r.value; S.dialog = null; break; }
+    case 'export': startExport(); return;
+    case 'openx': S.openExport = v; S.route = 'excel'; break;
+    case 'back': S.route = 'case'; if (unsaved()) toast('Còn chỉnh sửa chưa lưu, chúng vẫn được giữ trong bản nháp'); break;
+    case 'stab': S.sheetTab = v; break;
+    case 'side': S.side = v; break;
+    case 'src': S.sel = +v; S.side = 'src'; break;
+    case 'undo': S.values[+v] = FIELDS[+v][2]; S.fromFile.delete(+v); break;
+    case 'upload': S.dialog = 'upload'; break;
+    case 'doUpload': S.values[5] = '6.124.800.000'; S.values[10] = 'QSDĐ thửa 112, tờ bản đồ 07, P. Dịch Vọng Hậu'; S.fromFile.add(5); S.fromFile.add(10); S.dialog = null; S.side = 'edits'; toast('Đã đọc file: 2 ô khác giá trị AI, 1 dòng thêm tay bị bỏ qua'); break;
+    case 'dl': toast('Tải .xlsx: sheet Tổng hợp, Nguồn và sheet ẩn chứa mã trường'); return;
+    case 'save': { const n = edits().length; S.saved = S.values.slice(); toast(`Đã lưu ${n} chỉnh sửa và ghi nhận ${n} lỗi AI cho mẫu v4`); break; }
+    case 'issue': S.issued = 'sk-bepaylot-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10); break;
+    case 'saveUsers': S.dialog = null; toast('Đã lưu quyền và hạn mức'); break;
+    default: return;
+  }
+  render();
+});
+document.addEventListener('change', e => {
+  const c = e.target.dataset && e.target.dataset.cell;
+  if (c !== undefined) { S.values[+c] = e.target.value; S.fromFile.delete(+c); S.sel = +c; render(); }
+});
+document.addEventListener('focusin', e => {
+  const c = e.target.dataset && e.target.dataset.cell;
+  if (c !== undefined && S.sel !== +c) { S.sel = +c; document.querySelectorAll('.sheet tr.sel').forEach(r => r.classList.remove('sel')); e.target.closest('tr').classList.add('sel'); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.cell !== undefined) e.target.blur(); });
+render();
+</script>
+
+</html>

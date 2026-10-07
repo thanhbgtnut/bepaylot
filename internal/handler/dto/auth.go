@@ -56,12 +56,15 @@ type ChangePasswordRequest struct {
 
 // UserView is the public view of a user.
 type UserView struct {
-	ID           string     `json:"id"`
-	Email        string     `json:"email"`
-	Name         string     `json:"name"`
-	AuthProvider string     `json:"auth_provider" example:"local"`
-	HasPassword  bool       `json:"has_password"`
-	IsAdmin      bool       `json:"is_admin"`
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	Name         string `json:"name"`
+	AuthProvider string `json:"auth_provider" example:"local"`
+	HasPassword  bool   `json:"has_password"`
+	IsAdmin      bool   `json:"is_admin"`
+	// Role is admin, prompt_editor or user (§8.4); admin also for http.admin_emails.
+	Role         string     `json:"role" example:"user"`
+	MonthlyLimit *float64   `json:"monthly_limit,omitempty"`
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
@@ -90,6 +93,7 @@ type APIKeyView struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+	IssuedBy   string     `json:"issued_by,omitempty"`
 }
 
 // APIKeyList is the body of GET /v1/auth/api-keys.
@@ -112,11 +116,23 @@ type CreatedAPIKey struct {
 func UserViewFrom(u types.User, isAdmin bool) UserView {
 	return UserView{
 		ID: u.ID.String(), Email: u.Email, Name: u.Name, AuthProvider: u.AuthProvider,
-		HasPassword: u.HasPassword, IsAdmin: isAdmin, LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt,
+		HasPassword: u.HasPassword, IsAdmin: isAdmin, Role: EffectiveRole(u, isAdmin), MonthlyLimit: u.MonthlyLimit,
+		LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt,
 	}
+}
+
+// EffectiveRole is the user's role, admin for http.admin_emails (§8.4).
+func EffectiveRole(u types.User, isAdmin bool) string {
+	if isAdmin {
+		return types.UserRoleAdmin
+	}
+	if u.Role == "" {
+		return types.UserRoleUser
+	}
+	return u.Role
 }
 
 // APIKeyViewFrom maps a key.
 func APIKeyViewFrom(k types.APIKey) APIKeyView {
-	return APIKeyView{ID: k.ID.String(), Name: k.Name, Prefix: k.Prefix, LastUsedAt: k.LastUsedAt, RevokedAt: k.RevokedAt, CreatedAt: k.CreatedAt}
+	return APIKeyView{ID: k.ID.String(), Name: k.Name, Prefix: k.Prefix, LastUsedAt: k.LastUsedAt, RevokedAt: k.RevokedAt, CreatedAt: k.CreatedAt, IssuedBy: k.IssuedBy}
 }

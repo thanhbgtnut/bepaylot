@@ -17,6 +17,19 @@ tidy: ## go mod tidy
 build: ## Build all binaries
 	go build ./...
 
+.PHONY: ui
+ui: ## Build the web app into internal/webui/dist (embedded by the server binary)
+	cd frontend && npm ci && npm run build
+
+.PHONY: build-server
+build-server: ui ## Build bin/server with the web app embedded
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/server ./cmd/server
+
+.PHONY: docker
+docker: ## Build the api and worker images (web app embedded in both)
+	docker build -f deploy/Dockerfile --target api -t bepaylot:api .
+	docker build -f deploy/Dockerfile --target worker -t bepaylot:worker .
+
 .PHONY: vet
 vet: ## go vet
 	go vet ./...

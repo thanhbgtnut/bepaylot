@@ -25,10 +25,10 @@ func (h *Handlers) isAdmin(c *app.RequestContext) bool {
 	if !ok {
 		return false
 	}
-	if h.adminEmail(u) {
+	if h.role(u) == types.UserRoleAdmin {
 		return true
 	}
-	c.JSON(consts.StatusForbidden, dto.NewError("permission_error", "admin only (http.admin_emails)"))
+	c.JSON(consts.StatusForbidden, dto.NewError("permission_error", "admin only (role admin or http.admin_emails)"))
 	return false
 }
 

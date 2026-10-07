@@ -28,6 +28,11 @@ const keyPlaintextPrefix = "sk-bepaylot-"
 // Issue generates a new plaintext key, stores its hash, and returns the
 // plaintext exactly once.
 func (r *APIKeysRepo) Issue(ctx context.Context, userID uuid.UUID, name string) (plaintext string, key types.APIKey, err error) {
+	return r.IssueBy(ctx, userID, name, nil)
+}
+
+// IssueBy is Issue for a key an admin hands out to a user (§8.5).
+func (r *APIKeysRepo) IssueBy(ctx context.Context, userID uuid.UUID, name string, issuedBy *uuid.UUID) (plaintext string, key types.APIKey, err error) {
 	buf := make([]byte, 24)
 	if _, err = rand.Read(buf); err != nil {
 		return "", types.APIKey{}, err
@@ -37,10 +42,10 @@ func (r *APIKeysRepo) Issue(ctx context.Context, userID uuid.UUID, name string) 
 	prefix := plaintext[:min(len(plaintext), 16)]
 
 	err = r.pool.QueryRow(ctx, `
-		INSERT INTO api_keys (user_id, name, key_prefix, key_hash)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO api_keys (user_id, name, key_prefix, key_hash, issued_by)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, user_id, name, key_prefix, key_hash, created_at`,
-		userID, name, prefix, sum[:],
+		userID, name, prefix, sum[:], issuedBy,
 	).Scan(&key.ID, &key.UserID, &key.Name, &key.Prefix, &key.Hash, &key.CreatedAt)
 	if err != nil {
 		return "", types.APIKey{}, fmt.Errorf("apikeys.Issue: %w", err)
@@ -59,7 +64,7 @@ func (r *APIKeysRepo) Verify(ctx context.Context, plaintext string) (types.User,
 	prefix := plaintext[:min(len(plaintext), 16)]
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT k.id, k.key_hash, u.id, u.email, u.name, u.auth_provider, u.password_hash <> '', u.is_active, u.last_login_at, u.created_at
+		SELECT k.id, k.key_hash, u.id, u.email, u.name, u.auth_provider, u.password_hash <> '', u.is_active, u.role, u.monthly_limit::float8, u.last_login_at, u.created_at
 		FROM api_keys k JOIN users u ON u.id = k.user_id
 		WHERE k.key_prefix = $1 AND k.revoked_at IS NULL`, prefix)
 	if err != nil {
@@ -71,7 +76,7 @@ func (r *APIKeysRepo) Verify(ctx context.Context, plaintext string) (types.User,
 		var keyID uuid.UUID
 		var hash []byte
 		var u types.User
-		if err := rows.Scan(&keyID, &hash, &u.ID, &u.Email, &u.Name, &u.AuthProvider, &u.HasPassword, &u.IsActive, &u.LastLoginAt, &u.CreatedAt); err != nil {
+		if err := rows.Scan(append([]any{&keyID, &hash}, userDest(&u)...)...); err != nil {
 			return types.User{}, err
 		}
 		if subtle.ConstantTimeCompare(hash, sum[:]) == 1 {
@@ -104,8 +109,9 @@ func (r *APIKeysRepo) Get(ctx context.Context, id uuid.UUID) (types.APIKey, erro
 // List returns a user's keys, newest first (revoked ones included).
 func (r *APIKeysRepo) List(ctx context.Context, userID uuid.UUID) ([]types.APIKey, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, user_id, name, key_prefix, last_used_at, revoked_at, created_at
-		FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		SELECT k.id, k.user_id, k.name, k.key_prefix, k.last_used_at, k.revoked_at, k.created_at, COALESCE(i.email, '')
+		FROM api_keys k LEFT JOIN users i ON i.id = k.issued_by
+		WHERE k.user_id = $1 ORDER BY k.created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("apikeys.List: %w", err)
 	}
@@ -113,7 +119,7 @@ func (r *APIKeysRepo) List(ctx context.Context, userID uuid.UUID) ([]types.APIKe
 	out := []types.APIKey{}
 	for rows.Next() {
 		var k types.APIKey
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.Prefix, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.Prefix, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt, &k.IssuedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, k)

@@ -207,6 +207,7 @@ func (a *Agent) resume(in RunInput, left []steerMsg) {
 func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink events.Sink) (RunOutput, error) {
 	start := time.Now()
 	sess := in.Session
+	ctx = llm.WithCaller(ctx, turnCaller(in))
 
 	// persistCtx is detached from request cancellation so that a client
 	// disconnecting mid-stream never loses the turn that was already produced.
@@ -319,7 +320,14 @@ func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink ev
 	ctx = tools.WithRunSessionID(ctx, sess.ID)
 
 	// 5. Build the dynamic system prompt.
-	sysOverride := strings.TrimSpace(strings.Join([]string{sess.SystemOverride, in.RequestSystem}, "\n\n"))
+	// A chat template (§8.4) adds its published body to the session
+	// instructions, like a custom prompt; it is read each turn so a newly
+	// published version applies at once.
+	var templateBody string
+	if sess.TemplateID != nil {
+		templateBody = a.store.Templates.PublishedBody(ctx, *sess.TemplateID)
+	}
+	sysOverride := strings.TrimSpace(strings.Join([]string{templateBody, sess.SystemOverride, in.RequestSystem}, "\n\n"))
 	tc := prompt.TurnContext{
 		MaxSteps:       a.acfg.MaxSteps,
 		Now:            time.Now(),
@@ -512,4 +520,15 @@ func runDetail(stopReason string, maxTokens int, temperature *float32, blocks []
 		d["interrupted"] = true
 	}
 	return d
+}
+
+// turnCaller attributes the model calls of a turn (§8.5): to the user, the
+// session's case, and kind sheet for the hidden turn that fills a case sheet.
+func turnCaller(in RunInput) llm.Caller {
+	uid := in.User.ID
+	c := llm.Caller{UserID: &uid, CaseID: in.Session.CaseID, Kind: types.UsageChat}
+	if _, ok := in.Session.Metadata["sheet_id"]; ok {
+		c.Kind = types.UsageSheet
+	}
+	return c
 }

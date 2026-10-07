@@ -60,6 +60,14 @@ func (h *Handlers) Messages(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	if strings.TrimSpace(dto.SystemText(req.System)) != "" && !h.canPrompt(user) {
+		h.forbidPrompt(c)
+		return
+	}
+	if !h.withinBudget(ctx, c, user) {
+		return
+	}
+
 	provider := req.Provider
 	if provider == "" {
 		provider = h.LLM.DefaultProvider

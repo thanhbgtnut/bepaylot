@@ -16,6 +16,17 @@ import type {
   TreeNode,
   UploadResult,
   CaseTOC,
+  AdminUser,
+  CorrectionStat,
+  LLMKeyView,
+  PromptTemplate,
+  Sheet,
+  SheetField,
+  SheetImport,
+  SheetView,
+  UsageSummary,
+  APIKey,
+  AuthUser,
 } from "./types";
 
 const q = (params: Record<string, string | number | undefined | null>) => {
@@ -112,6 +123,8 @@ export interface MessageRequest {
   sessionId?: string | null;
   // The case a new session is bound to; a session never changes its case.
   caseId?: string | null;
+  // A custom prompt for this turn (prompt editors only, §8.4).
+  system?: string;
   signal?: AbortSignal;
 }
 export function streamMessage(m: MessageRequest) {
@@ -119,8 +132,53 @@ export function streamMessage(m: MessageRequest) {
   if (m.caseId) metadata.case_id = m.caseId;
   if (m.sessionId) metadata.session_id = m.sessionId;
   return requestRaw("/messages", {
-    body: { max_tokens: 4096, stream: true, messages: [{ role: "user", content: m.text }], metadata },
+    body: { max_tokens: 4096, stream: true, messages: [{ role: "user", content: m.text }], metadata, ...(m.system ? { system: m.system } : {}) },
     headers: { Accept: "text/event-stream" },
     signal: m.signal,
   });
 }
+
+export const createSession = (body: { case_id: string; template_id?: string; title?: string }) =>
+  request<SessionBrief>("/sessions", { body });
+export const setSessionTemplate = (id: string, templateId: string) =>
+  request<SessionBrief>(`/sessions/${id}`, { method: "PATCH", body: { template_id: templateId } });
+
+// ---- prompt templates (§8.4)
+
+export const listTemplates = (kind: "chat" | "sheet", caseType?: string, drafts = false) =>
+  request<{ data: PromptTemplate[] }>("/templates" + q({ kind, case_type: caseType, drafts: drafts ? 1 : undefined })).then((r) => r.data ?? []);
+export const getTemplate = (id: string, version?: number) => request<PromptTemplate>(`/templates/${id}` + q({ version }));
+export const createTemplate = (body: { kind: "chat" | "sheet"; slug: string; name: string; description?: string; case_type?: string; body: string; fields?: SheetField[] }) =>
+  request<PromptTemplate>("/templates", { body });
+export const addTemplateVersion = (id: string, body: { name?: string; description?: string; body: string; fields?: SheetField[] }) =>
+  request<PromptTemplate>(`/templates/${id}/versions`, { body });
+export const publishTemplate = (id: string, version: number) => request<PromptTemplate>(`/templates/${id}/publish`, { body: { version } });
+export const templateCorrections = (id: string) =>
+  request<{ data: CorrectionStat[] }>(`/templates/${id}/corrections`).then((r) => r.data ?? []);
+
+// ---- case sheets (§6.9.6)
+
+export const createSheet = (caseId: string, templateId: string) => request<Sheet>(`/cases/${caseId}/sheets`, { body: { template_id: templateId } });
+export const listSheets = (caseId: string) => request<{ data: Sheet[] }>(`/cases/${caseId}/sheets`).then((r) => r.data ?? []);
+export const getSheet = (id: string) => request<SheetView>(`/sheets/${id}`);
+export const saveSheetEdits = (id: string, edits: { key: string; value: string; origin: "page" | "xlsx"; document_id?: string }[]) =>
+  request<SheetView>(`/sheets/${id}/edits`, { body: { edits } });
+export const importSheet = (id: string, file: File) => {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  return uploadForm<SheetImport>(`/sheets/${id}/import`, fd);
+};
+export const downloadSheet = (s: { id: string; name: string; case_code?: string }) =>
+  download(`/sheets/${s.id}/xlsx`, `${s.case_code ? s.case_code + "_" : ""}${s.name}.xlsx`);
+
+// ---- usage and admin (§8.5)
+
+export const getMyUsage = () => request<UsageSummary>("/me/usage");
+export const getAdminUsage = () => request<UsageSummary>("/admin/usage");
+export const listAdminUsers = () => request<{ currency: string; data: AdminUser[] }>("/admin/users");
+export const updateAdminUser = (id: string, body: { role?: string; monthly_limit?: number; is_active?: boolean }) =>
+  request<AuthUser>(`/admin/users/${id}`, { method: "PATCH", body });
+export const issueAPIKey = (userId: string, name: string) =>
+  request<{ key: APIKey; api_key: string }>(`/admin/users/${userId}/api-keys`, { body: { name } });
+export const getLLMKey = () => request<LLMKeyView>("/admin/llm");
+export const setLLMKey = (apiKey: string) => request<LLMKeyView>("/admin/llm", { method: "PUT", body: { api_key: apiKey } });

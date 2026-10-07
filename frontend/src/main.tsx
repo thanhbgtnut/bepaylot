@@ -12,6 +12,7 @@ import { CasePage } from "./pages/cases/CasePage";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { DocumentDetail } from "./pages/documents/DocumentDetail";
 import { DocumentsPage } from "./pages/documents/DocumentsPage";
+import { SheetPage } from "./pages/sheets/SheetPage";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -32,6 +33,7 @@ const router = createBrowserRouter([
       { path: "chat/:sessionId", element: <ChatPage /> },
       { path: "cases", element: <CasePage /> },
       { path: "cases/:caseId", element: <CasePage /> },
+      { path: "cases/:caseId/sheets/:sheetId", element: <SheetPage /> },
       { path: "*", element: <Navigate to="/documents" replace /> },
     ],
   },

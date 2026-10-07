@@ -20,8 +20,11 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
+	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
+	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
+	"github.com/thanhenti/bepaylot/internal/application/service/usage"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler"
 	"github.com/thanhenti/bepaylot/internal/llm"
@@ -90,6 +93,11 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	if err := registry.Validate(); err != nil {
 		return nil, err
 	}
+	// Every model call is priced and checked against the user's monthly
+	// limit (§8.5); a key saved from Settings replaces the shared one.
+	meter := usage.New(st, cfg.Usage, log)
+	registry.SetMeter(meter)
+	handler.LoadSharedLLMKey(ctx, st, registry)
 	toolReg, err := tools.NewRegistry(skillSvc, cfg.Tools.HTTPAllowlist, st.TaskResults)
 	if err != nil {
 		return nil, fmt.Errorf("tool registry: %w", err)
@@ -107,7 +115,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 
 	handlers := &handler.Handlers{
 		Store: st, Agent: ag, Registry: registry, Skills: skillSvc, MCP: mcpMgr,
-		LLM: cfg.LLM, Agentcfg: cfg.Agent, Log: log, Config: cfg,
+		LLM: cfg.LLM, Agentcfg: cfg.Agent, Log: log, Config: cfg, Usage: meter,
 	}
 	if cfg.Workers.RunsAPI() {
 		authSvc, err := auth.New(ctx, st, cfg.Auth, log)
@@ -118,7 +126,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	}
 
 	// ---- document modules (1–3) ----
-	if err := app.buildDocumentModules(ctx, handlers, registry, toolReg, ag); err != nil {
+	if err := app.buildDocumentModules(ctx, handlers, registry, toolReg, ag, meter); err != nil {
 		if cfg.Workers.RunsWorkers() {
 			return nil, err
 		}
@@ -131,7 +139,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, err
 	return app, nil
 }
 
-func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, registry *llm.Registry, toolReg *tools.Registry, ag *agent.Agent) error {
+func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, registry *llm.Registry, toolReg *tools.Registry, ag *agent.Agent, meter *usage.Service) error {
 	cfg, log, st := app.Config, app.Log, app.Store
 
 	// Object storage: S3, or in-memory only in development.
@@ -234,11 +242,23 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	if err := toolReg.SetKnowledgeTools(idx); err != nil {
 		return err
 	}
+	if err := toolReg.SetFieldTools(idx, docmodel.New(st, idx)); err != nil {
+		return err
+	}
 	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs, idx: idx})
+	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Runner: sheetRunner{ag: ag, st: st, cfg: cfg.LLM}, Config: cfg, Log: log})
+	h.Sheets = sh
 
 	if cfg.Workers.RunsWorkers() {
 		handlers := map[string]queue.Handler{}
-		for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers()} {
+		pipeline := map[string]queue.Handler{}
+		for _, m := range []map[string]queue.Handler{docs.Handlers(), idx.Handlers()} {
+			for k, v := range m {
+				pipeline[k] = v
+			}
+		}
+		billParse(meter, pipeline)
+		for _, m := range []map[string]queue.Handler{pipeline, cs.Handlers(), sh.Handlers()} {
 			for k, v := range m {
 				handlers[k] = v
 			}

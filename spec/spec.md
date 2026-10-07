@@ -1,11 +1,13 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.15 · Ngày: 2026-10-04 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15
+> Phiên bản: 0.16 · Ngày: 2026-10-07 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
+>
+> Thay đổi trong 0.16 (U43–U46, giao diện chốt theo prototype [`spec/prototype/u43-u46.html`](prototype/u43-u46.html)): **trang phương án kiểu NotebookLM** (Nguồn · Trò chuyện · Studio, §7.2). Nút **Xuất Excel** ở Studio tạo **bảng tổng hợp** của case từ một mẫu và dùng lại field đã duyệt (§6.9.6); bảng mở thành **trang riêng** có nút quay lại phương án (§7.6). Ô người dùng sửa được so với giá trị AI; khi lưu thành field đã duyệt và bản ghi **AI sai** để thống kê theo trường; nhập lại được file `.xlsx` đã sửa (§6.9.6). **Vai trò** `admin` / `prompt_editor` / `user` và **mẫu prompt** có phiên bản; user thường không đặt được prompt (§8.4). **Chi phí** ghi cho mọi lần gọi model qua một key LLM dùng chung, giới hạn theo user, chỉ hiển thị ở Cài đặt → Key & chi phí (§7.8, §8.5). Migration `0020`, API §10.8, lộ trình P13–P16. Bảng cần P8 (§6.9) làm trước.
 >
 > Thay đổi trong 0.15 (U42): **cây của case nạp sẵn vào context**. Phiên đã gắn đúng một case, nên mỗi lượt server dựng cây của case đó (cùng dạng `kb_case_toc`, nguyên cây khi vừa ngân sách) và đưa vào prompt ở section `<case_tree>` như dữ liệu, kèm file chưa có cây. Agent không phải gọi tool mới thấy cây; `kb_case_toc` còn để lọc theo metadata và mở nhánh bị lược (§8.1, §8.2). Trích dẫn model viết bằng ref (`doc:d1:p2:l4`, `doc:d1.n4:p2:l7`) được server đổi thành `doc:<document_id>:…` ngay trên luồng text (SSE và tin nhắn lưu), tra ref trong case của phiên; `kb_locate` cũng nhận dạng này.
 >
@@ -77,15 +79,15 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U17 | Parser OCR: gọi TurboOCR lấy layout, **cắt ảnh theo từng vùng** của trang, gọi **đồng thời** VLM (host theo chuẩn OpenAI, thử với `allenai/olmocr-2-7b` chạy local) để lấy text, rồi tổng hợp lại theo từng trang | **phần cắt ảnh theo vùng bị thay bởi U38**: không gọi VLM theo vùng nữa, mỗi trang một lần gọi kèm text OCR; phần còn hiệu lực: TurboOCR trước, VLM (OpenAI-compatible, olmOCR local) lấy text, tổng hợp theo trang, gọi qua agent (U36) | §5.9 |
 | U18 | Người dùng upload một loạt hồ sơ theo **một mã** (ví dụ mã thanh toán `RT112233`). Mã là khái niệm chung (**case**) để dùng cho nhiều bài toán khác (tín dụng doanh nghiệp…); không có khái niệm riêng của luồng thanh toán trong code, nhưng giữ đủ logic xử lý hồ sơ. Có **bảng case** | còn hiệu lực | §6.2, §9.2 |
 | U19 | Parse bằng TurboOCR; nếu cấu hình VLM thì lấy text bằng VLM rồi gộp lại. TurboOCR vẫn luôn cung cấp text và **toạ độ** để hiển thị | còn hiệu lực (làm rõ U17; cách gộp theo U38) | §5.9 |
-| U20 | Khi cần bóc tách trường thông tin hoặc kiểm tra tuân thủ một rule theo mã hồ sơ, người dùng chỉ việc hỏi agent. Agent tự tìm đúng tài liệu trong case bằng search vectorless, rồi bóc tách hoặc trả lời theo nội dung người dùng gửi | còn hiệu lực; search vectorless theo U35 (mục lục hồ sơ → cây → trang); **được làm rõ bởi U30**: kết quả bóc tách được lưu thành Extracted Field (value, confidence, evidence[]) gắn với document; danh sách trường vẫn nằm trong tin nhắn, không nằm trong server | §6.6, §6.9.3, §8 |
+| U20 | Khi cần bóc tách trường thông tin hoặc kiểm tra tuân thủ một rule theo mã hồ sơ, người dùng chỉ việc hỏi agent. Agent tự tìm đúng tài liệu trong case bằng search vectorless, rồi bóc tách hoặc trả lời theo nội dung người dùng gửi | còn hiệu lực; search vectorless theo U35 (mục lục hồ sơ → cây → trang); **được làm rõ bởi U30**: kết quả bóc tách được lưu thành Extracted Field (value, confidence, evidence[]) gắn với document; danh sách trường vẫn nằm trong tin nhắn, không nằm trong server; **bổ sung bởi U45**: danh sách trường có thể nằm trong mẫu do người có quyền soạn (§8.4) | §6.6, §6.9.3, §8 |
 | U21 | Tìm kiếm **cứng trong đúng một case**, không bao giờ nhầm sang case khác: phiên agent gắn với `case_id` để lấy đúng dữ liệu vectorless (wiki + cây mục lục của case) mà search. `documents.case_id` chỉ cần NOT NULL, **không cần FK** | còn hiệu lực; dữ liệu vectorless của case là mục lục hồ sơ + cây mục lục của các file | §6.2, §8.1 |
 | U22 | **Module 2:** dựng vectorless theo concept PageIndex. Tạo **một nội dung mô tả chung của hồ sơ** để search nhanh hơn, tiết kiệm token hơn: nạp nội dung này thay cho cả đống file | còn hiệu lực, **được làm rõ bởi U35**: "nội dung mô tả chung của hồ sơ" là mục lục hồ sơ (thẻ các file + nhánh đầu của cây) dựng bằng code, không phải wiki | §6.6 |
-| U23 | **Module 3:** hiển thị dạng **wiki**, giống https://deepwiki.com nhưng theo mức **hồ sơ** (case) | **được làm rõ bởi U35**: hiển thị theo hồ sơ vẫn giữ, nhưng nội dung là mục lục hồ sơ + cây của từng file (không có wiki) | §7 |
+| U23 | **Module 3:** hiển thị dạng **wiki**, giống https://deepwiki.com nhưng theo mức **hồ sơ** (case) | **được làm rõ bởi U35**: hiển thị theo hồ sơ vẫn giữ, nhưng nội dung là mục lục hồ sơ + cây của từng file (không có wiki); **được làm rõ bởi U43**: trang phương án kiểu NotebookLM (Nguồn · Trò chuyện · Studio, §7.2) | §7 |
 | U24 | Vectorless viết rõ theo concept **LLM Wiki** (https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f): nguồn gốc bất biến → wiki do LLM duy trì → schema; các thao tác ingest / query / lint; có index và log. Khác gist: dữ liệu wiki **lưu ở Postgres**, không lưu file | **được thay bởi U35**: bỏ LLM Wiki | — |
 | U25 | **Xoá dữ liệu graph/wiki cũ** để dựng lại theo cách mới | còn hiệu lực; từ U35 toàn bộ dữ liệu wiki cũng bị xoá (migration `0016`) | §9.2 (migration `0014`, `0016`) |
 | U26 | Tối ưu LLM Wiki theo đúng concept của Karpathy và **giảm số lần gọi LLM**: cây mục lục đã có sau khi index thì dùng luôn để hiển thị wiki theo nội dung, không để LLM dựng lại; LLM chỉ trích xuất entity/quan hệ (JSON có cấu trúc, không viết văn xuôi), code gộp theo định danh, kiểm với dòng gốc và dựng trang; gỡ file hay làm mới trang không gọi LLM | **được thay bởi U35** (không còn wiki). Ý "dùng luôn cây mục lục đã có, không để LLM dựng lại" vẫn giữ: Module 3 hiển thị thẳng từ cây | §7 |
 | U27 | Index và tóm tắt theo đúng `index.md` của LLM Wiki (catalog mọi trang: link, tóm tắt một dòng, metadata như ngày hoặc số nguồn, nhóm theo loại; đọc index trước rồi mới đi vào trang), tóm tắt được làm ngay khi ingest; **tối ưu token**, tránh token thừa; dữ liệu vẫn lưu Postgres | **được thay bởi U35**; ý "tối ưu token, đọc mục lục trước rồi mới vào trang" chuyển thành mục lục hồ sơ (§6.6) | §6.6 |
-| U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6 | §10.6, §9.2 (migration `0015`), §11, frontend `/login` |
+| U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6; **phần API key tự phục vụ bị thay bởi U46**: user thường dùng key do admin cấp | §10.6, §9.2 (migration `0015`), §11, frontend `/login` |
 | U29 | Viết **tài liệu vận hành** trong thư mục `spec` để bàn giao cho đội vận hành OPN: vận hành từng tính năng và các kiểm tra trạng thái dịch vụ | còn hiệu lực | [`spec/van-hanh.md`](van-hanh.md), `spec/van-hanh/healthcheck.sh`, `spec/van-hanh/kiem-tra.sql` |
 | U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0019`), §10.7 |
 | U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực | §4.2, §6.2, §6.9.4, §10.7, §11 |
@@ -100,6 +102,10 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U41 | Flow load tree theo case rồi lấy trang để trả lời **không phụ thuộc vào prompt**: agent **tự lên plan** dựa trên các tool được cung cấp; flow người dùng đưa chỉ là ví dụ (few-shot), agent phải tổng quát hơn. Lấy tree theo case phải **đúng mã case**, không lấy của case khác; case vẫn do client chọn khi mở phiên như hiện tại | còn hiệu lực; làm rõ U40, giữ U21/§8.1 (phạm vi cứng theo `sessions.case_id`) | §0 (bản 0.15), §6.6, §8.1, §8.2 |
 | U42 | Hãy **load tree vào context**, vì tree đã theo case rồi (kết quả chạy thử: agent ít đi đường cây → node → trang, chủ yếu tìm từ khoá) | còn hiệu lực; bổ sung U40/U41: cây là dữ liệu của phiên, không phải flow | §0 (bản 0.15), §8.1, §8.2 |
 | U38 | Kiểm tra lại `turboocr_vlm`: **không gọi VLM theo từng layout nữa**, chỉ đi qua **2 bước**: (1) bóc tách bằng TurboOCR (text, box của từng trang); (2) gọi VLM **theo từng trang** để lấy markdown. Khi gọi VLM phải **gửi kèm text của TurboOCR** để verify kết quả markdown (coi như context của VLM), vì markdown trả ra có thể **sai hoặc thiếu** | còn hiệu lực; **thay U36 (1)**, thay phần "cắt ảnh theo vùng" của U17 | §0 (bản 0.14), §5.9, §11, §16 |
+| U43 | **Xuất Excel từ các file hồ sơ phương án, gom lại.** Làm **giống NotebookLM**: nút xuất Excel nằm trong phương án; khi mở, bảng hiển thị thành **một trang riêng** có nút **quay lại phương án**. Giao diện phải khớp UI hiện tại; giao diện đã chốt theo prototype | còn hiệu lực; làm rõ U23 | §6.9.6, §7.2, §7.6, §10.8, [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) |
+| U44 | **Nhận diện thông tin người dùng chỉnh sửa** trên Excel ở những chỗ AI quét ra sai | còn hiệu lực | §6.9.6, §7.6, §10.8 |
+| U45 | **Phân quyền:** một số user được đặt prompt, đa số user dùng prompt có sẵn | còn hiệu lực; bổ sung U20 | §7.7, §8.4, §10.5, §10.8 |
+| U46 | **Giới hạn tiền cho từng user**, kiểm soát bằng key cấp cho user. (Làm rõ: **một key LLM cho mọi model**, key quản lý ở **Cài đặt**; chi phí đã dùng **chỉ hiển thị ở phần setup key trong Cài đặt**, giống trang Usage của ChatGPT/Claude) | còn hiệu lực; thay phần API key tự phục vụ của U28 cho user thường | §7.8, §8.5, §10.6, §10.8, §11 |
 
 ## 1. Yêu cầu chung
 
@@ -117,10 +123,14 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R10 | TurboOCR + VLM, tổng hợp theo trang | engine `turboocr_vlm` hai bước (U38): TurboOCR bóc tách text/box/layout; một lần gọi VLM mỗi trang (qua `agent.Extract`, streaming) lấy markdown, prompt kèm text OCR để kiểm; code căn markdown với OCR để chia về vùng, bỏ đoạn không được OCR xác nhận, chèn lại dòng OCR bị bỏ sót; giữ bbox/offset của TurboOCR (§5.9) |
 | R11 | Tài liệu nhóm theo mã hồ sơ, agent chỉ tìm trong đúng hồ sơ, dùng được cho nhiều bài toán | Bảng `cases` + loại case trong YAML (§6.2); session agent gắn một `case_id` bất biến, mọi truy vấn của tool lọc `case_id` phía server (§8.1) |
 | R12 | Hỏi đáp nhanh, rẻ token | Không có lớp biên soạn trước; LLM chỉ đọc mục lục/cây (tiêu đề, khoảng trang, tóm tắt) và đúng các trang cần thiết; ngân sách token cứng ở mọi bước (§6.6, §11) |
-| R14 | Hiển thị hồ sơ để đọc hiểu cả bộ | Module 3: case → file → cây mục lục kèm tóm tắt, bấm node mở trang gốc + bbox, "Hỏi về hồ sơ"; không gọi LLM (§7) |
+| R14 | Hiển thị hồ sơ để đọc hiểu cả bộ | Module 3: case → file → cây mục lục kèm tóm tắt, bấm node mở trang gốc + bbox, "Hỏi về hồ sơ"; không gọi LLM (§7); từ U43 là trang phương án ba cột Nguồn · Trò chuyện · Studio (§7.2) |
 | R15 | Dữ liệu graph/wiki cũ bị xoá | Migration `0014` xoá graph bản 0.4; `0016` xoá LLM Wiki (§9.2) |
 | R16 | Người dùng tự đăng ký / đăng nhập trên web, có OIDC, xác thực như WeKnora | `service/auth`: bcrypt + JWT access/refresh lưu vết trong `auth_tokens`, OIDC authorization code (backend đổi code, state ký + cookie nonce); middleware Bearer JWT → API key; trang `/login` hai cột; API key tự phục vụ (§10.6) |
 | R17 | Dữ liệu hồ sơ liên kết được theo cây Case → Document → Page → Element/Table, cộng Extracted Field và Classification có evidence | Bảng `page_tables`, `table_cells`, `extracted_fields`, `document_segments`, `evidence_spans` (migration `0019`); mọi evidence giải được ra `(document, page, line/element/ô, bbox)`; API trả cả cây (§6.9, §10.7) |
+| R18 | Xuất bảng Excel gom từ các file của phương án, kiểu NotebookLM | Trang phương án ba cột Nguồn · Trò chuyện · Studio; task `case:sheet` dựng bảng từ mẫu, dùng lại field đã duyệt; trang bảng riêng có nút quay lại, tải `.xlsx` (§6.9.6, §7.2, §7.6) |
+| R19 | Biết chỗ người dùng sửa giá trị AI | Ô so với giá trị AI theo quy tắc so khớp §6.9.2; lưu thành field `source=user, confirmed` + `field_corrections`; nhập lại `.xlsx` nhận diện ô nhờ sheet ẩn `_bp` (§6.9.6) |
+| R20 | Chỉ một số user đặt được prompt | `users.role` (`admin` / `prompt_editor` / `user`); mẫu prompt có phiên bản; `system` từ user thường → `403` (§8.4) |
+| R21 | Chi phí theo user, một key LLM chung | `usage_events` ghi mọi lần gọi model ở hook của agent; đơn giá `usage.prices`; giới hạn tháng theo user; hiển thị ở Cài đặt (§7.8, §8.5) |
 
 ### 1.1 Tech stack
 
@@ -210,6 +220,9 @@ internal/
       document/        Module 1: điều phối parse (split → page → assemble)
       index/           Module 2: section, cây mục lục + tóm tắt (PageIndex), mục lục hồ sơ, FTS, metadata, search duyệt cây (§6.5–6.6)
       docmodel/        Module 2: mô hình dữ liệu hồ sơ (§6.9) — Extracted Field, Classification (`document:classify`), evidence; bộ giải/kiểm `citation_id` dùng chung (interface `CitationResolver`)
+      templates/       mẫu prompt `chat`/`sheet` có phiên bản, quyền đặt prompt (§8.4)
+      sheets/          bảng tổng hợp của case: task `case:sheet`, chỉnh sửa, nhập/xuất `.xlsx` (§6.9.6)
+      usage/           ghi và tổng hợp chi phí, kiểm giới hạn (§8.5)
       agent/           Module 4: session, message, run (bọc internal/agent)
     repository/
       postgres/        repository thuần SQL (pgx)
@@ -230,7 +243,7 @@ deploy/
   Dockerfile           kèm libpdfium (version cố định) + binary pdfium-worker
 docs/                  swagger (swaggo)
 skills/
-spec/                  tài liệu mẫu (parser/ocr_curl.txt, output_example.json)
+spec/                  tài liệu mẫu (parser/ocr_curl.txt, output_example.json); `prototype/` giao diện HTML tĩnh đã chốt (U43–U46)
 ```
 
 ### 3.2 Ánh xạ từ code hiện tại
@@ -336,6 +349,7 @@ sequenceDiagram
 | `document:classify` | enrich | 5 | 10m | `cls:{doc}:{gen}` (chạy lại bằng API: `cls:{doc}:{gen}:{n}`) |
 | `document:delete` | low | 3 | 1h | `del:{doc}` |
 | `case:delete` | low | 3 | 1h | `delcase:{case}` |
+| `case:sheet` | index_interactive | 3 | 15m | `sheet:{sheet}` |
 
 ### 4.5 Dead-letter và pending ops (theo WeKnora)
 
@@ -1289,7 +1303,7 @@ Một evidence là **một vị trí trong nguồn gốc** chứng minh cho mộ
 
 **Ai ghi.** Theo U20, danh sách trường cần bóc tách nằm trong tin nhắn người dùng gửi agent, không nằm trong server hay loại case. Field được ghi từ hai nguồn:
 - **Agent** (`source=agent`): khi người dùng yêu cầu bóc tách, agent gọi tool `kb_save_fields` (§8.2) với các giá trị đã tìm được và `citation_id` làm evidence. Field ở trạng thái `proposed`.
-- **Người dùng** (`source=user`): nhập, sửa, xác nhận hoặc bác bỏ trên UI/API (§10.7).
+- **Người dùng** (`source=user`): nhập, sửa, xác nhận hoặc bác bỏ trên UI/API (§10.7). Sửa ô trên trang bảng tổng hợp cũng ghi field `source=user, confirmed` (§6.9.6).
 
 Không có bước pipeline tự bóc tách field (xem Q21).
 
@@ -1378,22 +1392,69 @@ Agent không có tool chạy phân loại.
 }
 ```
 
+#### 6.9.6 Bảng tổng hợp của phương án (sheet, U43, U44)
+
+Bảng tổng hợp gom các trường của **cả case** (nhiều file) vào một bảng để đọc, sửa và tải về `.xlsx`. Bảng không phải nguồn dữ liệu riêng: mỗi dòng trỏ về một Extracted Field (§6.9.3), nên sửa trên bảng chính là duyệt field.
+
+**Mẫu bảng.** Bảng luôn dựng từ một mẫu `kind=sheet` (§8.4): danh sách trường `[{key, label, value_type}]` theo thứ tự dòng, cộng prompt bóc tách. User thường chỉ chọn mẫu đã phát hành; `prompt_editor` sửa trường và prompt (tạo phiên bản mới).
+
+**Tạo bảng** (`POST /cases/:id/sheets`, task `case:sheet`, pool `index`, queue `index_interactive`):
+1. Ghi `case_sheets` (`status=pending`, `template_id`, `template_version` đang phát hành, `created_by`).
+2. Trường nào case đã có field `confirmed` thì dùng lại, **không gọi LLM**. Các trường còn lại là trường thiếu.
+3. Có trường thiếu thì chạy agent một lượt, không có người chat: session ẩn gắn case, `user_id` là người tạo bảng (chi phí tính cho người đó, §8.5). Tin nhắn gồm body của mẫu và danh sách trường thiếu. Agent ghi bằng `kb_save_fields` như §8.2 (field `proposed`, có evidence). Số lần gọi model bị chặn bởi cơ chế ngân sách sẵn có của agent.
+4. Chụp bảng vào `case_sheets.rows`, mỗi dòng `{key, label, value_type, field_id, ai_field_id, ai_value_text, note}`. `ai_field_id` là field do agent ghi (nếu có); `field_id` là field hiện tại (`confirmed` nếu có, nếu không thì `proposed` mới nhất). Trường không tìm được để trống, kèm `note` agent trả về.
+5. Đặt `status=done`. Nếu lỗi thì `failed`, phần đã ghi vẫn giữ. Tiến độ (`filled/total`) đẩy qua SSE để Studio hiện "Đang bóc tách 9/13 trường".
+
+Một case có **nhiều bảng**: mỗi lần bấm tạo là một bảng mới trong danh sách "Đã tạo" của Studio, bảng cũ giữ nguyên dòng đã chụp. `case:delete` xoá bảng của case.
+
+**Ô người dùng sửa.** Mỗi dòng so giá trị hiện tại với `ai_value_text` theo quy tắc so khớp chung của §6.9.2: so không dấu, số so theo chữ số, nên `15.000.000.000` khớp `15000000000`. Khác nhau thì ô là **người dùng sửa**. Field có `value_matched=false` kèm `note` cách tính hiện nhãn "agent tính". Confidence dưới `sheets.low_confidence` hiện nhãn "cần xem".
+
+**Lưu** (`POST /sheets/:id/edits`, body `{edits: [{key, value, origin: page|xlsx, document_id?}]}`), một transaction cho mọi ô:
+- Tạo field `source=user, status=confirmed` (§6.9.3) trên document của field đang trỏ, `supersedes` field cũ. Evidence được chép từ field AI, vì người dùng sửa giá trị chứ không đổi nguồn. Dòng chưa có field nào (agent không tìm được) phải gửi kèm `document_id` (file người dùng chọn ở tab Nguồn của trang bảng); thiếu thì ô đó trả `422`.
+- Nếu giá trị khác giá trị AI thì ghi `field_corrections` (sheet, mẫu và phiên bản, `key`, field AI, field mới, giá trị AI, giá trị người dùng, `origin`, người sửa). Sửa lại đúng giá trị AI thì không ghi correction mới, và correction trước đó của cùng bảng và `key` được đánh `reverted`.
+- Cập nhật `case_sheets.rows[*].field_id`.
+
+**Tải `.xlsx`** (`GET /sheets/:id/xlsx`). File được dựng khi tải bằng `excelize`, không lưu S3, gồm:
+- sheet **Tổng hợp**: Trường, Giá trị, Tin cậy, Nguồn (`file · tr.`), Trạng thái; tô màu như trang bảng;
+- sheet **Nguồn**: `key`, file, trang, câu gốc;
+- sheet ẩn **`_bp`** (veryHidden, có khoá): `sheet_id`, và với mỗi dòng: ô, `key`, `field_id`, giá trị lúc tải.
+
+**Nhập lại** (`POST /sheets/:id/import`, multipart) chỉ đọc file, không ghi gì:
+1. File không có `_bp`, hoặc `sheet_id` khác bảng này → `422`.
+2. Mỗi ô có `key` trong `_bp` được so (sau chuẩn hoá) với giá trị lúc tải. Bằng nhau thì bỏ qua; khác thì thành một chỉnh sửa `origin=xlsx`. Nếu field hiện tại đã đổi so với lúc tải (đã có người sửa trên web) thì ô là `conflict`, người dùng chọn giữ bản nào.
+3. Dòng hoặc ô không có `key` (thêm tay) được đưa vào `ignored` kèm lý do; server không đoán ánh xạ.
+
+Kết quả (`edits`, `conflicts`, `ignored`) đổ vào panel "Chỉnh sửa so với AI" của trang bảng. Chỉ khi người dùng bấm **Lưu** mới gọi `POST /sheets/:id/edits` như trên.
+
+**Thống kê AI sai.** `GET /templates/:id/corrections` trả số liệu theo `key` và `template_version`: số bảng có trường đó, số lần bị sửa (không tính `reverted`), tỷ lệ, và vài ví dụ "AI → người sửa". Chỉ `prompt_editor` và `admin` xem được, dùng để sửa prompt của mẫu.
+
 ---
 
 ## 7. Module 3 — Hiển thị hồ sơ theo cây
 
 ### 7.1 Mục tiêu
 
-Module 3 cho người dùng **đọc hiểu cả bộ hồ sơ** mà không phải mở từng file, bằng chính dữ liệu Module 2 đã có: **mục lục hồ sơ** (thẻ các file) và **cây mục lục có tóm tắt** của từng file (§6.5, §6.6). Module 3 không gọi LLM và không sinh nội dung mới; mọi thứ hiển thị đều đọc thẳng từ Postgres và bấm được tới trang gốc.
+Module 3 cho người dùng **đọc hiểu cả bộ hồ sơ** mà không phải mở từng file, bằng chính dữ liệu Module 2 đã có: **mục lục hồ sơ** (thẻ các file) và **cây mục lục có tóm tắt** của từng file (§6.5, §6.6). Module 3 không gọi LLM và không sinh nội dung mới; mọi thứ hiển thị đều đọc thẳng từ Postgres và bấm được tới trang gốc. Từ U43, trang phương án còn chứa khung chat và Studio; hai phần đó gọi agent (§8), còn phần hiển thị cây vẫn không gọi LLM.
 
-### 7.2 Cấu trúc hiển thị
+### 7.2 Trang phương án (kiểu NotebookLM, U43)
 
-- **Header**: mã case, loại case, metadata của case, số file và trạng thái xử lý (ví dụ "18/20 file đã index").
-- **Cột trái (mục lục)**: cây ba tầng **case → file → node của cây**. Mỗi file là một mục (tên file, số trang, metadata), mở ra thành cây của file; file chưa index xong hiện mờ kèm trạng thái.
-- **Cột giữa**:
-  - Chọn **file**: thẻ tài liệu (tiêu đề, tóm tắt, số trang, metadata), mục lục các nhánh đầu kèm khoảng trang và tóm tắt.
-  - Chọn **node**: tiêu đề, khoảng trang, tóm tắt, các node con; bên dưới là **trình xem trang gốc** của khoảng trang đó (ảnh trang + lớp text, tô được bbox).
-- **Cột phải**: thông tin phụ của file đang xem: dải nhãn Classification theo trang (nếu có, §6.9.4) và bảng Extracted Field (§6.9.3).
+Route `/cases/:caseId` của `frontend/` thay bố cục hai cột hiện tại của `CasePage`. Trang nằm trong khung chung của app (`Layout`: thanh trên có ô tìm kiếm, sidebar "Mới" / Tài liệu / Hỏi đáp / Hồ sơ, panel trắng bo góc) và dùng token, class có sẵn (`btn`, `chip`, `badge`, `tab`, `Modal`, `.cite`). Giao diện chốt theo prototype [`spec/prototype/u43-u46.html`](prototype/u43-u46.html).
+
+- **Header**: mã case, số file đã có mục lục và số file đang xử lý, tiêu đề case, `CasePicker`.
+- **Cột trái, Nguồn** (`w-72`): các file của case; mỗi file mở ra cây mục lục (node, khoảng trang) như hiện nay.
+  - Checkbox chọn nguồn cho chat, mặc định chọn tất cả. Bỏ chọn file nào thì gửi `document_ids` giới hạn trong case, không bao giờ ra ngoài case.
+  - File đang xử lý hiện mờ kèm trạng thái; nút "+" tải thêm file vào case.
+- **Cột giữa, Trò chuyện**:
+  - Thẻ tổng quan của case: tiêu đề, số nguồn và số trang, tóm tắt ghép từ thẻ tài liệu, các câu hỏi gợi ý.
+  - Hội thoại của phiên agent gắn case, dùng chung thành phần với `ChatPage` (bong bóng, nhóm công cụ, nhãn trích dẫn).
+  - Trên ô nhập có chip **mẫu prompt đang dùng**; bấm vào mở hộp thoại Cấu hình cuộc trò chuyện (§7.7).
+  - Trang mở phiên gần nhất của case. Trang `/chat` vẫn giữ để xem lịch sử nhiều phiên.
+- **Cột phải, Studio** (`w-80`):
+  - Thẻ **Xuất Excel**: tên mẫu bảng đang chọn; nút bút (hoặc tune với user thường) mở hộp thoại mẫu bảng (§7.7); nút "Tạo bảng từ N nguồn".
+  - Danh sách **Đã tạo**: tên bảng, số trường, phiên bản mẫu, thời gian. Bảng đang chạy có spinner và tiến độ; bảng có chỉnh sửa hiện nhãn "n sửa". Bấm vào mở trang bảng (§7.6).
+- **Màn hẹp**: ba cột chuyển thành ba tab Nguồn · Trò chuyện · Studio.
+
+Nhãn Classification và field của từng file vẫn xem ở trình xem tài liệu (`/documents/:id`). Field của cả case xem và sửa ở trang bảng.
 
 ### 7.3 Trích dẫn và điều hướng
 
@@ -1404,12 +1465,53 @@ Module 3 cho người dùng **đọc hiểu cả bộ hồ sơ** mà không ph�
 
 ### 7.4 Tương tác với agent
 
-- Ô **"Hỏi về hồ sơ"** mở (hoặc tiếp tục) phiên agent gắn `case_id` (§8.1). File/node đang xem được gửi kèm làm ngữ cảnh hiển thị, không làm phạm vi.
+- Chat nằm ngay trong trang phương án (cột giữa, §7.2), phiên gắn `case_id` (§8.1). File hoặc node đang xem ở cột Nguồn được gửi kèm làm ngữ cảnh hiển thị, không thay đổi phạm vi.
 - Câu trả lời hiện trích dẫn bấm được (§7.3), và trace cho biết agent đã duyệt những node và trang nào.
 
 ### 7.5 Realtime
 
 - SSE `GET /documents/:id/events` (§10.2) cập nhật trạng thái từng file; mục lục nối thêm nhánh của file vào cuối cây hồ sơ ngay khi `index:tree` xong, các nhánh khác không đổi.
+
+### 7.6 Trang bảng (U43, U44)
+
+Route riêng `/cases/:caseId/sheets/:sheetId`, chiếm cả panel nội dung.
+
+- **Header**:
+  - nút **"← Phương án <mã>"** quay về trang phương án, giữ cột hoặc tab đang mở;
+  - tên bảng, mẫu và phiên bản, thời gian tạo, số trường và số nguồn;
+  - các nút **Tải lên bản đã sửa**, **Tải .xlsx**, **Lưu n chỉnh sửa** (tắt khi chưa có thay đổi).
+- **Lưới kiểu bảng tính**:
+  - các cột: số dòng; B Trường; C Giá trị (sửa trực tiếp, Enter để xác nhận); D Tin cậy; E Nguồn (nhãn trích dẫn `file · tr.n`); F Trạng thái (`AI đề xuất`, `cần xem`, `agent tính`, `người dùng sửa`);
+  - màu ô: xanh là người dùng sửa (có tam giác ở góc), vàng là tin cậy thấp, tím là agent tính;
+  - thanh sheet dưới cùng có hai sheet **Tổng hợp** và **Nguồn**, kèm chú giải màu.
+- **Panel phải**, hai tab:
+  - **Chỉnh sửa so với AI (n)**: mỗi chỉnh sửa gồm trường, ô, giá trị AI gạch ngang và giá trị mới, nguồn chỉnh sửa (sửa trên trang, từ file Excel tải lên, hoặc xung đột), nút Hoàn tác.
+  - **Nguồn ô Cn**: ảnh trang gốc tô vùng evidence, câu gốc, và cảnh báo khi giá trị AI không có nguyên văn trong câu gốc.
+- Rời trang khi còn chỉnh sửa chưa lưu: chỉnh sửa được giữ làm nháp ở client (theo `sheetId`) và có toast báo.
+- **Tải lên bản đã sửa**: hộp thoại kéo-thả file `.xlsx`. Kết quả nhập (§6.9.6) đổ vào panel chỉnh sửa; chưa ghi gì cho tới khi bấm Lưu.
+
+### 7.7 Cấu hình cuộc trò chuyện và mẫu bảng (U45)
+
+- **Cấu hình cuộc trò chuyện** (`Modal`, như "Configure chat" của NotebookLM):
+  - Các mẫu `kind=chat` đã phát hành (tên, mô tả, người soạn, phiên bản) hiện dạng radio, cùng mục **Mặc định**.
+  - Mục **Tuỳ chỉnh** (ô nhập prompt và lựa chọn "Lưu thành mẫu dùng chung") chỉ hiện cho `prompt_editor` và `admin`.
+  - Với `user`, mục này bị khoá kèm câu giải thích; câu hỏi trong khung chat vẫn gửi tự do.
+- **Mẫu bảng Excel** (nút trên thẻ Xuất Excel):
+  - `user` chỉ chọn mẫu `kind=sheet` đã phát hành.
+  - `prompt_editor` và `admin` thấy thêm bảng trường (key, nhãn, kiểu; kéo đổi thứ tự; thêm trường) và prompt bóc tách. Sửa là lưu nháp một phiên bản mới; bản đang phát hành vẫn chạy cho tới khi phát hành bản mới.
+
+### 7.8 Cài đặt: key và chi phí (U46)
+
+Hộp thoại **Cài đặt** thay hộp thoại "Tài khoản" hiện tại và mở từ nút bánh răng hoặc menu avatar. Các tab:
+- **Tài khoản**: như hiện nay (thông tin, vai trò, mật khẩu, đăng xuất).
+- **Key & chi phí** (mọi người):
+  - Phần **Chi phí đã sử dụng**, kiểu trang Usage của ChatGPT/Claude: thanh "tháng này" (đã dùng / giới hạn, % đã dùng, "Đặt lại vào 01/<tháng sau>"); dòng "Hôm nay"; ba ô chia theo việc (Hỏi đáp, Xuất Excel, Xử lý file); thời điểm cập nhật.
+  - Với `admin`: **key LLM dùng chung** (provider, base URL, key đã che `••••`, số model đang dùng, nút Đổi key); số liệu là tổng toàn hệ thống.
+  - Với người khác: **key được cấp** (tên, tiền tố, người cấp), không có nút tạo key.
+- **Người dùng** (chỉ `admin`): nút **Cấp key** (key hiện một lần, có nút sao chép) và bảng người dùng gồm vai trò (`Người dùng` / `Được đặt prompt` / `Quản trị`), đã dùng tháng này (thanh, số tiền, %), giới hạn mỗi tháng, số key.
+- **Máy chủ**: như hiện nay.
+
+Chi phí **chỉ hiển thị ở đây**: không có widget ở sidebar, không có banner trong chat hay Studio. Khi vượt giới hạn, lỗi `402` hiện như mọi lỗi API khác (toast, hoặc notice trong lượt chat).
 
 ---
 
@@ -1463,7 +1565,7 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 - **Trích dẫn dòng gốc.** Câu trả lời cho người dùng trích dẫn `citation_id` của dòng gốc trên các trang đã đọc (§6.1).
 - **Tool theo trang**: `page_from`/`page_to` của `kb_search`, `kb_find_in_document`, `kb_page_overview` là tuỳ chọn; không truyền thì lấy cả file. File gộp CCCD + giấy chứng nhận + hợp đồng… vẫn là một file. Segment phân loại (§6.9.4) chỉ được **trả về** để agent tham khảo; không tool nào nhận tham số lọc theo nhãn.
 - **Ghi field.** `kb_save_fields` là tool duy nhất agent dùng để ghi dữ liệu có cấu trúc, và chỉ ghi vào `extracted_fields` của file trong case (không ghi vào cây hay dữ liệu index). Mô tả tool chỉ nói tool làm gì; việc có lưu hay không do tin nhắn người dùng quyết định.
-- **Không có workflow trong system prompt.** Việc cần làm — bóc tách những trường nào, kiểm tra rule nào, trả lời theo định dạng nào — do người dùng (hoặc client/skill) viết trong tin nhắn gửi agent. Server chỉ cung cấp tool và phạm vi.
+- **Không có workflow trong system prompt.** Việc cần làm — bóc tách những trường nào, kiểm tra rule nào, trả lời theo định dạng nào — do người dùng (hoặc client/skill) viết trong tin nhắn gửi agent. Server chỉ cung cấp tool và phạm vi. Mẫu prompt (U45) không thay đổi điều này: body của mẫu vào `<session_instructions>` giống prompt tuỳ chỉnh của phiên (§8.4).
 - So sánh bằng (`eq`) trong bộ lọc metadata chịu lệch kiểu số/chuỗi: `"123"` khớp giá trị lưu `123` và ngược lại (không áp cho chuỗi như `"0123"`).
 - **Trích dẫn**: mọi hit trả `citation_id` dạng `doc:{id}:p{n}:l{a}-{b}`; `kb_read_table`, `kb_locate` và evidence còn dùng dạng element `…:b<k>` và ô bảng `…:t<k>:r<i>c<j>` (§5.6). Prompt section `<citations>` yêu cầu model trích dẫn theo id này. Server kiểm tra mỗi citation trong câu trả lời **tồn tại và thuộc case của session** trước khi stream (tương tự cơ chế giữ JSON hiện có). Citation không hợp lệ bị đánh dấu `invalid` trong event gửi client. Client dùng `kb_locate` để tô sáng vùng trên trang.
 - **File đính kèm trong chat**: file được upload **vào case của session** (queue `*_interactive`), không còn KB tạm. Session không có case thì không nhận file đính kèm (`409`). Agent được báo tiến độ và dùng được các trang đã xong ngay cả khi file chưa parse hết.
@@ -1482,6 +1584,48 @@ Dù người dùng gõ nhầm mã hồ sơ khác trong câu hỏi, agent vẫn c
 Luồng tín dụng doanh nghiệp dùng đúng các bước trên với loại case `tin_dung_dn`; chỉ khác file YAML loại case và nội dung tin nhắn.
 
 Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo cáo tài chính có `pageNumber`, `confidence`, `needs_review`) là use case trực tiếp. Agent đọc trang bằng `kb_read_pages`, trích số liệu, và mỗi trường có `citation_id`. `fields_to_verify` nhờ đó tô sáng được đúng ô trên trang gốc.
+
+### 8.4 Mẫu prompt và quyền đặt prompt (U45)
+
+**Vai trò** (`users.role`): `admin` (gồm cả email trong `http.admin_emails`), `prompt_editor` (hiển thị là "Được đặt prompt"), và `user`. `user` là mặc định cho tài khoản mới, kể cả tài khoản OIDC. Admin đổi vai trò ở Cài đặt → Người dùng.
+
+| Quyền | admin | prompt_editor | user |
+|---|---|---|---|
+| Hỏi đáp, chọn mẫu, tạo/sửa/tải bảng | ✓ | ✓ | ✓ |
+| Xem nội dung prompt của mẫu | ✓ | ✓ | — |
+| Prompt tuỳ chỉnh cho phiên (`system`) | ✓ | ✓ | — (`403`) |
+| Tạo, sửa, phát hành mẫu; sửa trường của mẫu bảng | ✓ | ✓ | — |
+| Xem thống kê AI sai theo trường | ✓ | ✓ | — |
+| Gán vai trò, cấp key, đặt giới hạn, đổi key LLM | ✓ | — | — |
+
+**Mẫu** (`prompt_templates`, `prompt_template_versions`): `kind = chat | sheet`, `case_type` (rỗng là mọi loại case), trạng thái `draft | published | archived`. Mỗi lần sửa tạo một phiên bản mới, và phiên bản đã tạo không bị sửa. Phát hành nghĩa là trỏ `current_version` sang một phiên bản. Bảng ghi lại `template_version` đã dùng, nên đổi mẫu không làm đổi bảng cũ.
+
+**Áp mẫu vào agent.**
+- Phiên có `template_id` thì mỗi lượt lấy body của phiên bản đang phát hành, đưa vào section `<session_instructions>` (cùng chỗ với `system_override` hiện nay), không đưa vào system prompt cố định.
+- Bất biến §8.2 và §16.2 vẫn giữ: server không có workflow hay danh sách trường mặc định. Nội dung nghiệp vụ chỉ đến từ mẫu do người có quyền soạn, hoặc từ tin nhắn.
+- Với mẫu bảng, body và danh sách trường thiếu thành tin nhắn của lượt agent trong `case:sheet` (§6.9.6).
+
+**Chặn prompt tuỳ chỉnh.** User `role=user` gửi `system` ở `POST /sessions`, `PATCH /sessions/:id`, `POST /messages` hoặc `POST /ag-ui/run` (kể cả trong `forwardedProps`) thì nhận `403 permission_error`. Handler kiểm việc này cho cả request dùng JWT lẫn API key.
+
+### 8.5 Chi phí sử dụng (U46)
+
+- **Một key LLM cho mọi model.** Mọi model (chat, VLM của parser, thẻ tài liệu, lượt agent của bảng) dùng chung một key của provider OpenAI-compatible.
+  - Key mặc định lấy từ `.env`.
+  - Admin đổi key ở Cài đặt; key mới lưu vào `app_secrets` (`llm.api_key`), ghi đè giá trị `.env` và có hiệu lực ngay, không cần restart.
+  - API chỉ trả key đã che, lộ 4 ký tự cuối.
+- **Ghi chi phí.** Mọi lần gọi model đều đi qua agent (§5.9, §8), nên chỉ cần một hook ở đó. Sau mỗi lần gọi, hook ghi một dòng `usage_events`:
+  - `user_id`, `api_key_id` (nếu gọi bằng key), `case_id`, `kind` (`chat | sheet | parse`), `model`, `tokens_in`, `tokens_out`;
+  - `cost` = số token × đơn giá của model trong `usage.prices` (đơn giá theo 1 triệu token, tiền tệ `usage.currency`);
+  - model không có trong bảng giá thì `cost=0` và log cảnh báo một lần.
+- **Ai chịu chi phí.** Chat: người gửi tin nhắn. Bảng: người bấm tạo. Parse và thẻ tài liệu: người upload (`documents.created_by`).
+- **Key cấp cho user.** API key do admin cấp (`api_keys.issued_by`). User thường không tự tạo key: `POST /auth/api-keys` trả `403` (admin vẫn tạo được). Chi phí của key tính vào user sở hữu key.
+- **Giới hạn.**
+  - Giới hạn nằm ở `users.monthly_limit`; NULL là không giới hạn. Tài khoản mới nhận `usage.default_monthly_limit` (0 là không giới hạn).
+  - Trước mỗi lần gọi model, nếu tổng `cost` của tháng hiện tại (theo giờ `Asia/Ho_Chi_Minh`) đã ≥ giới hạn thì không gọi model và trả `402 budget_exceeded`.
+  - Nếu chạm giới hạn giữa một lượt agent, lượt kết thúc bằng câu trả lời với phần đã có, theo cơ chế ngân sách sẵn có của agent.
+  - Lần gọi cuối có thể làm vượt giới hạn một chút, vì token chỉ biết sau khi gọi xong.
+  - Task parse không bị chặn (file đã upload phải được xử lý xong), nhưng vẫn ghi chi phí.
+- **Hiển thị.** `GET /me/usage` và `GET /admin/usage` trả tổng theo tháng, theo ngày và theo `kind` (§7.8). `agent_runs` giữ nguyên để trace; `usage_events` là nguồn duy nhất cho số tiền.
 
 ---
 
@@ -1518,7 +1662,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 
 ### 9.2 DDL
 
-Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ.
+Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ. Mẫu prompt, bảng tổng hợp, vai trò và chi phí ở `0020_sheets_roles_usage.sql` (U43–U46, cần `0019`).
 
 ```sql
 -- 0006_extensions.sql
@@ -1907,6 +2051,84 @@ CREATE TABLE evidence_spans (
 CREATE INDEX evidence_spans_doc_idx ON evidence_spans (document_id, gen, page_no);
 CREATE INDEX evidence_spans_owner_idx ON evidence_spans (owner_type, owner_id);
 
+-- 0020_sheets_roles_usage.sql (U43–U46, §6.9.6, §8.4, §8.5; cần 0019)
+ALTER TABLE users
+  ADD COLUMN role text NOT NULL DEFAULT 'user' CHECK (role IN ('admin','prompt_editor','user')),
+  ADD COLUMN monthly_limit numeric(16,0);                  -- usage.currency; NULL = không giới hạn
+ALTER TABLE api_keys ADD COLUMN issued_by uuid REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE TABLE prompt_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind text NOT NULL CHECK (kind IN ('chat','sheet')),
+  slug text NOT NULL UNIQUE,
+  name text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  case_type text,                                         -- NULL = mọi loại case
+  status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived')),
+  current_version int,                                    -- phiên bản đang phát hành
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE prompt_template_versions (                   -- bất biến: không UPDATE
+  template_id uuid NOT NULL REFERENCES prompt_templates(id) ON DELETE CASCADE,
+  version int NOT NULL,
+  body text NOT NULL,
+  fields jsonb NOT NULL DEFAULT '[]',                     -- kind=sheet: [{key,label,value_type}] theo thứ tự
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (template_id, version)
+);
+ALTER TABLE sessions ADD COLUMN template_id uuid REFERENCES prompt_templates(id) ON DELETE SET NULL;
+
+CREATE TABLE case_sheets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,                                  -- không FK, như documents (U21)
+  template_id uuid NOT NULL REFERENCES prompt_templates(id),
+  template_version int NOT NULL,
+  name text NOT NULL,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','done','failed')),
+  filled int NOT NULL DEFAULT 0,
+  total int NOT NULL DEFAULT 0,
+  rows jsonb NOT NULL DEFAULT '[]',                       -- [{key,label,value_type,field_id,ai_field_id,ai_value_text,note}]
+  error text NOT NULL DEFAULT '',
+  created_by uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX case_sheets_case_idx ON case_sheets (case_id, created_at DESC);
+
+CREATE TABLE field_corrections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  sheet_id uuid NOT NULL REFERENCES case_sheets(id) ON DELETE CASCADE,
+  template_id uuid NOT NULL,
+  template_version int NOT NULL,
+  key text NOT NULL,
+  ai_field_id uuid REFERENCES extracted_fields(id) ON DELETE SET NULL,
+  user_field_id uuid REFERENCES extracted_fields(id) ON DELETE SET NULL,
+  ai_value_text text NOT NULL,
+  user_value_text text NOT NULL,
+  origin text NOT NULL CHECK (origin IN ('page','xlsx')),
+  reverted boolean NOT NULL DEFAULT false,
+  user_id uuid NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX field_corrections_tpl_idx ON field_corrections (template_id, template_version, key);
+
+CREATE TABLE usage_events (
+  id bigserial PRIMARY KEY,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,  -- NULL = không gán được (tính vào tổng hệ thống)
+  api_key_id uuid REFERENCES api_keys(id) ON DELETE SET NULL,
+  case_id uuid,
+  kind text NOT NULL CHECK (kind IN ('chat','sheet','parse')),
+  model text NOT NULL,
+  tokens_in int NOT NULL,
+  tokens_out int NOT NULL,
+  cost numeric(16,2) NOT NULL,                            -- usage.currency
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX usage_events_user_idx ON usage_events (user_id, created_at);
+
 ```
 
 Ghi chú:
@@ -1979,7 +2201,7 @@ Mọi route `/v1/*` cần xác thực (§10.6): `Authorization: Bearer <access t
 
 ### 10.4 Admin / vận hành
 
-Chỉ user có email nằm trong `http.admin_emails` (đặt bằng `BEPAYLOT_ADMIN_EMAILS`, phân cách dấu phẩy) được gọi (rỗng = tắt, trả `403`). Cách dùng khi vận hành: [van-hanh.md](van-hanh.md) §4, §6.
+Chỉ admin được gọi: user có `role=admin` (§8.4) hoặc có email nằm trong `http.admin_emails` (đặt bằng `BEPAYLOT_ADMIN_EMAILS`, phân cách dấu phẩy); người khác nhận `403`. Route quản lý user, key và chi phí ở §10.8. Cách dùng khi vận hành: [van-hanh.md](van-hanh.md) §4, §6.
 
 | Method | Path | Mô tả |
 |---|---|---|
@@ -1994,6 +2216,8 @@ Chỉ user có email nằm trong `http.admin_emails` (đặt bằng `BEPAYLOT_AD
 - Session đã gắn case mà nhận `case_id` khác → `409`. `PATCH /sessions/:id` không đổi được `case_id`.
 - `metadata.kb_ids` và `metadata.kb_filter` bị bỏ; gửi lên → `422`.
 - `GET /sessions?case_id=` liệt kê các session của một case.
+- `POST /sessions` và `PATCH /sessions/:id` nhận `template_id` (mẫu `kind=chat` đã phát hành, §8.4). User `role=user` gửi `system` → `403` (§8.4).
+- Vượt giới hạn chi phí → `402 budget_exceeded` (§8.5).
 
 Các module tài liệu (§10.1–10.6) trả `503` nếu server chưa cấu hình được chúng (thiếu S3 hoặc Redis ở môi trường không phải development).
 
@@ -2007,7 +2231,7 @@ Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, h
 - **Token:** đăng ký, đăng nhập, refresh, đổi mật khẩu và OIDC đều trả một cặp JWT HS256: access token (`typ=access`, mặc định 24h) và refresh token (`typ=refresh`, mặc định 7 ngày). Claim `sub` = user id, `jti` ngẫu nhiên. Khoá ký là `auth.jwt_secret`; để trống thì server sinh một lần và giữ trong `app_secrets`, nên phiên không mất khi restart và mọi replica API dùng chung.
 - **Thu hồi:** mọi token đã cấp được ghi `sha256` vào `auth_tokens`. Token chỉ được chấp nhận khi chữ ký, hạn, `typ` đúng **và** dòng còn sống. Refresh token dùng một lần (xoay vòng). Đăng xuất thu hồi **mọi** token của user (như WeKnora), chấp nhận cả token đã hết hạn. Đổi mật khẩu thu hồi mọi token rồi cấp cặp mới cho phiên hiện tại. Token hết hạn quá một ngày bị dọn khi có người đăng nhập.
 - **Middleware:** `Authorization: Bearer` có dạng JWT → kiểm access token; không có thì dùng API key (`x-api-key`, hoặc API key làm giá trị Bearer). User bị khoá (`is_active=false`) bị từ chối. `http.auth_bypass` (dev) giữ nguyên.
-- **API key:** mỗi user tự tạo/thu hồi API key cho script (`sk-bepaylot-…`, lưu hash, plaintext chỉ trả một lần). WeKnora gắn API key theo tenant; bepaylot không có tenant nên gắn theo user (§15.2).
+- **API key:** mỗi user tự tạo/thu hồi API key cho script (`sk-bepaylot-…`, lưu hash, plaintext chỉ trả một lần). WeKnora gắn API key theo tenant; bepaylot không có tenant nên gắn theo user (§15.2). Từ U46, user `role=user` không tự tạo key (`POST /auth/api-keys` → `403`); key do admin cấp qua `/admin/users/:id/api-keys` (§10.8). `GET /auth/api-keys` vẫn liệt kê key của chính user.
 - **OIDC** (authorization code, backend đổi code, như WeKnora):
   1. Trang login điều hướng tới `GET /v1/auth/oidc/start?return_to=<origin>/login`. Server sinh nonce, đặt cookie `bp_oidc_nonce` (HttpOnly, SameSite=Lax, 10 phút, path `/v1/auth/oidc`) và `state = base64url(JSON{nonce, redirect_uri, return_to, iat}) "." HMAC-SHA256`, rồi `302` tới provider (scope mặc định `openid email profile`, kèm `nonce`).
   2. Provider gọi `GET /v1/auth/oidc/callback?code&state`. Server kiểm chữ ký và tuổi của state (≤ 10 phút), so nonce với cookie (chặn chèn code của người khác), xoá cookie, đổi code, kiểm ID token (issuer, audience, chữ ký JWKS, nonce). Email lấy từ ID token, thiếu thì từ userinfo; `email_verified=false` bị từ chối.
@@ -2031,7 +2255,7 @@ Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, h
 
 | Method | Path | Mô tả |
 |---|---|---|
-| GET | `/auth/me` | user hiện tại (`id, email, name, auth_provider, has_password, is_admin, last_login_at`) |
+| GET | `/auth/me` | user hiện tại (`id, email, name, auth_provider, has_password, is_admin, role, last_login_at`) |
 | POST | `/auth/change-password` | `{current_password, new_password}`; tài khoản chưa có mật khẩu (OIDC, seed) để trống `current_password` để đặt mật khẩu → cặp token mới |
 | GET / POST | `/auth/api-keys` | danh sách key (không có plaintext) / tạo key `{name}` → `201 {key, api_key}` |
 | DELETE | `/auth/api-keys/:id` | thu hồi key của chính user; key của người khác → `404` |
@@ -2063,6 +2287,30 @@ Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, h
 
 - Mọi route kiểm quyền theo KB của case; `citation_id` trong `evidence` phải thuộc cùng case (`422` nếu không, cùng thông báo như file không tồn tại).
 - Callback hoàn thành document (§4.7) thêm `classify_status` vào payload; khi phân loại kết thúc có thêm sự kiện `document.classified`; field không có trong callback vì field được ghi sau, theo yêu cầu.
+
+### 10.8 Mẫu prompt, bảng tổng hợp và chi phí (U43–U46)
+
+| Method | Path | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/templates` | mọi user | `?kind=chat\|sheet&case_type=`: các mẫu đã phát hành (tên, mô tả, người soạn, phiên bản); `body` và `fields` chỉ trả cho `prompt_editor`/`admin` |
+| POST | `/templates` | prompt_editor | `{kind, slug, name, description?, case_type?, body, fields?}` → mẫu `draft`, phiên bản 1 |
+| POST | `/templates/:id/versions` | prompt_editor | `{body, fields?}` → phiên bản mới (nháp) |
+| POST | `/templates/:id/publish` | prompt_editor | `{version}` → `current_version`, `status=published` |
+| GET | `/templates/:id/corrections` | prompt_editor | tỷ lệ AI sai theo trường và phiên bản (§6.9.6) |
+| POST | `/cases/:id/sheets` | quyền KB | `{template_id}` → `202 {sheet}`, chạy task `case:sheet` |
+| GET | `/cases/:id/sheets` | quyền KB | danh sách bảng (mục "Đã tạo" của Studio) |
+| GET | `/sheets/:id` | quyền KB | trạng thái, tiến độ, các dòng: giá trị AI, giá trị hiện tại, confidence, evidence (`citation_id`), cờ `edited` |
+| POST | `/sheets/:id/edits` | quyền KB | `{edits: [{key, value, origin, document_id?}]}` → field `source=user` + correction (§6.9.6) |
+| POST | `/sheets/:id/import` | quyền KB | multipart `.xlsx` → `{edits, conflicts, ignored}`, không ghi gì |
+| GET | `/sheets/:id/xlsx` | quyền KB | tải file `.xlsx` (Tổng hợp, Nguồn, `_bp` ẩn) |
+| GET | `/me/usage` | mọi user | `{month: {spent, limit, resets_at}, today: {spent}, by_kind, updated_at}` |
+| GET | `/admin/usage` | admin | như `/me/usage`, cho toàn hệ thống |
+| GET / PATCH | `/admin/users[/:id]` | admin | danh sách user kèm chi phí tháng này / `{role?, monthly_limit?, is_active?}` |
+| POST | `/admin/users/:id/api-keys` | admin | `{name}` → `201 {key, api_key}` (plaintext chỉ trả một lần), ghi `issued_by` |
+| GET / PUT | `/admin/llm` | admin | provider, base URL, key đã che, các model đang dùng / `{api_key}` đổi key dùng chung (§8.5) |
+
+- Route của case và bảng kiểm quyền theo KB của case, như §10.7.
+- Route gọi model khi user đã vượt giới hạn trả `402 budget_exceeded` (§8.5).
 
 ---
 
@@ -2203,6 +2451,14 @@ search:                             # luồng hỏi đáp duyệt cây (§6.6)
   cache_ttl: 10m
   timeout: 60s
 
+usage:                              # chi phí (U46, §8.5)
+  currency: VND
+  timezone: Asia/Ho_Chi_Minh        # tháng và ngày của trang chi phí, kỳ giới hạn
+  default_monthly_limit: 0          # giới hạn tháng cho tài khoản mới; 0 = không giới hạn
+  prices:                           # đơn giá theo 1 triệu token, theo tên model; model thiếu → cost 0 + cảnh báo
+    "qwen/qwen3.8-27b": { input: 0, output: 0 }   # ví dụ: điền giá thật của provider
+sheets:                             # bảng tổng hợp (U43, §6.9.6)
+  low_confidence: 0.75              # dưới mức này ô hiện "cần xem"
 classify:                           # document:classify (§6.9.4); nhãn nằm trong loại case
   model: ""                         # rỗng = llm.default_model
   min_confidence: 0.6               # loại case ghi đè bằng classification.min_confidence
@@ -2257,6 +2513,12 @@ fields:                             # Extracted Field (§6.9.3)
 | N34 | **Ô bảng với VLM.** Bảng có lưới TurboOCR và lưới VLM cùng kích thước → mọi ô có dòng OCR đều có bbox, text là text VLM; citation vào vị trí trong ô gộp giải về ô gốc. | `parser/assemble` unit test + integration test |
 | N37 | **Cây PageIndex nguyên khối.** File có cây `tree_tokens` ≤ `search.tree_token_budget`: bước 2 chọn node trong đúng 1 lần gọi, prompt chứa mọi node; `kb_document_tree` không `node_id` trả mọi node. Cây vượt ngân sách: node bị lược có `(+k mục, expand nX)` và `expand` trả đúng cây con | integration test |
 | N33 | Migration `0019` chạy trên DB có dữ liệu 0.7: thêm bảng mới; file cũ có `classify_status=skipped`, bảng cũ chưa có ô cho tới khi reparse (hoặc task `maintenance` dựng lại ô từ `page_blocks.html` + `page_lines`, không cần OCR lại) | migration test trên `bepaylot_test` |
+| N38 | **Bảng dùng lại field đã duyệt.** Case đã có 9/13 trường `confirmed`: `case:sheet` chỉ gửi agent 4 trường thiếu. Case đủ 13 trường: 0 lần gọi LLM | integration test (fake LLM đếm lời gọi) |
+| N39 | **Nhận diện chỗ sửa.** Sửa `15.000.000.000` thành `15000000000` không tính là chỉnh sửa. Sửa thật thì có field `source=user, confirmed` thay field AI và đúng 1 `field_corrections`. Sửa lại về giá trị AI thì correction thành `reverted` | integration test |
+| N40 | **Nhập `.xlsx`.** File tải từ bảng A đem tải lên bảng B → `422`; file không có `_bp` → `422`; dòng thêm tay nằm trong `ignored`; field bị sửa trên web sau lúc tải nằm trong `conflicts`; nhập không ghi gì vào DB | integration test với file tạo bằng excelize |
+| N41 | **Quyền prompt.** User `role=user` gửi `system` ở cả 4 route → `403`; `GET /templates` không trả `body` cho user thường; phiên có `template_id` thì prompt chứa body của phiên bản đang phát hành trong `<session_instructions>`; phát hành v5 không đổi `template_version` của bảng đã tạo bằng v4 | integration test |
+| N42 | **Chi phí.** Mỗi lần gọi model (chat, VLM, thẻ tài liệu, `case:sheet`) tạo đúng một `usage_events` với đúng user; `GET /me/usage` khớp tổng; vượt `monthly_limit` → `402` trước khi gọi provider (provider giả đếm 0 lần gọi) | integration test |
+| N43 | **Giao diện.** Trang phương án có 3 cột (3 tab ở màn hẹp); mở bảng thì sang `/cases/:id/sheets/:sheetId`, nút quay lại về đúng phương án; chi phí chỉ có ở Cài đặt → Key & chi phí; khớp prototype `spec/prototype/u43-u46.html` | chạy trình duyệt (Playwright) |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2279,6 +2541,10 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P11** | VLM hai bước, mỗi trang một lần gọi (U38): bỏ gom vùng/ảnh ghép/marker (`parser/vlm/batch.go`); `page_prompt` kèm text OCR (`[?]` cho dòng confidence thấp, trần `context_max_chars`); `vlm/align.go` căn markdown với OCR cả trang, chia đoạn về vùng, tạo vùng cho dòng ngoài layout, bỏ đoạn không được xác nhận; `assemble/refine.go` chèn lại dòng OCR bị bỏ sót; raw mới (`call`, `markdown`, `align`); cấu hình §11 | — | ✅ xong (30/09/2026): unit test `parser/vlm`, `parser/assemble`, `go test ./...` qua; chưa chạy test tích hợp DB và chưa đo với olmOCR thật (§15.3) |
 | **P12** | Cây dựng bằng code, một cây cho cả case (U39): bỏ lần gọi LLM mỗi trang (`readPages`, `promptPageNodes`), node lấy từ nhóm heading của layout; migration `0018_case_tree.sql` + `IndexRepo.AppendToCaseTree`/`CaseTreeOrder`; `loadViews` sắp file theo cây hồ sơ; bỏ `index.tree.concurrency`, `page_tokens`. U40/U41: không có flow trong prompt, ref `d<n>`/`d<n>.n<k>` cố định theo cây hồ sơ và nhận ở mọi tool (`CaseRefs`), mô tả tool dạng khai báo, hit `kb_search` kèm `node`, `kb_case_toc` nạp nguyên cây của case khi vừa ngân sách, `kb_read_pages(node_id)`, `kb_search` của agent chỉ keyword | — | ✅ code xong (04/10/2026): `go test ./...` qua; `make test-db` qua (gồm `TestAddFileAppendsToCaseTree`, migration `0018`); chạy đầu-cuối với LLM local `qwythos-9b` + TurboOCR giả (tesseract), xem §15.3 |
 | **P7** | Đăng nhập như WeKnora (§10.6): migration `0015_auth.sql`, `service/auth` (bcrypt, JWT access/refresh + `auth_tokens`, OIDC), middleware Bearer JWT → API key, API `/v1/auth/*`, trang `/login` + hộp thoại Tài khoản trong `frontend/`, `cmd/seed -password` | N26–N28 | ✅ xong (test tích hợp N26–N27, chạy trình duyệt N28 với provider OIDC giả); chưa thử với provider OIDC thật |
+| **P13** | Vai trò và mẫu prompt (U45): phần `users.role`, `prompt_templates*`, `sessions.template_id` của migration `0020`; package `service/templates`; chặn `system`; hộp thoại Cấu hình cuộc trò chuyện; Cài đặt → Người dùng (vai trò) | N41 | ✅ xong (08/10/2026) |
+| **P14** | Chi phí (U46): `usage_events`, hook ở agent, `usage.prices`, kiểm giới hạn, key do admin cấp, `/admin/llm`; Cài đặt → Key & chi phí | N42 | ✅ xong (08/10/2026) |
+| **P15** | Trang phương án kiểu NotebookLM và xuất bảng (U43): `case_sheets`, task `case:sheet`, `excelize`, Studio, trang bảng. Cần **P8** | N38, N43 | ✅ xong (08/10/2026) |
+| **P16** | Chỉnh sửa và nhập lại (U44): `/sheets/:id/edits`, `/sheets/:id/import`, `field_corrections`, thống kê AI sai theo trường | N39, N40 | ✅ xong (08/10/2026) |
 
 ---
 
@@ -2290,7 +2556,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Q8 | Có cần phân quyền theo metadata không (ví dụ user chỉ thấy hồ sơ của chi nhánh mình)? | Chưa; phân quyền theo KB |
 | Q9 | ~~Mã hồ sơ có cần là thực thể riêng hay chỉ là metadata?~~ **Đã chốt**: bảng `cases`, `documents.case_id NOT NULL`, không FK (§6.2) | — |
 | Q18 | Tóm tắt node cây nên dùng model nào, chi phí index mỗi file có chấp nhận được không? | `index.tree.model` cấu hình riêng; model nhỏ/local dùng được vì chỉ tóm tắt ngắn. Cần đo token index/file với model thật |
-| Q12 | Có cần endpoint tiện ích (vd `POST /cases/:id/extract`, `/check`) tự soạn tin nhắn từ danh sách trường/rule không? | Không; client hoặc skill tự soạn tin nhắn gửi agent. Server không giữ danh mục trường/rule |
+| Q12 | Có cần endpoint tiện ích (vd `POST /cases/:id/extract`, `/check`) tự soạn tin nhắn từ danh sách trường/rule không? | Không có endpoint `/extract` riêng. Từ U45 server giữ **mẫu** (prompt + danh sách trường) do người có quyền soạn; `case:sheet` soạn tin nhắn từ mẫu bảng (§6.9.6, §8.4). Ngoài mẫu, client hoặc skill vẫn tự soạn tin nhắn |
 | Q13 | Có cần một session so sánh nhiều case (vd đối chiếu hai lần thanh toán) không? | Không; một session một case. Đối chiếu nhiều case làm ở tầng client bằng nhiều session |
 | Q14 | Phân quyền theo case (người phụ trách, chi nhánh)? | Chưa; quyền vẫn theo owner của KB |
 | Q2 | TurboOCR có cần auth, và giới hạn concurrency/throughput thực tế là bao nhiêu? | Không auth; `ocr` pool = 8 |
@@ -2298,12 +2564,15 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Q10 | Môi trường chạy worker có cho phép cgo + `libpdfium` (Linux x64/arm64) không? | Có; chế độ WebAssembly chỉ cho dev/CI |
 | Q4 | Có cần multi-tenant/phân quyền KB giữa nhiều user không? | KB thuộc một `owner_id`, chưa có chia sẻ. WeKnora tạo một tenant cho mỗi người đăng ký; bepaylot giữ mô hình owner theo user (U28 không đổi phân quyền) |
 | Q19 | Có cần giới hạn tần suất đăng nhập/đăng ký, khoá tài khoản sau nhiều lần sai, xác minh email, quên mật khẩu không? | Chưa; đặt sau reverse proxy có rate limit. Khoá tài khoản bằng `users.is_active=false` (SQL) |
-| Q20 | OIDC có cần nhiều provider cùng lúc, hoặc ánh xạ nhóm/role từ provider sang `admin_emails` không? | Một provider; quyền admin vẫn theo `http.admin_emails` |
+| Q20 | OIDC có cần nhiều provider cùng lúc, hoặc ánh xạ nhóm/role từ provider sang `admin_emails` không? | Một provider; quyền admin theo `users.role=admin` hoặc `http.admin_emails` (§8.4); chưa ánh xạ nhóm OIDC sang vai trò |
 | Q21 | Có cần pipeline tự bóc tách field theo danh sách trường cấu hình trong loại case (kiểu IDP), thay vì chỉ agent + người dùng ghi? | Không (U20): danh sách trường nằm trong tin nhắn. Nếu cần thì thêm task `document:extract` ghi `source=pipeline` vào cùng bảng `extracted_fields`, không đổi mô hình |
 | Q22 | Classification có cần chạy khi loại case không khai báo nhãn (nhãn tự do do LLM đặt) không? | Không; không có `labels` thì `skipped`, để nhãn luôn thuộc một tập đã biết |
 | Q23 | Field có cần gắn ở mức case (một giá trị tổng hợp từ nhiều file, ví dụ tổng số tiền các đợt) không? | Không; field gắn với một document, evidence có thể trỏ sang file khác trong cùng case. Giá trị tổng hợp là câu trả lời của agent |
 | Q6 | Giữ ảnh trang đã render bao lâu? | Giữ vĩnh viễn (cần cho highlight/reparse); cấu hình TTL sau |
 | Q7 | Định dạng ngoài PDF/ảnh cần ngay ở P1 không? | Không, để P4 |
+| Q24 | Khi user vượt giới hạn tháng thì chặn hẳn hay chỉ hiển thị? | Chặn trước lần gọi model kế tiếp (`402`), theo chữ "giới hạn tiền" của U46; giao diện chỉ hiển thị ở Cài đặt, không có banner (§7.8, §8.5). Nếu chỉ cần theo dõi thì để `monthly_limit` NULL |
+| Q25 | Trang `/chat` riêng còn cần không, khi chat đã nằm trong trang phương án? | Giữ, để xem lịch sử nhiều phiên; trang phương án mở phiên gần nhất của case (§7.2) |
+| Q26 | Đơn giá model cập nhật thế nào; chi phí cũ có tính lại không? | Admin sửa `usage.prices` trong config; chi phí đã ghi không tính lại |
 
 ---
 
@@ -2323,18 +2592,28 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Search duyệt cây (§6.6): mục lục hồ sơ → cây nguyên khối → trang của node → dòng, `GET /cases/:id/toc`, `?format=text` của cây, `tree_tokens` | `internal/application/service/index/{search_tree,treeview,search}.go`, migration `0016_drop_wiki.sql` |
 | Tool agent `kb_*` (`kb_case_toc`, `kb_document_tree` trả cả cây) theo `CaseScope`; session gắn `case_id`; section prompt `<case>` | `internal/tools/knowledge.go`, `internal/agent`, `internal/handler/session_case.go` |
 | Kiểm tra quy tắc module (§3.3) | `internal/archtest` |
-| Migrations `0006`–`0018` (`0019` mới có trong spec, P8) | `migrations/postgres` |
+| Migrations `0006`–`0020` (`0019_fields.sql` chỉ gồm `extracted_fields` + `evidence_spans` của P8; `0020_sheets_roles_usage.sql` cho U43–U46) | `migrations/postgres` |
 | Callback hoàn thành document (tuỳ chọn, retry + lưu trạng thái, §4.7) | `internal/webhook`, `internal/application/service/document/callback.go` |
 | Worker PDFium native (cgo, tag `pdfium_cgo`), Docker target `api` / `worker` | `cmd/pdfium-worker`, `deploy/Dockerfile` |
 | Tài liệu vận hành bàn giao OPN, script kiểm tra trạng thái, bộ SQL kiểm tra (U29) | `spec/van-hanh.md`, `spec/van-hanh/` |
 | Đăng nhập / đăng ký / OIDC như WeKnora, API key tự phục vụ (§10.6) | `internal/application/service/auth`, `internal/handler/auth.go`, `internal/middleware`, `repository/postgres/{users,authtokens,apikeys}.go`, `migrations/postgres/0015_auth.sql`, `frontend/src/pages/auth`, `frontend/src/components/AuthContext.tsx` |
 
+| Vai trò, mẫu prompt có phiên bản, chặn `system` của user thường (U45, §8.4) | `repository/postgres/templates.go`, `handler/templates.go`, `agent/agent.go` (`<session_instructions>`) |
+| Chi phí theo user (U46, §8.5): hook đo token ở `llm` (`meter.go`, kiểm giới hạn trước mỗi lần gọi), dịch vụ `service/usage`, gán chi phí parse cho người upload, key LLM dùng chung đổi được từ Cài đặt | `internal/llm/meter.go`, `internal/application/service/usage`, `container/sheets.go` |
+| Field + evidence, tool `kb_save_fields`/`kb_get_fields` (phần §6.9.3 cần cho bảng) | `internal/application/service/docmodel`, `internal/tools/fields.go`, `repository/postgres/fields.go` |
+| Bảng tổng hợp (U43, U44, §6.9.6): task `case:sheet`, chỉnh sửa, `field_corrections`, xuất/nhập `.xlsx` (excelize) | `internal/application/service/sheets`, `handler/sheets.go` |
+| Trang phương án kiểu NotebookLM, trang bảng, Cài đặt (Key & chi phí, Người dùng), hộp thoại cấu hình chat và mẫu bảng (§7.2, §7.6–§7.8) | `frontend/src/pages/cases/{CasePage,CaseChat,Studio,dialogs}.tsx`, `frontend/src/pages/sheets/SheetPage.tsx`, `frontend/src/components/SettingsDialog.tsx` |
+| Web app nhúng vào binary server (`embed.FS`, route không thuộc API trả `index.html`); Dockerfile có stage `ui` (Node) build `frontend/` | `internal/webui`, `frontend/vite.config.ts` (outDir), `deploy/Dockerfile`, `.dockerignore`, `make ui` / `make build-server` / `make docker` |
+
 ### 15.2 Khác biệt so với spec (có chủ đích, có thể bổ sung sau)
 
 | Spec | Code hiện tại |
 |---|---|
+| Cột Nguồn có checkbox chọn file cho chat (§7.2) | Chưa làm: agent luôn đọc mọi file của case; cột Nguồn chỉ để duyệt cây và mở trang |
+| Mỗi lần gọi model một dòng `usage_events` có `api_key_id` (§8.5) | Có một dòng mỗi lần gọi, nhưng `api_key_id` chưa điền (middleware chưa đưa key id vào context); chi phí vẫn tính đúng user |
+| `case_sheets` theo pool `enrich` (§4.4 bản 0.16 nháp) | Chạy trên pool `index`, queue `index_interactive` (không có pool `enrich` trong code) |
 | Cache kết quả search trên Redis (§6.6) | Cache TTL trong bộ nhớ của từng instance |
-| Hiển thị hồ sơ theo cây (§7) | Trang `/cases` trong `frontend/` có cột trái (mục lục hồ sơ → cây) và cột giữa (thẻ/node, mục con, ảnh trang). Chưa có cột phải (nhãn phân loại, field) vì thuộc P8 |
+| Hiển thị hồ sơ theo cây (§7) | Trang `/cases` hiện có hai cột (mục lục → cây, node và ảnh trang). Bố cục ba cột kiểu NotebookLM, Studio và trang bảng (§7.2, §7.6) thuộc P15 |
 | Upload: `case_code` gửi trước file | Các field của form (`case_code`, `case_id`, `case_type`, `metadata`, `callback_url`) gửi trước hay sau file đều được: file stream lên S3 trước, case được giải ở cuối request rồi mới tạo dòng `documents` |
 | Session: gửi `kb_ids`/`kb_filter` → 422 | Áp dụng cho `metadata` của `POST /messages`, `POST /ag-ui/run` (cả `forwardedProps`) và `metadata` của `POST/PATCH /sessions` |
 | Search nhiều case (`kb_ids`) | Các case được tìm song song, mỗi case chạy bước 2–5 riêng rồi gộp hit; bước chọn case chỉ chạy khi tổng index vượt `search.map_token_budget` |
@@ -2346,6 +2625,8 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Xác thực giống WeKnora (U28) | Khác WeKnora ở: không có tenant (dữ liệu và API key theo user); `auth_tokens` lưu hash thay vì JWT nguyên văn; đăng ký trả luôn cặp token (WeKnora trả user rồi bắt đăng nhập); khoá JWT rỗng thì lưu trong DB thay vì sinh ngẫu nhiên mỗi lần chạy; OIDC dùng `go-oidc` (kiểm ID token qua JWKS + nonce); chưa có rate limit, mật khẩu phức tạp, mời thành viên, `auto-setup` (Q19) |
 
 ### 15.3 Chưa kiểm được
+
+- **Bản 0.16 (U43–U46, 08/10/2026):** kiểm logic bằng dummy trước: `TestSheetFlow` (field + evidence qua `docmodel`, runner giả thay agent, dùng lại field đã duyệt, sửa định dạng không tính là sửa, `field_corrections`, nhập `.xlsx` nhận đúng ô sửa và dòng thêm tay, file của bảng khác bị từ chối), `TestUsageLimit` (giá, giới hạn, parse không bị chặn), `TestMeteredModel` (model giả: ghi token cho Generate/Stream, chặn trước khi gọi provider), `TestValueKey`; `make test-db` qua toàn bộ. Sau đó chạy thật: server `role=all` có UI nhúng, TurboOCR giả trả trang rỗng (dùng text layer), agent qua LM Studio `qwythos-9b`: bảng 5 trường điền 4 có evidence (trường thứ 5 không có trong file), sửa/lưu, tải `.xlsx` (có `_bp` veryHidden), nhập lại, quyền `403`, giới hạn `402`, chi phí `sheet` và `parse` gán đúng user. Key Groq trong `.env` bị Groq từ chối (`GET /models` → 401) nên chưa chạy với Groq. Image `--target api` build và chạy được (UI ở `/`, không chứa `.env`); image `worker` chưa build lại. Chưa kiểm giao diện trên trình duyệt.
 
 - **TurboOCR thật:** endpoint nội bộ không truy cập được từ máy phát triển; pipeline đã chạy với một server `/ocr/raw` giả.
 - **PDFium native (`multi_threaded`) và image Docker `worker`:** chưa build/chạy vì máy dev không có libpdfium. Chế độ `webassembly` đã chạy thật (benchmark ≈ 134 ms/trang 300 DPI, 1 worker, Apple M3 Pro).
@@ -2392,7 +2673,8 @@ Mục này gom các quy tắc dễ làm sai khi code, rải ở nhiều mục ph
 - Search: không có trường `reason` trong JSON của LLM; mỗi request tối đa `search.max_llm_calls` (§6.6).
 - Phân loại: **mặc định không chạy**. Chỉ chạy khi loại case bật `classification.auto` (chế độ `titles`, chỉ gửi dòng tiêu đề) hoặc khi gọi API; chế độ `pages` chỉ qua API. File không có tiêu đề nào → không gọi LLM (§6.9.4).
 - **VLM của parser (§5.9):** chỉ hai bước: TurboOCR, rồi **một lần gọi VLM mỗi trang** với text OCR trong prompt. Không gọi VLM theo vùng layout, không ghép ảnh vùng. Markdown chỉ được dùng ở chỗ OCR xác nhận (căn từ); dòng OCR bị bỏ sót được chèn lại; `seal` gắn nhãn từ layout. Mọi lần gọi đi qua `agent.Extract` (không session, không lịch sử, không tool); không viết client HTTP riêng tới model trong `parser`.
-- Không có bước pipeline tự bóc tách field (Q21). Không có workflow nghiệp vụ, danh sách trường hay rule trong system prompt, config hoặc mô tả tool; mô tả tool chỉ nêu cách dùng tool (luồng duyệt cây) (§8.2).
+- Không có bước pipeline tự bóc tách field (Q21). Không có workflow nghiệp vụ, danh sách trường hay rule trong system prompt, config hoặc mô tả tool; mô tả tool chỉ nêu cách dùng tool (luồng duyệt cây) (§8.2). Danh sách trường chỉ đến từ tin nhắn hoặc từ mẫu do người có quyền soạn (U45, §8.4). Bảng (`case:sheet`) chỉ chạy khi người dùng bấm tạo và chỉ gửi agent các trường chưa `confirmed` (§6.9.6).
+- **Chi phí (U46):** mọi lần gọi model ghi đúng một `usage_events` ở hook của agent và kiểm giới hạn **trước** khi gọi. Không gọi provider ở ngoài agent, để không có chi phí nào bị bỏ sót (§8.5).
 
 ### 16.3 Không loại trừ
 

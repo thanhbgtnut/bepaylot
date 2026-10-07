@@ -1,2 +1,7 @@
 # Local secrets (API keys)
 .env
+
+*.pdf
+*.jpg
+# Built binaries (make build-server)
+bin/

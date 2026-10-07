@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,12 +23,17 @@ var ErrEmailTaken = errors.New("email already registered")
 // UsersRepo persists types.User.
 type UsersRepo struct{ pool *pgxpool.Pool }
 
-const userCols = `id, email, name, auth_provider, password_hash <> '', is_active, last_login_at, created_at`
+const userCols = `id, email, name, auth_provider, password_hash <> '', is_active, role, monthly_limit::float8, last_login_at, created_at`
 
 func scanUser(row pgx.Row) (types.User, error) {
 	var u types.User
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.AuthProvider, &u.HasPassword, &u.IsActive, &u.LastLoginAt, &u.CreatedAt)
+	err := row.Scan(userDest(&u)...)
 	return u, err
+}
+
+// userDest lists the scan targets of userCols.
+func userDest(u *types.User) []any {
+	return []any{&u.ID, &u.Email, &u.Name, &u.AuthProvider, &u.HasPassword, &u.IsActive, &u.Role, &u.MonthlyLimit, &u.LastLoginAt, &u.CreatedAt}
 }
 
 // Create inserts a user, or returns the existing one on email conflict. It
@@ -81,7 +87,7 @@ func (r *UsersRepo) Credentials(ctx context.Context, email string) (types.User, 
 	var u types.User
 	var hash string
 	err := r.pool.QueryRow(ctx, `SELECT `+userCols+`, password_hash FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.Name, &u.AuthProvider, &u.HasPassword, &u.IsActive, &u.LastLoginAt, &u.CreatedAt, &hash)
+		Scan(append(userDest(&u), &hash)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return types.User{}, "", ErrNotFound
 	}
@@ -134,9 +140,75 @@ func (r *UsersRepo) UpsertOIDC(ctx context.Context, provider, subject, email, na
 			updated_at    = now()
 		RETURNING `+userCols+`, xmax = 0`,
 		email, name, provider, subject,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.AuthProvider, &u.HasPassword, &u.IsActive, &u.LastLoginAt, &u.CreatedAt, &inserted)
+	).Scan(append(userDest(&u), &inserted)...)
 	if err != nil {
 		return types.User{}, false, fmt.Errorf("users.UpsertOIDC: %w", err)
 	}
 	return u, inserted, nil
+}
+
+// ListWithUsage lists every user with the cost of their model calls since
+// from and the number of live API keys (admin, §7.8).
+func (r *UsersRepo) ListWithUsage(ctx context.Context, from time.Time) ([]types.UserUsage, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+userCols+`,
+		       COALESCE((SELECT sum(e.cost)::float8 FROM usage_events e WHERE e.user_id = users.id AND e.created_at >= $1), 0),
+		       (SELECT count(*) FROM api_keys k WHERE k.user_id = users.id AND k.revoked_at IS NULL)
+		FROM users ORDER BY created_at`, from)
+	if err != nil {
+		return nil, fmt.Errorf("users.ListWithUsage: %w", err)
+	}
+	defer rows.Close()
+	var out []types.UserUsage
+	for rows.Next() {
+		var u types.UserUsage
+		if err := rows.Scan(append(userDest(&u.User), &u.Spent, &u.Keys)...); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UserUpdate is an admin change to a user; nil fields are left as they are.
+type UserUpdate struct {
+	Role         *string
+	MonthlyLimit *float64 // < 0 clears the limit
+	IsActive     *bool
+}
+
+// Update applies an admin change.
+func (r *UsersRepo) Update(ctx context.Context, id uuid.UUID, up UserUpdate) (types.User, error) {
+	var limit any
+	clear := false
+	if up.MonthlyLimit != nil {
+		if *up.MonthlyLimit < 0 {
+			clear = true
+		} else {
+			limit = *up.MonthlyLimit
+		}
+	}
+	u, err := scanUser(r.pool.QueryRow(ctx, `
+		UPDATE users SET
+			role          = COALESCE($2, role),
+			monthly_limit = CASE WHEN $4 THEN NULL WHEN $3::numeric IS NOT NULL THEN $3::numeric ELSE monthly_limit END,
+			is_active     = COALESCE($5, is_active),
+			updated_at    = now()
+		WHERE id = $1
+		RETURNING `+userCols, id, up.Role, limit, clear, up.IsActive))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return types.User{}, ErrNotFound
+	}
+	if err != nil {
+		return types.User{}, fmt.Errorf("users.Update: %w", err)
+	}
+	return u, nil
+}
+
+// SetDefaultLimit gives a new account the configured monthly limit (§8.5).
+func (r *UsersRepo) SetDefaultLimit(ctx context.Context, id uuid.UUID, limit float64) {
+	if limit <= 0 {
+		return
+	}
+	_, _ = r.pool.Exec(ctx, `UPDATE users SET monthly_limit = $2 WHERE id = $1 AND monthly_limit IS NULL`, id, limit)
 }

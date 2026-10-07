@@ -53,6 +53,9 @@ func (h *Handlers) AGUIRunAgent(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	if !h.withinBudget(ctx, c, user) {
+		return
+	}
 	provider := h.LLM.DefaultProvider
 	model := h.LLM.DefaultModel
 

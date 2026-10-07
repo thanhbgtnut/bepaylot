@@ -21,6 +21,13 @@ type claudeProvider struct {
 	name    string
 	cfg     config.ProviderCfg
 	timeout time.Duration
+	ov      keyOverride
+}
+
+func (p *claudeProvider) configuredKey() string  { return p.cfg.APIKey }
+func (p *claudeProvider) override() *keyOverride { return &p.ov }
+func (p *claudeProvider) keyState() (string, string, bool) {
+	return p.ov.get(p.cfg.APIKey), p.cfg.BaseURL, p.ov.v.Load() != nil
 }
 
 func (p *claudeProvider) Name() string { return p.name }
@@ -31,7 +38,7 @@ func (p *claudeProvider) Model(ctx context.Context, modelID string, opt Options)
 		opt.MaxTokens = 4096
 	}
 	c := &claudemodel.Config{
-		APIKey:         p.cfg.APIKey,
+		APIKey:         p.ov.get(p.cfg.APIKey),
 		Model:          modelID,
 		MaxTokens:      opt.MaxTokens,
 		Temperature:    opt.Temperature,
@@ -54,13 +61,20 @@ type openaiProvider struct {
 	name    string
 	cfg     config.ProviderCfg
 	timeout time.Duration
+	ov      keyOverride
+}
+
+func (p *openaiProvider) configuredKey() string  { return p.cfg.APIKey }
+func (p *openaiProvider) override() *keyOverride { return &p.ov }
+func (p *openaiProvider) keyState() (string, string, bool) {
+	return p.ov.get(p.cfg.APIKey), p.cfg.BaseURL, p.ov.v.Load() != nil
 }
 
 func (p *openaiProvider) Name() string { return p.name }
 func (p *openaiProvider) Kind() string { return "openai" }
 
 func (p *openaiProvider) Model(ctx context.Context, modelID string, opt Options) (model.ToolCallingChatModel, error) {
-	apiKey := p.cfg.APIKey
+	apiKey := p.ov.get(p.cfg.APIKey)
 	baseURL := normalizeOpenAIBaseURL(p.cfg.BaseURL)
 	// Local OpenAI-compatible servers (LM Studio, llama.cpp, vLLM, Ollama) often
 	// need no key; the go-openai client still sends an Authorization header, so
@@ -102,6 +116,13 @@ func normalizeOpenAIBaseURL(raw string) string {
 type arkProvider struct {
 	name string
 	cfg  config.ProviderCfg
+	ov   keyOverride
+}
+
+func (p *arkProvider) configuredKey() string  { return p.cfg.APIKey }
+func (p *arkProvider) override() *keyOverride { return &p.ov }
+func (p *arkProvider) keyState() (string, string, bool) {
+	return p.ov.get(p.cfg.APIKey), p.cfg.BaseURL, p.ov.v.Load() != nil
 }
 
 func (p *arkProvider) Name() string { return p.name }
@@ -109,7 +130,7 @@ func (p *arkProvider) Kind() string { return "ark" }
 
 func (p *arkProvider) Model(ctx context.Context, modelID string, opt Options) (model.ToolCallingChatModel, error) {
 	c := &arkmodel.ChatModelConfig{
-		APIKey:      p.cfg.APIKey,
+		APIKey:      p.ov.get(p.cfg.APIKey),
 		BaseURL:     p.cfg.BaseURL,
 		Region:      p.cfg.Region,
 		Model:       modelID,

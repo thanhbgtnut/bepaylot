@@ -17,7 +17,7 @@ export function useChatStream(onSession: (id: string, created: boolean) => void)
   const abort = useRef<AbortController | null>(null);
 
   const send = useCallback(
-    async (text: string, opt: { sessionId: string | null; caseId: string | null }) => {
+    async (text: string, opt: { sessionId: string | null; caseId: string | null; system?: string }) => {
       const turn: Assistant = { role: "assistant", key: "a" + ++keySeq, blocks: [], pending: true };
       // Mutable working copy; published to React state via flush().
       const blocks: TurnBlock[] = [];
@@ -47,7 +47,7 @@ export function useChatStream(onSession: (id: string, created: boolean) => void)
       let created = !opt.sessionId;
       let sessionId = opt.sessionId;
       try {
-        const res = await streamMessage({ text, sessionId: opt.sessionId, caseId: opt.caseId, signal: abort.current.signal });
+        const res = await streamMessage({ text, sessionId: opt.sessionId, caseId: opt.caseId, system: opt.system, signal: abort.current.signal });
         await readSSE(res, (ev, d) => {
           switch (ev) {
             case "message_start": {

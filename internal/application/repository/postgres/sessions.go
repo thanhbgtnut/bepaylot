@@ -20,12 +20,12 @@ type SessionsRepo struct{ pool *pgxpool.Pool }
 // ErrCaseBound is returned when a session is already bound to another case.
 var ErrCaseBound = errors.New("session is bound to another case")
 
-const sessCols = `id, user_id, title, provider, model, system_override, summary, metadata, case_id, created_at, updated_at`
+const sessCols = `id, user_id, title, provider, model, system_override, summary, metadata, case_id, template_id, created_at, updated_at`
 
 func scanSession(row pgx.Row) (types.Session, error) {
 	var s types.Session
 	err := row.Scan(&s.ID, &s.UserID, &s.Title, &s.Provider, &s.Model, &s.SystemOverride, &s.Summary,
-		&metaScanner{&s.Metadata}, &s.CaseID, &s.CreatedAt, &s.UpdatedAt)
+		&metaScanner{&s.Metadata}, &s.CaseID, &s.TemplateID, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -48,6 +48,8 @@ type CreateParams struct {
 	Metadata       map[string]any
 	// CaseID binds the new session to a case (§8.1).
 	CaseID *uuid.UUID
+	// TemplateID is the chat prompt template of the session (§8.4).
+	TemplateID *uuid.UUID
 }
 
 // Create inserts a new session.
@@ -64,10 +66,10 @@ func (r *SessionsRepo) Create(ctx context.Context, p CreateParams) (types.Sessio
 	}
 
 	s, err := scanSession(r.pool.QueryRow(ctx, `
-		INSERT INTO sessions (id, user_id, title, provider, model, system_override, metadata, case_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO sessions (id, user_id, title, provider, model, system_override, metadata, case_id, template_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING `+sessCols,
-		id, p.UserID, cleanText(p.Title), cleanText(p.Provider), cleanText(p.Model), cleanText(p.SystemOverride), metaJSON, p.CaseID))
+		id, p.UserID, cleanText(p.Title), cleanText(p.Provider), cleanText(p.Model), cleanText(p.SystemOverride), metaJSON, p.CaseID, p.TemplateID))
 	if err != nil {
 		return types.Session{}, fmt.Errorf("sessions.Create: %w", err)
 	}
@@ -105,7 +107,7 @@ func (r *SessionsRepo) ListByCase(ctx context.Context, userID, caseID uuid.UUID,
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `SELECT `+sessCols+` FROM sessions
-		WHERE user_id = $1 AND case_id = $2 AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT $3`, userID, caseID, limit)
+		WHERE user_id = $1 AND case_id = $2 AND deleted_at IS NULL AND NOT metadata ? 'sheet_id' ORDER BY updated_at DESC LIMIT $3`, userID, caseID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +135,7 @@ func (r *SessionsRepo) ListByUser(ctx context.Context, userID uuid.UUID, before 
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+sessCols+`
 		FROM sessions
-		WHERE user_id = $1 AND deleted_at IS NULL AND updated_at < $2
+		WHERE user_id = $1 AND deleted_at IS NULL AND updated_at < $2 AND NOT metadata ? 'sheet_id'
 		ORDER BY updated_at DESC
 		LIMIT $3`, userID, before, limit)
 	if err != nil {
@@ -182,6 +184,12 @@ func (r *SessionsRepo) Update(ctx context.Context, id uuid.UUID, p UpdateParams)
 		return types.Session{}, fmt.Errorf("sessions.Update: %w", err)
 	}
 	return s, nil
+}
+
+// SetTemplate sets (or clears, with nil) the chat template of a session.
+func (r *SessionsRepo) SetTemplate(ctx context.Context, id uuid.UUID, templateID *uuid.UUID) (types.Session, error) {
+	return scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET template_id = $2, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL RETURNING `+sessCols, id, templateID))
 }
 
 // Touch bumps updated_at, used after a turn completes.

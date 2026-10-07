@@ -52,6 +52,14 @@ func (h *Handlers) CreateSession(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	}
+	if strings.TrimSpace(req.System) != "" && !h.canPrompt(user) {
+		h.forbidPrompt(c)
+		return
+	}
+	templateID, ok := h.chatTemplate(ctx, c, req.TemplateID)
+	if !ok {
+		return
+	}
 	var caseID *uuid.UUID
 	if req.CaseID != "" || req.Case != nil {
 		ref := req.Case
@@ -73,6 +81,7 @@ func (h *Handlers) CreateSession(ctx context.Context, c *app.RequestContext) {
 		SystemOverride: req.System,
 		Metadata:       req.Metadata,
 		CaseID:         caseID,
+		TemplateID:     templateID,
 	})
 	if err != nil {
 		h.serverError(c, err)
@@ -273,6 +282,16 @@ func (h *Handlers) UpdateSession(ctx context.Context, c *app.RequestContext) {
 	if err != nil {
 		h.serverError(c, err)
 		return
+	}
+	if req.TemplateID != nil {
+		templateID, ok := h.chatTemplate(ctx, c, *req.TemplateID)
+		if !ok {
+			return
+		}
+		if updated, err = h.Store.Sessions.SetTemplate(ctx, sess.ID, templateID); err != nil {
+			h.serverError(c, err)
+			return
+		}
 	}
 	c.JSON(consts.StatusOK, dto.BriefFromDomain(updated))
 }

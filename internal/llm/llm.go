@@ -31,6 +31,7 @@ type Provider interface {
 type Registry struct {
 	providers map[string]Provider
 	def       string
+	meter     Meter // nil = model calls are not metered
 }
 
 // NewRegistry constructs providers from config.
@@ -73,6 +74,9 @@ func (r *Registry) Get(name string) (Provider, error) {
 	p, ok := r.providers[name]
 	if !ok {
 		return nil, fmt.Errorf("llm: provider %q is not configured", name)
+	}
+	if r.meter != nil {
+		return meteredProvider{Provider: p, meter: r.meter}, nil
 	}
 	return p, nil
 }

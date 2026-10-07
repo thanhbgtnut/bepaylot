@@ -68,6 +68,27 @@ func registerKnowledgeRoutes(v1 *route.RouterGroup, h *handler.Handlers) {
 	g.GET("/admin/queues", h.QueueStats)
 	g.GET("/admin/dead-letters", h.ListDeadLetters)
 	g.POST("/admin/dead-letters/:id/retry", h.RetryDeadLetter)
+
+	// Prompt templates, case sheets, usage and admin of users (U43–U46).
+	g.GET("/templates", h.ListTemplates)
+	g.POST("/templates", h.CreateTemplate)
+	g.GET("/templates/:id", h.GetTemplate)
+	g.POST("/templates/:id/versions", h.AddTemplateVersion)
+	g.POST("/templates/:id/publish", h.PublishTemplate)
+	g.GET("/templates/:id/corrections", h.TemplateCorrections)
+	g.POST("/cases/:id/sheets", h.CreateSheet)
+	g.GET("/cases/:id/sheets", h.ListSheets)
+	g.GET("/sheets/:id", h.GetSheet)
+	g.POST("/sheets/:id/edits", h.SaveSheetEdits)
+	g.POST("/sheets/:id/import", h.ImportSheet)
+	g.GET("/sheets/:id/xlsx", h.DownloadSheet)
+	g.GET("/me/usage", h.MyUsage)
+	g.GET("/admin/usage", h.AdminUsage)
+	g.GET("/admin/users", h.AdminListUsers)
+	g.PATCH("/admin/users/:id", h.AdminUpdateUser)
+	g.POST("/admin/users/:id/api-keys", h.AdminIssueAPIKey)
+	g.GET("/admin/llm", h.AdminGetLLM)
+	g.PUT("/admin/llm", h.AdminSetLLM)
 }
 
 func requireModules(h *handler.Handlers) app.HandlerFunc {

@@ -35,6 +35,33 @@ type Config struct {
 	Index    Index    `yaml:"index"`
 	Search   Search   `yaml:"search"`
 	Cases    Cases    `yaml:"cases"`
+	Usage    Usage    `yaml:"usage"`
+	Sheets   Sheets   `yaml:"sheets"`
+}
+
+// Usage prices model calls and limits each user's monthly spend (§8.5).
+type Usage struct {
+	// Currency of prices, limits and costs (display only).
+	Currency string `yaml:"currency"`
+	// DefaultMonthlyLimit is given to new accounts; 0 = no limit.
+	DefaultMonthlyLimit float64 `yaml:"default_monthly_limit"`
+	// Prices per model id, per million tokens. A model missing here costs 0
+	// and is logged once.
+	Prices map[string]ModelPrice `yaml:"prices"`
+	// Timezone of the monthly and daily periods.
+	Timezone string `yaml:"timezone"`
+}
+
+// ModelPrice is the price of one million input and output tokens.
+type ModelPrice struct {
+	Input  float64 `yaml:"input"`
+	Output float64 `yaml:"output"`
+}
+
+// Sheets configures case sheets (§6.9.6).
+type Sheets struct {
+	// LowConfidence marks a cell "cần xem" below it.
+	LowConfidence float64 `yaml:"low_confidence"`
 }
 
 // ToolsCfg configures the built-in tool set.
@@ -349,6 +376,12 @@ func (c *Config) applyDefaults() {
 	setString(&c.Auth.OIDC.DisplayName, "SSO")
 	if len(c.Auth.OIDC.Scopes) == 0 {
 		c.Auth.OIDC.Scopes = []string{"openid", "email", "profile"}
+	}
+
+	setString(&c.Usage.Currency, "VND")
+	setString(&c.Usage.Timezone, "Asia/Ho_Chi_Minh")
+	if c.Sheets.LowConfidence <= 0 {
+		c.Sheets.LowConfidence = 0.75
 	}
 
 	setInt32(&c.DB.MaxConns, 10)

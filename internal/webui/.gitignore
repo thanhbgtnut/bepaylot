@@ -1,0 +1,4 @@
+# Built by `make ui` (Vite outDir); only the placeholder is tracked so the
+# embed pattern always matches.
+dist/*
+!dist/.gitkeep

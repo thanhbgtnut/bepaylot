@@ -97,7 +97,7 @@ export function Layout() {
       </div>
 
       <div className="flex-1" />
-      <button onClick={openSettings} className="mt-3 flex items-start gap-3 rounded-xl px-4 py-2 text-left hover:bg-fg/8" title={connError || settings.base}>
+      <button onClick={() => openSettings("server")} className="mt-3 flex items-start gap-3 rounded-xl px-4 py-2 text-left hover:bg-fg/8" title={connError || settings.base}>
         <Icon name={connected === false ? "cloud_off" : "cloud_done"} size={20} className={connected === false ? "text-err" : "text-muted"} />
         <span className="min-w-0 text-xs text-muted">
           <span className="block font-medium text-fg">{connected === false ? "Mất kết nối" : connected ? "Đã kết nối" : "Đang kết nối…"}</span>
@@ -148,7 +148,7 @@ export function Layout() {
           )}
         </form>
         <div className="flex-1 max-md:hidden" />
-        <button className="btn-icon" title="Tài khoản, API key và máy chủ" onClick={openSettings}>
+        <button className="btn-icon" title="Cài đặt: tài khoản, key và chi phí" onClick={() => openSettings("account")}>
           <Icon name="settings" />
         </button>
         <Menu
@@ -165,7 +165,8 @@ export function Layout() {
           items={[
             { icon: "account_circle", label: user?.email ?? "Tài khoản", disabled: true },
             { divider: true, label: "" },
-            { icon: "manage_accounts", label: "Tài khoản & API key", onClick: openSettings },
+            { icon: "manage_accounts", label: "Cài đặt", onClick: () => openSettings("account") },
+            { icon: "account_balance_wallet", label: "Key & chi phí", onClick: () => openSettings("keys") },
             { icon: "logout", label: "Đăng xuất", onClick: signOut },
           ]}
         />
@@ -213,7 +214,7 @@ export function NeedKB() {
     return (
       <Empty icon="cloud_off" title="Không kết nối được backend">
         <div className="text-xs">{connError}</div>
-        <button className="btn btn-primary mt-5" onClick={openSettings}>
+        <button className="btn btn-primary mt-5" onClick={() => openSettings("server")}>
           Cấu hình kết nối
         </button>
       </Empty>

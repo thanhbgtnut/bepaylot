@@ -259,11 +259,11 @@ export function ChatPage() {
   );
 }
 
-function UserBubble({ text }: { text: string }) {
+export function UserBubble({ text }: { text: string }) {
   return <div className="max-w-[80%] self-end rounded-3xl rounded-tr-md bg-surface-2 px-5 py-3 text-[15px] leading-6 wrap-break-word whitespace-pre-wrap">{text}</div>;
 }
 
-function AssistantTurn({ item }: { item: Extract<ChatItem, { role: "assistant" }> }) {
+export function AssistantTurn({ item }: { item: Extract<ChatItem, { role: "assistant" }> }) {
   // Consecutive tool calls and thoughts are grouped under one expandable row.
   const groups: (TurnBlock | TurnBlock[])[] = [];
   for (const b of item.blocks) {

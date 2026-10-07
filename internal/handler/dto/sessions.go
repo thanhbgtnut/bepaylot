@@ -17,6 +17,8 @@ type CreateSessionRequest struct {
 	CaseID string `json:"case_id,omitempty"`
 	// Case names the case by knowledge base and code instead of CaseID.
 	Case *CaseRef `json:"case,omitempty"`
+	// TemplateID is a published chat template (§8.4).
+	TemplateID string `json:"template_id,omitempty"`
 }
 
 // UpdateSessionRequest is the body of PATCH /v1/sessions/{id}.
@@ -25,19 +27,22 @@ type UpdateSessionRequest struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// CaseID cannot change once set: a different case answers 409.
 	CaseID *string `json:"case_id,omitempty"`
+	// TemplateID sets the chat template (§8.4); "" clears it.
+	TemplateID *string `json:"template_id,omitempty"`
 }
 
 // SessionBrief is a session without its transcript.
 type SessionBrief struct {
-	ID        string         `json:"id"`
-	Title     string         `json:"title"`
-	Provider  string         `json:"provider"`
-	Model     string         `json:"model"`
-	Summary   string         `json:"summary,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	CaseID    string         `json:"case_id,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID         string         `json:"id"`
+	Title      string         `json:"title"`
+	Provider   string         `json:"provider"`
+	Model      string         `json:"model"`
+	Summary    string         `json:"summary,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	CaseID     string         `json:"case_id,omitempty"`
+	TemplateID string         `json:"template_id,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 // SessionList is the paginated response of GET /v1/sessions.
@@ -96,16 +101,21 @@ func BriefFromDomain(s types.Session) SessionBrief {
 	if s.CaseID != nil {
 		caseID = s.CaseID.String()
 	}
+	templateID := ""
+	if s.TemplateID != nil {
+		templateID = s.TemplateID.String()
+	}
 	return SessionBrief{
-		CaseID:    caseID,
-		ID:        s.ID.String(),
-		Title:     s.Title,
-		Provider:  s.Provider,
-		Model:     s.Model,
-		Summary:   s.Summary,
-		Metadata:  s.Metadata,
-		CreatedAt: s.CreatedAt,
-		UpdatedAt: s.UpdatedAt,
+		TemplateID: templateID,
+		CaseID:     caseID,
+		ID:         s.ID.String(),
+		Title:      s.Title,
+		Provider:   s.Provider,
+		Model:      s.Model,
+		Summary:    s.Summary,
+		Metadata:   s.Metadata,
+		CreatedAt:  s.CreatedAt,
+		UpdatedAt:  s.UpdatedAt,
 	}
 }
 

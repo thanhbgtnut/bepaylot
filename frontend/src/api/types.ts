@@ -177,6 +177,7 @@ export interface SessionBrief {
   summary?: string;
   metadata?: Record<string, unknown>;
   case_id?: string;
+  template_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -264,6 +265,9 @@ export interface AuthUser {
   auth_provider: string;
   has_password: boolean;
   is_admin: boolean;
+  // admin | prompt_editor | user (§8.4)
+  role?: Role;
+  monthly_limit?: number;
   last_login_at?: string;
   created_at: string;
 }
@@ -291,4 +295,144 @@ export interface APIKey {
   last_used_at?: string;
   revoked_at?: string;
   created_at: string;
+  issued_by?: string;
+}
+
+// ---- U43–U46: roles, templates, sheets, usage
+
+export type Role = "admin" | "prompt_editor" | "user";
+export const canEditPrompts = (u?: AuthUser | null) => u?.role === "admin" || u?.role === "prompt_editor" || !!u?.is_admin;
+export const isAdmin = (u?: AuthUser | null) => u?.role === "admin" || !!u?.is_admin;
+
+export interface SheetField {
+  key: string;
+  label: string;
+  value_type?: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  kind: "chat" | "sheet";
+  slug: string;
+  name: string;
+  description: string;
+  case_type?: string;
+  status: "draft" | "published" | "archived";
+  current_version: number;
+  latest_version: number;
+  version: number;
+  body?: string;
+  fields?: SheetField[];
+  created_by_name?: string;
+  updated_at: string;
+}
+
+export interface Evidence {
+  document_id: string;
+  file_name?: string;
+  page_no: number;
+  line_from?: number;
+  line_to?: number;
+  bbox?: number[];
+  quote: string;
+  citation_id: string;
+}
+
+export interface SheetRow {
+  key: string;
+  label: string;
+  value_type?: string;
+  field_id?: string;
+  ai_field_id?: string;
+  ai_value_text: string;
+  note?: string;
+}
+
+export interface Sheet {
+  id: string;
+  case_id: string;
+  template_id: string;
+  template_version: number;
+  template_name?: string;
+  name: string;
+  status: "pending" | "running" | "done" | "failed";
+  filled: number;
+  total: number;
+  rows: SheetRow[];
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SheetRowView extends SheetRow {
+  value: string;
+  confidence: number;
+  status?: string;
+  source?: string;
+  value_matched: boolean;
+  field_note?: string;
+  document_id?: string;
+  evidence: Evidence[];
+  edited: boolean;
+  calc: boolean;
+  low: boolean;
+}
+
+export interface SheetView extends Sheet {
+  case_code: string;
+  rows_view: SheetRowView[];
+  sources?: { id: string; file_name: string; page_count: number }[];
+}
+
+export interface SheetImportEdit {
+  key: string;
+  label: string;
+  cell: string;
+  value: string;
+  ai_value: string;
+  web_value?: string;
+}
+
+export interface SheetImport {
+  edits: SheetImportEdit[];
+  conflicts: SheetImportEdit[];
+  ignored: { cell: string; text: string; reason: string }[];
+}
+
+export interface UsagePeriod {
+  spent: number;
+  limit: number;
+  resets_at?: string;
+}
+
+export interface UsageSummary {
+  currency: string;
+  month: UsagePeriod;
+  today: UsagePeriod;
+  by_kind: Record<string, number>;
+  updated_at: string;
+}
+
+export interface AdminUser extends AuthUser {
+  is_active: boolean;
+  spent: number;
+  keys: number;
+}
+
+export interface LLMKeyView {
+  provider: string;
+  kind: string;
+  base_url: string;
+  masked_key: string;
+  overridden: boolean;
+  models: string[];
+}
+
+export interface CorrectionStat {
+  key: string;
+  version: number;
+  sheets: number;
+  edited: number;
+  rate: number;
+  examples?: string[];
 }

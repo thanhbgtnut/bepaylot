@@ -283,3 +283,16 @@ cases:
   types_dir: configs/case_types
   default_type: default             # used when upload/create names no case_type
   auto_create_on_upload: true       # false = create cases first (POST /kbs/:id/cases)
+
+# Cost of model calls (U46, §8.5). One LLM key serves every model; cost =
+# tokens × price per million tokens of the model. Shown in Settings → Key & chi phí.
+usage:
+  currency: VND
+  timezone: Asia/Ho_Chi_Minh        # months and days of the usage page
+  default_monthly_limit: 0          # limit given to new accounts; 0 = no limit
+  prices:                           # per 1M tokens; a model missing here costs 0 (logged once)
+    # "qwen/qwen3.8-27b": { input: 0, output: 0 }   # fill in the provider's real price
+
+# Case sheets (U43, §6.9.6).
+sheets:
+  low_confidence: 0.75              # cells below it are marked "cần xem"

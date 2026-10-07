@@ -102,3 +102,11 @@ export function citationLabel(c: Citation) {
   if (c.from != null) s += " · d." + c.from + (c.to != null && c.to !== c.from ? "–" + c.to : "");
   return s;
 }
+
+// Money in the usage currency (§8.5): VND without decimals.
+export function fmtMoney(n: number, currency = "VND") {
+  const v = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: currency === "VND" ? 0 : 2 }).format(n || 0);
+  return currency === "VND" ? `${v} đ` : `${v} ${currency}`;
+}
+
+export const ROLE_LABEL: Record<string, string> = { admin: "Quản trị", prompt_editor: "Được đặt prompt", user: "Người dùng" };

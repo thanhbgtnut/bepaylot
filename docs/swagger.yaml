@@ -348,6 +348,8 @@ definitions:
         type: string
       id:
         type: string
+      issued_by:
+        type: string
       last_used_at:
         type: string
       name:
@@ -356,6 +358,59 @@ definitions:
         type: string
       revoked_at:
         type: string
+    type: object
+  dto.AdminUpdateUserRequest:
+    properties:
+      is_active:
+        type: boolean
+      monthly_limit:
+        example: 500000
+        type: number
+      role:
+        example: prompt_editor
+        type: string
+    type: object
+  dto.AdminUser:
+    properties:
+      auth_provider:
+        example: local
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      has_password:
+        type: boolean
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_admin:
+        type: boolean
+      keys:
+        type: integer
+      last_login_at:
+        type: string
+      monthly_limit:
+        type: number
+      name:
+        type: string
+      role:
+        description: Role is admin, prompt_editor or user (§8.4); admin also for http.admin_emails.
+        example: user
+        type: string
+      spent:
+        type: number
+    type: object
+  dto.AdminUserList:
+    properties:
+      currency:
+        example: VND
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/dto.AdminUser'
+        type: array
     type: object
   dto.AuthConfig:
     properties:
@@ -477,6 +532,13 @@ definitions:
       new_password:
         type: string
     type: object
+  dto.CorrectionStats:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.CorrectionStat'
+        type: array
+    type: object
   dto.CreateAPIKeyRequest:
     properties:
       name:
@@ -512,7 +574,16 @@ definitions:
         type: string
       system:
         type: string
+      template_id:
+        description: TemplateID is a published chat template (§8.4).
+        type: string
       title:
+        type: string
+    type: object
+  dto.CreateSheetRequest:
+    properties:
+      template_id:
+        format: uuid
         type: string
     type: object
   dto.CreatedAPIKey:
@@ -637,6 +708,23 @@ definitions:
         items:
           $ref: '#/definitions/types.KnowledgeBase'
         type: array
+    type: object
+  dto.LLMKeyView:
+    properties:
+      base_url:
+        type: string
+      kind:
+        type: string
+      masked_key:
+        type: string
+      models:
+        items:
+          type: string
+        type: array
+      overridden:
+        type: boolean
+      provider:
+        type: string
     type: object
   dto.LocationsResponse:
     properties:
@@ -867,6 +955,12 @@ definitions:
           $ref: '#/definitions/types.DocumentPage'
         type: array
     type: object
+  dto.PublishTemplateRequest:
+    properties:
+      version:
+        example: 2
+        type: integer
+    type: object
   dto.QueueStat:
     properties:
       active:
@@ -953,6 +1047,8 @@ definitions:
         type: string
       summary:
         type: string
+      template_id:
+        type: string
       title:
         type: string
       updated_at:
@@ -978,6 +1074,8 @@ definitions:
       provider:
         type: string
       summary:
+        type: string
+      template_id:
         type: string
       title:
         type: string
@@ -1016,10 +1114,31 @@ definitions:
         items:
           $ref: '#/definitions/dto.TaskResultDTO'
         type: array
+      template_id:
+        type: string
       title:
         type: string
       updated_at:
         type: string
+    type: object
+  dto.SetLLMKeyRequest:
+    properties:
+      api_key:
+        type: string
+    type: object
+  dto.SheetEditsRequest:
+    properties:
+      edits:
+        items:
+          $ref: '#/definitions/sheets.EditInput'
+        type: array
+    type: object
+  dto.SheetList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.Sheet'
+        type: array
     type: object
   dto.SkillListResponse:
     properties:
@@ -1081,6 +1200,36 @@ definitions:
       updated_at:
         type: string
     type: object
+  dto.TemplateList:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.PromptTemplate'
+        type: array
+    type: object
+  dto.TemplateRequest:
+    properties:
+      body:
+        type: string
+      case_type:
+        example: tin_dung_dn
+        type: string
+      description:
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/types.SheetField'
+        type: array
+      kind:
+        example: sheet
+        type: string
+      name:
+        example: Bảng tổng hợp phương án vay
+        type: string
+      slug:
+        example: pa_vay_von
+        type: string
+    type: object
   dto.TranscriptMessage:
     properties:
       content:
@@ -1127,6 +1276,9 @@ definitions:
       metadata:
         additionalProperties: {}
         type: object
+      template_id:
+        description: TemplateID sets the chat template (§8.4); "" clears it.
+        type: string
       title:
         type: string
     type: object
@@ -1154,7 +1306,13 @@ definitions:
         type: boolean
       last_login_at:
         type: string
+      monthly_limit:
+        type: number
       name:
+        type: string
+      role:
+        description: Role is admin, prompt_editor or user (§8.4); admin also for http.admin_emails.
+        example: user
         type: string
     type: object
   postgres.PageBlock:
@@ -1251,6 +1409,147 @@ definitions:
       started_at:
         type: string
       status:
+        type: string
+    type: object
+  sheets.EditInput:
+    properties:
+      document_id:
+        type: string
+      key:
+        type: string
+      origin:
+        description: page | xlsx
+        type: string
+      value:
+        type: string
+    type: object
+  sheets.Ignored:
+    properties:
+      cell:
+        type: string
+      reason:
+        type: string
+      text:
+        type: string
+    type: object
+  sheets.ImportEdit:
+    properties:
+      ai_value:
+        type: string
+      cell:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      value:
+        type: string
+      web_value:
+        description: 'conflicts: the value changed on the web since download'
+        type: string
+    type: object
+  sheets.ImportResult:
+    properties:
+      conflicts:
+        items:
+          $ref: '#/definitions/sheets.ImportEdit'
+        type: array
+      edits:
+        items:
+          $ref: '#/definitions/sheets.ImportEdit'
+        type: array
+      ignored:
+        items:
+          $ref: '#/definitions/sheets.Ignored'
+        type: array
+    type: object
+  sheets.RowView:
+    properties:
+      ai_field_id:
+        type: string
+      ai_value_text:
+        type: string
+      calc:
+        description: value derived by the agent
+        type: boolean
+      confidence:
+        type: number
+      document_id:
+        type: string
+      edited:
+        description: differs from the AI value
+        type: boolean
+      evidence:
+        items:
+          $ref: '#/definitions/types.Evidence'
+        type: array
+      field_id:
+        type: string
+      field_note:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      low:
+        description: confidence below sheets.low_confidence
+        type: boolean
+      note:
+        type: string
+      source:
+        description: agent | user
+        type: string
+      status:
+        description: field status
+        type: string
+      value:
+        type: string
+      value_matched:
+        type: boolean
+      value_type:
+        type: string
+    type: object
+  sheets.View:
+    properties:
+      case_code:
+        type: string
+      case_id:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      error:
+        type: string
+      filled:
+        type: integer
+      id:
+        type: string
+      name:
+        type: string
+      rows:
+        items:
+          $ref: '#/definitions/types.SheetRow'
+        type: array
+      rows_view:
+        items:
+          $ref: '#/definitions/sheets.RowView'
+        type: array
+      sources:
+        items:
+          $ref: '#/definitions/types.DocumentBrief'
+        type: array
+      status:
+        type: string
+      template_id:
+        type: string
+      template_name:
+        type: string
+      template_version:
+        type: integer
+      total:
+        type: integer
+      updated_at:
         type: string
     type: object
   types.BBox:
@@ -1394,6 +1693,23 @@ definitions:
       title:
         type: string
     type: object
+  types.CorrectionStat:
+    properties:
+      edited:
+        type: integer
+      examples:
+        items:
+          type: string
+        type: array
+      key:
+        type: string
+      rate:
+        type: number
+      sheets:
+        type: integer
+      version:
+        type: integer
+    type: object
   types.Document:
     properties:
       batch_id:
@@ -1471,6 +1787,10 @@ definitions:
         type: object
       page_count:
         type: integer
+      ref:
+        description: Ref is the document's ref d<n> in its case tree ("" before its
+          tree).
+        type: string
       status:
         type: string
       summary:
@@ -1569,6 +1889,29 @@ definitions:
       width_pt:
         type: number
     type: object
+  types.Evidence:
+    properties:
+      bbox:
+        items:
+          type: number
+        type: array
+      citation_id:
+        type: string
+      document_id:
+        type: string
+      file_name:
+        type: string
+      line_from:
+        type: integer
+      line_to:
+        type: integer
+      page_no:
+        type: integer
+      quote:
+        type: string
+      status:
+        type: string
+    type: object
   types.KBConfig:
     properties:
       parser_engine:
@@ -1654,6 +1997,43 @@ definitions:
         type: integer
       score:
         type: number
+    type: object
+  types.PromptTemplate:
+    properties:
+      body:
+        type: string
+      case_type:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_name:
+        type: string
+      current_version:
+        type: integer
+      description:
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/types.SheetField'
+        type: array
+      id:
+        type: string
+      kind:
+        type: string
+      latest_version:
+        type: integer
+      name:
+        type: string
+      slug:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
     type: object
   types.SearchHit:
     properties:
@@ -1785,6 +2165,65 @@ definitions:
       truncated:
         type: boolean
     type: object
+  types.Sheet:
+    properties:
+      case_id:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      error:
+        type: string
+      filled:
+        type: integer
+      id:
+        type: string
+      name:
+        type: string
+      rows:
+        items:
+          $ref: '#/definitions/types.SheetRow'
+        type: array
+      status:
+        type: string
+      template_id:
+        type: string
+      template_name:
+        type: string
+      template_version:
+        type: integer
+      total:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  types.SheetField:
+    properties:
+      key:
+        type: string
+      label:
+        type: string
+      value_type:
+        type: string
+    type: object
+  types.SheetRow:
+    properties:
+      ai_field_id:
+        type: string
+      ai_value_text:
+        type: string
+      field_id:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      note:
+        type: string
+      value_type:
+        type: string
+    type: object
   types.TOCBranch:
     properties:
       has_more:
@@ -1873,6 +2312,31 @@ definitions:
           TreeTokens estimates the subtree rendered as a table of contents
           (§6.5 step 7); 0 on trees stored before it was recorded.
         type: integer
+    type: object
+  types.UsagePeriod:
+    properties:
+      limit:
+        type: number
+      resets_at:
+        type: string
+      spent:
+        type: number
+    type: object
+  types.UsageSummary:
+    properties:
+      by_kind:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      currency:
+        type: string
+      month:
+        $ref: '#/definitions/types.UsagePeriod'
+      today:
+        $ref: '#/definitions/types.UsagePeriod'
+      updated_at:
+        type: string
     type: object
 info:
   contact: {}
@@ -1973,6 +2437,52 @@ paths:
       summary: Re-enqueue a dead-lettered task
       tags:
       - Admin
+  /v1/admin/llm:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LLMKeyView'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: The shared LLM key (masked) and the models it serves
+      tags:
+      - Admin
+    put:
+      consumes:
+      - application/json
+      description: Stored in the database and applied at once to every provider that
+        used the shared key; an empty key goes back to the one in .env.
+      parameters:
+      - description: Key
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SetLLMKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LLMKeyView'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Replace the shared LLM key
+      tags:
+      - Admin
   /v1/admin/queues:
     get:
       produces:
@@ -1989,6 +2499,112 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Queue depths per worker pool
+      tags:
+      - Admin
+  /v1/admin/usage:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.UsageSummary'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Cost of the whole system this month and today
+      tags:
+      - Admin
+  /v1/admin/users:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AdminUserList'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Users with their role, cost this month, limit and keys
+      tags:
+      - Admin
+  /v1/admin/users/{id}:
+    patch:
+      consumes:
+      - application/json
+      description: monthly_limit < 0 removes the limit.
+      parameters:
+      - description: User id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Changes
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AdminUpdateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UserView'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Change a user's role, monthly limit or active flag
+      tags:
+      - Admin
+  /v1/admin/users/{id}/api-keys:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Label
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreatedAPIKey'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Issue an API key to a user; the plaintext is returned only here
       tags:
       - Admin
   /v1/ag-ui/run:
@@ -2566,6 +3182,65 @@ paths:
       summary: Search one case (case TOC → document trees → pages → source lines)
       tags:
       - Cases
+  /v1/cases/{id}/sheets:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SheetList'
+      security:
+      - ApiKeyAuth: []
+      summary: The sheets of a case, newest first
+      tags:
+      - Sheets
+    post:
+      consumes:
+      - application/json
+      description: Confirmed fields are reused; the missing ones are extracted by
+        one agent turn (task case:sheet). Poll GET /v1/sheets/{id} for progress.
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Template
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateSheetRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/types.Sheet'
+        "402":
+          description: Payment Required
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Build a sheet of a case from a sheet template (§6.9.6)
+      tags:
+      - Sheets
   /v1/cases/{id}/toc:
     get:
       description: Built from stored cards and trees, without the LLM (§6.6 step 2).
@@ -3707,6 +4382,20 @@ paths:
       summary: Detach an API-registered MCP server
       tags:
       - MCP
+  /v1/me/usage:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.UsageSummary'
+      security:
+      - ApiKeyAuth: []
+      summary: My cost this month and today (§7.8)
+      tags:
+      - Usage
   /v1/messages:
     post:
       consumes:
@@ -4098,6 +4787,130 @@ paths:
       summary: Get a session's saved task results
       tags:
       - Sessions
+  /v1/sheets/{id}:
+    get:
+      parameters:
+      - description: Sheet id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sheets.View'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 'A sheet: status, progress and each row''s AI value, current value
+        and evidence'
+      tags:
+      - Sheets
+  /v1/sheets/{id}/edits:
+    post:
+      consumes:
+      - application/json
+      description: Each value becomes a confirmed user field; a value different from
+        the AI's is recorded as a correction.
+      parameters:
+      - description: Sheet id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Edits
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SheetEditsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sheets.View'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Save the user's values (§6.9.6)
+      tags:
+      - Sheets
+  /v1/sheets/{id}/import:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 'Nothing is written: the result lists edits, conflicts (changed
+        on the web since download) and ignored cells; save with /edits.'
+      parameters:
+      - description: Sheet id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The .xlsx downloaded from this sheet
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sheets.ImportResult'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Compare an edited .xlsx with the values it was downloaded with
+      tags:
+      - Sheets
+  /v1/sheets/{id}/xlsx:
+    get:
+      parameters:
+      - description: Sheet id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Download the sheet as .xlsx (Tổng hợp, Nguồn, hidden _bp)
+      tags:
+      - Sheets
   /v1/skills:
     get:
       produces:
@@ -4134,6 +4947,198 @@ paths:
       summary: Rescan the skills directory and reconcile the database
       tags:
       - Skills
+  /v1/templates:
+    get:
+      description: Published templates of a kind (chat or sheet), usable for a case
+        type. body and fields are returned to prompt editors only; they also see drafts
+        with drafts=1.
+      parameters:
+      - description: chat | sheet
+        in: query
+        name: kind
+        type: string
+      - description: Only templates usable for this case type
+        in: query
+        name: case_type
+        type: string
+      - description: Include drafts (prompt editors)
+        in: query
+        name: drafts
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TemplateList'
+      security:
+      - ApiKeyAuth: []
+      summary: Prompt templates (§8.4)
+      tags:
+      - Templates
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Template
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.PromptTemplate'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create a template (draft, version 1)
+      tags:
+      - Templates
+  /v1/templates/{id}:
+    get:
+      parameters:
+      - description: Template id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'Version (default: published, else latest)'
+        in: query
+        name: version
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.PromptTemplate'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: One template at a version (prompt editors)
+      tags:
+      - Templates
+  /v1/templates/{id}/corrections:
+    get:
+      parameters:
+      - description: Template id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.CorrectionStats'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: AI error rate per field of a sheet template (§6.9.6)
+      tags:
+      - Templates
+  /v1/templates/{id}/publish:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Template id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.PublishTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.PromptTemplate'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Publish a version
+      tags:
+      - Templates
+  /v1/templates/{id}/versions:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Template id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Body and fields (name/description optional)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.PromptTemplate'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Save a new (draft) version; the published one keeps running
+      tags:
+      - Templates
 schemes:
 - http
 - https

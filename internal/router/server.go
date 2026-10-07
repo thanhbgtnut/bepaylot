@@ -14,6 +14,7 @@ import (
 	appcfg "github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler"
 	"github.com/thanhenti/bepaylot/internal/middleware"
+	"github.com/thanhenti/bepaylot/internal/webui"
 )
 
 // New builds the Hertz engine with all routes mounted.
@@ -97,6 +98,13 @@ func New(cfg appcfg.HTTP, h *handler.Handlers, log *slog.Logger) *server.Hertz {
 		v1.DELETE("/mcp/servers/:name", h.DeleteMCPServer)
 
 		registerKnowledgeRoutes(v1, h)
+	}
+
+	// The web app (frontend/, embedded at build time) on every other path.
+	if ui, ok := webui.FS(); ok {
+		hz.NoRoute(webui.Handler(ui))
+	} else {
+		log.Info("web app not embedded (run make ui before go build); serving the API only")
 	}
 
 	return hz

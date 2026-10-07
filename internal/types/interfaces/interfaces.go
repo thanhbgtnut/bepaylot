@@ -101,3 +101,19 @@ type MetadataValue struct {
 type Completer interface {
 	CompleteJSON(ctx context.Context, system, user string, out any) error
 }
+
+// FieldService writes and reads Extracted Fields (§6.9.3) for the agent's
+// kb_save_fields / kb_get_fields. Evidence citations must belong to the case.
+type FieldService interface {
+	SaveAgentFields(ctx context.Context, owner, caseID uuid.UUID, sessionID *uuid.UUID, in []types.FieldInput) []FieldResult
+	CaseFields(ctx context.Context, caseID uuid.UUID, doc *uuid.UUID, key string) ([]types.Field, error)
+}
+
+// FieldResult is the outcome of one field of kb_save_fields.
+type FieldResult struct {
+	Key          string `json:"key"`
+	ID           string `json:"id,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ValueMatched bool   `json:"value_matched"`
+	Error        string `json:"error,omitempty"`
+}

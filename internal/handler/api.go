@@ -14,6 +14,8 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
+	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
+	"github.com/thanhenti/bepaylot/internal/application/service/usage"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
 	"github.com/thanhenti/bepaylot/internal/llm"
@@ -44,6 +46,10 @@ type Handlers struct {
 	Engines   *parser.Registry
 	Queue     queue.Enqueuer
 	Inspector QueueInspector
+
+	// U43–U46. Nil fields make their routes answer 503.
+	Sheets *sheets.Service
+	Usage  *usage.Service
 }
 
 func (h *Handlers) badRequest(c *app.RequestContext, msg string) {

@@ -356,6 +356,9 @@ func (s *Service) handleDelete(ctx context.Context, raw []byte) error {
 			return err
 		}
 	}
+	if err := s.st.Sheets.DeleteByCase(ctx, c.ID); err != nil {
+		return err
+	}
 	if err := s.st.Tasks.DeleteScopeOps(ctx, types.ScopeCase, c.ID.String()); err != nil {
 		return err
 	}

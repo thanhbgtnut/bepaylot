@@ -39,6 +39,7 @@ const (
 	TaskGenCleanup       = "document:gen_cleanup"
 	TaskHousekeeping     = "housekeeping:sweep"
 	TaskDocumentCallback = "document:callback"
+	TaskCaseSheet        = "case:sheet"
 )
 
 // QueueDefinition is the single source of truth for queue topology: worker
@@ -58,7 +59,7 @@ var queueDefinitions = []QueueDefinition{
 	{QueuePage, PoolOCR, 1, []string{TaskPageOCR}},
 	{QueuePageInteractive, PoolOCR, 3, []string{TaskPageOCR}},
 	{QueueIndex, PoolIndex, 1, []string{TaskIndexBuild, TaskIndexTree}},
-	{QueueIndexInteractive, PoolIndex, 3, []string{TaskIndexBuild, TaskIndexTree}},
+	{QueueIndexInteractive, PoolIndex, 3, []string{TaskIndexBuild, TaskIndexTree, TaskCaseSheet}},
 	{QueueMaintenance, PoolMaintenance, 1, []string{TaskDocumentDelete, TaskCaseDelete, TaskGenCleanup, TaskHousekeeping}},
 	{QueueCallback, PoolCore, 1, []string{TaskDocumentCallback}},
 }
@@ -137,3 +138,9 @@ const (
 	ScopeKnowledgeBase = "knowledge_base"
 	ScopeUnknown       = "unknown"
 )
+
+// SheetTaskPayload is the payload of case:sheet (§6.9.6).
+type SheetTaskPayload struct {
+	SheetID uuid.UUID `json:"sheet_id"`
+	UserID  uuid.UUID `json:"user_id"`
+}

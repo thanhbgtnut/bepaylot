@@ -4,15 +4,17 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { getCaseTOC, getTree } from "../../api/endpoints";
 import type { CaseTOC, TOCDoc, TreeNode } from "../../api/types";
 import { useApp } from "../../components/AppContext";
-import { CasePicker } from "../../components/CasePicker";
+import { CasePicker, caseLabel } from "../../components/CasePicker";
 import { NeedKB, TopBar } from "../../components/Layout";
 import { PageImage } from "../../components/PageImage";
 import { Empty, FileIcon, Icon, Loading, MetaChips, Spinner, StatusBadge } from "../../components/ui";
+import { CaseChat } from "./CaseChat";
+import { Studio } from "./Studio";
 
-// One case (hồ sơ) read through its tables of contents (§7): the case lists
-// its files, each file opens into its tree (title, page range, summary), and
-// a node shows its pages. Everything comes from the stored cards and trees;
-// nothing here calls the LLM.
+// One case (phương án / hồ sơ), laid out like NotebookLM (§7.2): Nguồn (the
+// files and their trees; a file or node opens over the chat), Trò chuyện (the
+// agent bound to the case) and Studio (Excel sheets of the case). The trees
+// come from the stored cards; only the chat and Studio call the agent.
 
 const casePath = (caseId: string) => `/cases/${caseId}`;
 const pages = (a: number, b: number) => (a === b ? `tr. ${a}` : `tr. ${a}–${b}`);
@@ -67,6 +69,8 @@ export function CasePage() {
   const [toc, setToc] = useState<CaseTOC | null>(null);
   const [err, setErr] = useState("");
   const [reload, setReload] = useState(0);
+  // Narrow screens show one column at a time, like NotebookLM's tabs.
+  const [col, setCol] = useState<"sources" | "chat" | "studio">("chat");
 
   // The URL names the case; without one, open the case picked last.
   useEffect(() => {
@@ -98,12 +102,15 @@ export function CasePage() {
     return () => clearInterval(t);
   }, [busy]);
 
-  // Open the first file when none is selected.
-  useEffect(() => {
-    if (!docId && toc?.documents.length) setSp({ doc: toc.documents[0].document_id }, { replace: true });
-  }, [docId, toc, setSp]);
-
-  const select = useCallback((doc: string, node?: string) => setSp(node ? { doc, node } : { doc }), [setSp]);
+  // A file or node opens over the chat; closing it goes back to the chat.
+  const select = useCallback(
+    (doc: string, node?: string) => {
+      setSp(node ? { doc, node } : { doc });
+      setCol("chat");
+    },
+    [setSp],
+  );
+  const closeSource = () => setSp({});
 
   if (!kb)
     return (
@@ -115,11 +122,12 @@ export function CasePage() {
 
   const c = toc?.case ?? kcase;
   const doc = toc?.documents.find((d) => d.document_id === docId) ?? null;
+  const show = (k: typeof col) => (col === k ? "flex" : "hidden lg:flex");
 
   return (
     <>
       <TopBar
-        title="Hồ sơ"
+        title={c ? caseLabel(c) : "Hồ sơ"}
         subtitle={
           toc ? (
             <span className="flex items-center gap-2">
@@ -132,11 +140,6 @@ export function CasePage() {
         }
       >
         <CasePicker value={c} onChange={(x) => nav(casePath(x.id))} />
-        {c && (
-          <Link className="btn btn-tonal" to="/chat" onClick={() => selectCase(c.id)} title="Mở phiên hỏi đáp gắn với hồ sơ này">
-            <Icon name="forum" size={18} /> Hỏi về hồ sơ
-          </Link>
-        )}
       </TopBar>
       {cases && !cases.length ? (
         <Empty icon="folder_off" title="Chưa có hồ sơ">
@@ -151,21 +154,45 @@ export function CasePage() {
         <Empty icon="error" title="Không tải được hồ sơ">
           {err}
         </Empty>
-      ) : !toc || !caseId ? (
+      ) : !toc || !caseId || !c ? (
         <Loading />
-      ) : !toc.documents.length && !toc.pending?.length ? (
-        <Empty icon="draft" title="Hồ sơ chưa có file">
-          <Link className="btn btn-primary mt-5" to="/documents?upload=1">
-            <Icon name="upload_file" size={18} /> Tải file lên
-          </Link>
-        </Empty>
       ) : (
-        <div className="flex min-h-0 flex-1 border-t border-line">
-          <Sidebar toc={toc} docId={docId} nodeId={nodeId} onSelect={select} />
-          <div className="min-w-0 flex-1 overflow-auto">
-            {doc ? <NodeView key={doc.document_id} doc={doc} nodeId={nodeId} onSelect={select} /> : <Empty icon="account_tree">Chọn một file ở cột trái.</Empty>}
+        <>
+          <div className="flex flex-none border-t border-line lg:hidden">
+            {(
+              [
+                ["sources", "Nguồn"],
+                ["chat", "Trò chuyện"],
+                ["studio", "Studio"],
+              ] as const
+            ).map(([k, l]) => (
+              <button key={k} className={"tab flex-1 " + (col === k ? "tab-active" : "")} onClick={() => setCol(k)}>
+                {l}
+              </button>
+            ))}
           </div>
-        </div>
+          <div className="flex min-h-0 flex-1 border-t border-line">
+            <Sidebar toc={toc} docId={docId} nodeId={nodeId} onSelect={select} className={show("sources")} />
+            <section className={show("chat") + " min-w-0 flex-1 flex-col"}>
+              {doc ? (
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="flex flex-none items-center gap-2 border-b border-line px-4 py-1.5">
+                    <button className="btn btn-text btn-sm" onClick={closeSource}>
+                      <Icon name="arrow_back" size={18} /> Trò chuyện
+                    </button>
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted">{doc.file_name}</span>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    <NodeView key={doc.document_id} doc={doc} nodeId={nodeId} onSelect={select} />
+                  </div>
+                </div>
+              ) : (
+                <CaseChat key={c.id} kcase={c} toc={toc} />
+              )}
+            </section>
+            <Studio key={c.id} kcase={c} className={show("studio")} />
+          </div>
+        </>
       )}
     </>
   );
@@ -176,10 +203,28 @@ export function CasePage() {
 const rowCls = (active: boolean) =>
   "flex min-h-8 w-full items-center gap-2 rounded-full py-1 pr-3 text-left text-sm " + (active ? "bg-accent-soft font-medium text-on-accent-soft" : "text-fg hover:bg-fg/8");
 
-function Sidebar({ toc, docId, nodeId, onSelect }: { toc: CaseTOC; docId: string | null; nodeId: string | null; onSelect: (doc: string, node?: string) => void }) {
+function Sidebar({
+  toc,
+  docId,
+  nodeId,
+  onSelect,
+  className,
+}: {
+  toc: CaseTOC;
+  docId: string | null;
+  nodeId: string | null;
+  onSelect: (doc: string, node?: string) => void;
+  className: string;
+}) {
   return (
-    <aside className="hidden w-80 flex-none flex-col overflow-auto border-r border-line px-2 py-3 md:flex">
-      <div className="px-3 pb-1 text-xs font-medium text-muted">Mục lục hồ sơ</div>
+    <aside className={className + " w-full flex-none flex-col overflow-auto border-r border-line px-2 py-3 lg:w-72"}>
+      <div className="flex items-center pr-1 pb-1 pl-3">
+        <span className="flex-1 text-sm font-medium text-fg">Nguồn</span>
+        <Link className="btn-icon btn-sm" to="/documents?upload=1" title="Thêm nguồn">
+          <Icon name="add" size={20} />
+        </Link>
+      </div>
+      {!toc.documents.length && !toc.pending?.length && <div className="px-3 py-2 text-sm text-subtle">Hồ sơ chưa có file</div>}
       {toc.documents.map((d) => (
         <FileEntry key={d.document_id} d={d} open={d.document_id === docId} nodeId={d.document_id === docId ? nodeId : null} onSelect={onSelect} />
       ))}

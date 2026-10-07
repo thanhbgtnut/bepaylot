@@ -155,6 +155,79 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/admin/llm": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "The shared LLM key (masked) and the models it serves",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LLMKeyView"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Stored in the database and applied at once to every provider that used the shared key; an empty key goes back to the one in .env.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Replace the shared LLM key",
+                "parameters": [
+                    {
+                        "description": "Key",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SetLLMKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.LLMKeyView"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/admin/queues": {
             "get": {
                 "security": [
@@ -174,6 +247,176 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/dto.QueueStats"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/usage": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Cost of the whole system this month and today",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.UsageSummary"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/users": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Users with their role, cost this month, limit and keys",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminUserList"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/users/{id}": {
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "monthly_limit \u003c 0 removes the limit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Change a user's role, monthly limit or active flag",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "User id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Changes",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.AdminUpdateUserRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.UserView"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/users/{id}/api-keys": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Issue an API key to a user; the plaintext is returned only here",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "User id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Label",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateAPIKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreatedAPIKey"
                         }
                     },
                     "403": {
@@ -1059,6 +1302,97 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/types.SearchResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/sheets": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "The sheets of a case, newest first",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SheetList"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Confirmed fields are reused; the missing ones are extracted by one agent turn (task case:sheet). Poll GET /v1/sheets/{id} for progress.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "Build a sheet of a case from a sheet template (§6.9.6)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Template",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateSheetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/types.Sheet"
+                        }
+                    },
+                    "402": {
+                        "description": "Payment Required",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
                     "422": {
@@ -2844,6 +3178,30 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/me/usage": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Usage"
+                ],
+                "summary": "My cost this month and today (§7.8)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.UsageSummary"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/messages": {
             "post": {
                 "security": [
@@ -3440,6 +3798,196 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/sheets/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "A sheet: status, progress and each row's AI value, current value and evidence",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Sheet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sheets.View"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sheets/{id}/edits": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Each value becomes a confirmed user field; a value different from the AI's is recorded as a correction.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "Save the user's values (§6.9.6)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Sheet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edits",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SheetEditsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sheets.View"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sheets/{id}/import": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Nothing is written: the result lists edits, conflicts (changed on the web since download) and ignored cells; save with /edits.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "Compare an edited .xlsx with the values it was downloaded with",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Sheet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "The .xlsx downloaded from this sheet",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/sheets.ImportResult"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sheets/{id}/xlsx": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "Download the sheet as .xlsx (Tổng hợp, Nguồn, hidden _bp)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Sheet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/skills": {
             "get": {
                 "security": [
@@ -3493,6 +4041,307 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/templates": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Published templates of a kind (chat or sheet), usable for a case type. body and fields are returned to prompt editors only; they also see drafts with drafts=1.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Templates"
+                ],
+                "summary": "Prompt templates (§8.4)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "chat | sheet",
+                        "name": "kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only templates usable for this case type",
+                        "name": "case_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include drafts (prompt editors)",
+                        "name": "drafts",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.TemplateList"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Templates"
+                ],
+                "summary": "Create a template (draft, version 1)",
+                "parameters": [
+                    {
+                        "description": "Template",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.TemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.PromptTemplate"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/templates/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Templates"
+                ],
+                "summary": "One template at a version (prompt editors)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Version (default: published, else latest)",
+                        "name": "version",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.PromptTemplate"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/templates/{id}/corrections": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Templates"
+                ],
+                "summary": "AI error rate per field of a sheet template (§6.9.6)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CorrectionStats"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/templates/{id}/publish": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Templates"
+                ],
+                "summary": "Publish a version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.PublishTemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.PromptTemplate"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/templates/{id}/versions": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Templates"
+                ],
+                "summary": "Save a new (draft) version; the published one keeps running",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Template id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Body and fields (name/description optional)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.TemplateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.PromptTemplate"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -4022,6 +4871,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "issued_by": {
+                    "type": "string"
+                },
                 "last_used_at": {
                     "type": "string"
                 },
@@ -4033,6 +4885,84 @@ const docTemplate = `{
                 },
                 "revoked_at": {
                     "type": "string"
+                }
+            }
+        },
+        "dto.AdminUpdateUserRequest": {
+            "type": "object",
+            "properties": {
+                "is_active": {
+                    "type": "boolean"
+                },
+                "monthly_limit": {
+                    "type": "number",
+                    "example": 500000
+                },
+                "role": {
+                    "type": "string",
+                    "example": "prompt_editor"
+                }
+            }
+        },
+        "dto.AdminUser": {
+            "type": "object",
+            "properties": {
+                "auth_provider": {
+                    "type": "string",
+                    "example": "local"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "has_password": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_admin": {
+                    "type": "boolean"
+                },
+                "keys": {
+                    "type": "integer"
+                },
+                "last_login_at": {
+                    "type": "string"
+                },
+                "monthly_limit": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "description": "Role is admin, prompt_editor or user (§8.4); admin also for http.admin_emails.",
+                    "type": "string",
+                    "example": "user"
+                },
+                "spent": {
+                    "type": "number"
+                }
+            }
+        },
+        "dto.AdminUserList": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string",
+                    "example": "VND"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.AdminUser"
+                    }
                 }
             }
         },
@@ -4214,6 +5144,17 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.CorrectionStats": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.CorrectionStat"
+                    }
+                }
+            }
+        },
         "dto.CreateAPIKeyRequest": {
             "type": "object",
             "properties": {
@@ -4268,8 +5209,21 @@ const docTemplate = `{
                 "system": {
                     "type": "string"
                 },
+                "template_id": {
+                    "description": "TemplateID is a published chat template (§8.4).",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "dto.CreateSheetRequest": {
+            "type": "object",
+            "properties": {
+                "template_id": {
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -4459,6 +5413,32 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/types.KnowledgeBase"
                     }
+                }
+            }
+        },
+        "dto.LLMKeyView": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "masked_key": {
+                    "type": "string"
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "overridden": {
+                    "type": "boolean"
+                },
+                "provider": {
+                    "type": "string"
                 }
             }
         },
@@ -4800,6 +5780,15 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.PublishTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "integer",
+                    "example": 2
+                }
+            }
+        },
         "dto.QueueStat": {
             "type": "object",
             "properties": {
@@ -4929,6 +5918,9 @@ const docTemplate = `{
                 "summary": {
                     "type": "string"
                 },
+                "template_id": {
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 },
@@ -4966,6 +5958,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "summary": {
+                    "type": "string"
+                },
+                "template_id": {
                     "type": "string"
                 },
                 "title": {
@@ -5024,11 +6019,44 @@ const docTemplate = `{
                         "$ref": "#/definitions/dto.TaskResultDTO"
                     }
                 },
+                "template_id": {
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "dto.SetLLMKeyRequest": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SheetEditsRequest": {
+            "type": "object",
+            "properties": {
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.EditInput"
+                    }
+                }
+            }
+        },
+        "dto.SheetList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Sheet"
+                    }
                 }
             }
         },
@@ -5123,6 +6151,50 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.TemplateList": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.PromptTemplate"
+                    }
+                }
+            }
+        },
+        "dto.TemplateRequest": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "case_type": {
+                    "type": "string",
+                    "example": "tin_dung_dn"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetField"
+                    }
+                },
+                "kind": {
+                    "type": "string",
+                    "example": "sheet"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Bảng tổng hợp phương án vay"
+                },
+                "slug": {
+                    "type": "string",
+                    "example": "pa_vay_von"
+                }
+            }
+        },
         "dto.TranscriptMessage": {
             "type": "object",
             "properties": {
@@ -5192,6 +6264,10 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "template_id": {
+                    "description": "TemplateID sets the chat template (§8.4); \"\" clears it.",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 }
@@ -5233,8 +6309,16 @@ const docTemplate = `{
                 "last_login_at": {
                     "type": "string"
                 },
+                "monthly_limit": {
+                    "type": "number"
+                },
                 "name": {
                     "type": "string"
+                },
+                "role": {
+                    "description": "Role is admin, prompt_editor or user (§8.4); admin also for http.admin_emails.",
+                    "type": "string",
+                    "example": "user"
                 }
             }
         },
@@ -5374,6 +6458,217 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "sheets.EditInput": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "origin": {
+                    "description": "page | xlsx",
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "sheets.Ignored": {
+            "type": "object",
+            "properties": {
+                "cell": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "sheets.ImportEdit": {
+            "type": "object",
+            "properties": {
+                "ai_value": {
+                    "type": "string"
+                },
+                "cell": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "web_value": {
+                    "description": "conflicts: the value changed on the web since download",
+                    "type": "string"
+                }
+            }
+        },
+        "sheets.ImportResult": {
+            "type": "object",
+            "properties": {
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.ImportEdit"
+                    }
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.ImportEdit"
+                    }
+                },
+                "ignored": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.Ignored"
+                    }
+                }
+            }
+        },
+        "sheets.RowView": {
+            "type": "object",
+            "properties": {
+                "ai_field_id": {
+                    "type": "string"
+                },
+                "ai_value_text": {
+                    "type": "string"
+                },
+                "calc": {
+                    "description": "value derived by the agent",
+                    "type": "boolean"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "edited": {
+                    "description": "differs from the AI value",
+                    "type": "boolean"
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Evidence"
+                    }
+                },
+                "field_id": {
+                    "type": "string"
+                },
+                "field_note": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "low": {
+                    "description": "confidence below sheets.low_confidence",
+                    "type": "boolean"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "source": {
+                    "description": "agent | user",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "field status",
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "value_matched": {
+                    "type": "boolean"
+                },
+                "value_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "sheets.View": {
+            "type": "object",
+            "properties": {
+                "case_code": {
+                    "type": "string"
+                },
+                "case_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "filled": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetRow"
+                    }
+                },
+                "rows_view": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.RowView"
+                    }
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.DocumentBrief"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "template_id": {
+                    "type": "string"
+                },
+                "template_name": {
+                    "type": "string"
+                },
+                "template_version": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "updated_at": {
                     "type": "string"
                 }
             }
@@ -5576,6 +6871,32 @@ const docTemplate = `{
                 }
             }
         },
+        "types.CorrectionStat": {
+            "type": "object",
+            "properties": {
+                "edited": {
+                    "type": "integer"
+                },
+                "examples": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "key": {
+                    "type": "string"
+                },
+                "rate": {
+                    "type": "number"
+                },
+                "sheets": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
         "types.Document": {
             "type": "object",
             "properties": {
@@ -5686,6 +7007,10 @@ const docTemplate = `{
                 },
                 "page_count": {
                     "type": "integer"
+                },
+                "ref": {
+                    "description": "Ref is the document's ref d\u003cn\u003e in its case tree (\"\" before its tree).",
+                    "type": "string"
                 },
                 "status": {
                     "type": "string"
@@ -5835,6 +7160,41 @@ const docTemplate = `{
                 }
             }
         },
+        "types.Evidence": {
+            "type": "object",
+            "properties": {
+                "bbox": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                },
+                "citation_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "line_from": {
+                    "type": "integer"
+                },
+                "line_to": {
+                    "type": "integer"
+                },
+                "page_no": {
+                    "type": "integer"
+                },
+                "quote": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "types.KBConfig": {
             "type": "object",
             "properties": {
@@ -5958,6 +7318,62 @@ const docTemplate = `{
                 },
                 "score": {
                     "type": "number"
+                }
+            }
+        },
+        "types.PromptTemplate": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "case_type": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_name": {
+                    "type": "string"
+                },
+                "current_version": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetField"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "latest_version": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
                 }
             }
         },
@@ -6154,6 +7570,96 @@ const docTemplate = `{
                 }
             }
         },
+        "types.Sheet": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "filled": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetRow"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "template_id": {
+                    "type": "string"
+                },
+                "template_name": {
+                    "type": "string"
+                },
+                "template_version": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SheetField": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "value_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SheetRow": {
+            "type": "object",
+            "properties": {
+                "ai_field_id": {
+                    "type": "string"
+                },
+                "ai_value_text": {
+                    "type": "string"
+                },
+                "field_id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "value_type": {
+                    "type": "string"
+                }
+            }
+        },
         "types.TOCBranch": {
             "type": "object",
             "properties": {
@@ -6282,6 +7788,44 @@ const docTemplate = `{
                 "tree_tokens": {
                     "description": "TreeTokens estimates the subtree rendered as a table of contents\n(§6.5 step 7); 0 on trees stored before it was recorded.",
                     "type": "integer"
+                }
+            }
+        },
+        "types.UsagePeriod": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "number"
+                },
+                "resets_at": {
+                    "type": "string"
+                },
+                "spent": {
+                    "type": "number"
+                }
+            }
+        },
+        "types.UsageSummary": {
+            "type": "object",
+            "properties": {
+                "by_kind": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "month": {
+                    "$ref": "#/definitions/types.UsagePeriod"
+                },
+                "today": {
+                    "$ref": "#/definitions/types.UsagePeriod"
+                },
+                "updated_at": {
+                    "type": "string"
                 }
             }
         }

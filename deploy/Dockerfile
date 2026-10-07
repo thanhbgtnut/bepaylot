@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 #
 # Two images from one Dockerfile:
-#   --target api     static binary, no cgo (role=api, or role=all with webassembly rendering)
+#   --target api     static binary, no cgo (role=api, or role=all with webassembly rendering);
+#                    serves the web app too (frontend/ built in the ui stage, embedded via
+#                    internal/webui), so http://host:8080/ opens the app
 #   --target worker  server + pdfium-worker linked against libpdfium (role=worker,
 #                    parser.render.mode=multi_threaded) — spec §5.7
 #
@@ -9,11 +11,20 @@
 
 ARG PDFIUM_VERSION=chromium/7350
 
+# Web app: Vite writes the build into internal/webui/dist (see vite.config.ts).
+FROM node:22-alpine AS ui
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN mkdir -p ../internal/webui/dist && npm run build
+
 FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=ui /src/internal/webui/dist/ ./internal/webui/dist/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/seed ./cmd/seed \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/skills-sync ./cmd/skills-sync

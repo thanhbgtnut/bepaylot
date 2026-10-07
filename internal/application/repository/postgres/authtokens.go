@@ -84,3 +84,21 @@ func (r *AuthTokensRepo) Secret(ctx context.Context, name, candidate string) (st
 	}
 	return v, nil
 }
+
+// SetSecret stores (or replaces) a named secret; "" deletes it.
+func (r *AuthTokensRepo) SetSecret(ctx context.Context, name, value string) error {
+	if value == "" {
+		_, err := r.pool.Exec(ctx, `DELETE FROM app_secrets WHERE name = $1`, name)
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `INSERT INTO app_secrets (name, value) VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value`, name, value)
+	return err
+}
+
+// GetSecret returns a named secret, "" when unset.
+func (r *AuthTokensRepo) GetSecret(ctx context.Context, name string) string {
+	var v string
+	_ = r.pool.QueryRow(ctx, `SELECT value FROM app_secrets WHERE name = $1`, name).Scan(&v)
+	return v
+}

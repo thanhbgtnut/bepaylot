@@ -104,6 +104,7 @@ func (h *Handlers) Register(ctx context.Context, c *app.RequestContext) {
 		h.authError(c, err)
 		return
 	}
+	h.newAccount(ctx, t.User)
 	c.JSON(consts.StatusCreated, h.tokensView(t, true))
 }
 
@@ -272,6 +273,9 @@ func (h *Handlers) OIDCCallback(ctx context.Context, c *app.RequestContext) {
 		fail("login_failed", "")
 		return
 	}
+	if created {
+		h.newAccount(ctx, t.User)
+	}
 	raw, err := json.Marshal(h.tokensView(t, created))
 	if err != nil {
 		fail("login_failed", "")
@@ -368,6 +372,11 @@ func (h *Handlers) ListAPIKeys(ctx context.Context, c *app.RequestContext) {
 func (h *Handlers) CreateAPIKey(ctx context.Context, c *app.RequestContext) {
 	u, ok := h.user(c)
 	if !ok {
+		return
+	}
+	// Keys are handed out by an admin, each charged to its user (§8.5).
+	if h.role(u) != types.UserRoleAdmin {
+		c.JSON(consts.StatusForbidden, dto.NewError("permission_error", "API keys are issued by an admin (Cài đặt → Người dùng)"))
 		return
 	}
 	var req dto.CreateAPIKeyRequest
@@ -482,4 +491,11 @@ func requestOrigin(c *app.RequestContext) string {
 	}
 	host, _, _ = strings.Cut(host, ",")
 	return scheme + "://" + strings.TrimSpace(host)
+}
+
+// newAccount gives a new account the default monthly limit (§8.5).
+func (h *Handlers) newAccount(ctx context.Context, u types.User) {
+	if h.Config != nil && h.Config.Usage.DefaultMonthlyLimit > 0 {
+		h.Store.Users.SetDefaultLimit(ctx, u.ID, h.Config.Usage.DefaultMonthlyLimit)
+	}
 }

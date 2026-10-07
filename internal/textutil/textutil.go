@@ -4,6 +4,9 @@
 package textutil
 
 import (
+	"encoding/json"
+	"math"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -108,4 +111,81 @@ func Truncate(s string, n int) string {
 	}
 	r := []rune(s)
 	return string(r[:n]) + "…"
+}
+
+// ValueKey is the comparison form of a field value (§6.9.2): accent-folded
+// and lower-case; a value made of digits and separators keeps only its
+// digits, so 15.000.000.000, "15 000 000 000" and 15000000000 compare equal,
+// and so do 0101-234-567 and 0101234567; other punctuation and spacing is
+// ignored.
+func ValueKey(s string) string {
+	s = Unaccent(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	digits, numeric := strings.Builder{}, true
+	for _, r := range s {
+		switch {
+		case unicode.IsDigit(r):
+			digits.WriteRune(r)
+		case strings.ContainsRune(" .,-/_'", r):
+		default:
+			numeric = false
+		}
+	}
+	if numeric && digits.Len() > 0 {
+		return digits.String()
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// ValueIn reports whether value appears in text by ValueKey: numbers by their
+// digits, text by its letters and digits.
+func ValueIn(value, text string) bool {
+	v := ValueKey(value)
+	if v == "" {
+		return false
+	}
+	var digits strings.Builder
+	for _, r := range text {
+		if unicode.IsDigit(r) {
+			digits.WriteRune(r)
+		}
+	}
+	if strings.Contains(digits.String(), v) {
+		return true
+	}
+	var b strings.Builder
+	for _, r := range Unaccent(text) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return strings.Contains(b.String(), v)
+}
+
+// ValueText is the text form of a JSON value (a field value, §6.9.3).
+func ValueText(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(x)
+	case float64:
+		if x == math.Trunc(x) && math.Abs(x) < 1e15 {
+			return strconv.FormatFloat(x, 'f', 0, 64)
+		}
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	default:
+		b, _ := json.Marshal(x)
+		return string(b)
+	}
 }

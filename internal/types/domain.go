@@ -34,8 +34,13 @@ type User struct {
 	// HasPassword reports whether the user can sign in with a local password.
 	HasPassword bool
 	IsActive    bool
-	LastLoginAt *time.Time
-	CreatedAt   time.Time
+	// Role is admin, prompt_editor or user (§8.4).
+	Role string
+	// MonthlyLimit caps the cost of the user's model calls per month
+	// (usage.currency, §8.5); nil = no limit.
+	MonthlyLimit *float64
+	LastLoginAt  *time.Time
+	CreatedAt    time.Time
 }
 
 // APIKey is a hashed credential bound to a User. The plaintext key is only ever
@@ -49,6 +54,9 @@ type APIKey struct {
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
 	CreatedAt  time.Time
+	// IssuedBy is the email of the admin who issued the key (§8.5); empty
+	// for a key the user created.
+	IssuedBy string
 }
 
 // Session is a conversation thread owned by a User.
@@ -63,10 +71,13 @@ type Session struct {
 	Metadata       map[string]any
 	// CaseID binds the session to one case for its whole life (§8.1): the
 	// document tools only see that case. nil = no case, no tools.
-	CaseID    *uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt *time.Time
+	CaseID *uuid.UUID
+	// TemplateID is the chat prompt template whose published body is added
+	// to the session instructions each turn (§8.4).
+	TemplateID *uuid.UUID
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
 }
 
 // Message is a single turn in a Session. Its content is stored as an ordered
