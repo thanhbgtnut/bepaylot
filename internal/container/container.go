@@ -246,8 +246,11 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		return err
 	}
 	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs, idx: idx})
-	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Runner: sheetRunner{ag: ag, st: st, cfg: cfg.LLM}, Config: cfg, Log: log})
-	h.Sheets = sh
+	split := docmodel.NewSplit(docmodel.SplitDeps{Store: st, Queue: app.enqueuer, Cases: cs,
+		LLM: completer(cfg.Classify.Provider, cfg.Classify.Model, 4096), Config: cfg, Log: log})
+	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Searcher: idx, Split: split,
+		Runner: sheetRunner{ag: ag, st: st, cfg: cfg.LLM}, Config: cfg, Log: log})
+	h.Sheets, h.Split = sh, split
 
 	if cfg.Workers.RunsWorkers() {
 		handlers := map[string]queue.Handler{}
@@ -258,7 +261,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 			}
 		}
 		billParse(meter, pipeline)
-		for _, m := range []map[string]queue.Handler{pipeline, cs.Handlers(), sh.Handlers()} {
+		for _, m := range []map[string]queue.Handler{pipeline, cs.Handlers(), sh.Handlers(), split.Handlers()} {
 			for k, v := range m {
 				handlers[k] = v
 			}

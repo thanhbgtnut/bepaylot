@@ -21,9 +21,10 @@ import type {
   LLMKeyView,
   PromptTemplate,
   Sheet,
-  SheetField,
+  SheetTable,
   SheetImport,
   SheetView,
+  SplitView,
   UsageSummary,
   APIKey,
   AuthUser,
@@ -148,9 +149,9 @@ export const setSessionTemplate = (id: string, templateId: string) =>
 export const listTemplates = (kind: "chat" | "sheet", caseType?: string, drafts = false) =>
   request<{ data: PromptTemplate[] }>("/templates" + q({ kind, case_type: caseType, drafts: drafts ? 1 : undefined })).then((r) => r.data ?? []);
 export const getTemplate = (id: string, version?: number) => request<PromptTemplate>(`/templates/${id}` + q({ version }));
-export const createTemplate = (body: { kind: "chat" | "sheet"; slug: string; name: string; description?: string; case_type?: string; body: string; fields?: SheetField[] }) =>
+export const createTemplate = (body: { kind: "chat" | "sheet"; slug: string; name: string; description?: string; case_type?: string; body: string; tables?: SheetTable[] }) =>
   request<PromptTemplate>("/templates", { body });
-export const addTemplateVersion = (id: string, body: { name?: string; description?: string; body: string; fields?: SheetField[] }) =>
+export const addTemplateVersion = (id: string, body: { name?: string; description?: string; body: string; tables?: SheetTable[] }) =>
   request<PromptTemplate>(`/templates/${id}/versions`, { body });
 export const publishTemplate = (id: string, version: number) => request<PromptTemplate>(`/templates/${id}/publish`, { body: { version } });
 export const templateCorrections = (id: string) =>
@@ -158,18 +159,37 @@ export const templateCorrections = (id: string) =>
 
 // ---- case sheets (§6.9.6)
 
-export const createSheet = (caseId: string, templateId: string) => request<Sheet>(`/cases/${caseId}/sheets`, { body: { template_id: templateId } });
+export const createSheet = (caseId: string, templateId: string, tables?: string[]) =>
+  request<Sheet>(`/cases/${caseId}/sheets`, { body: { template_id: templateId, tables } });
 export const listSheets = (caseId: string) => request<{ data: Sheet[] }>(`/cases/${caseId}/sheets`).then((r) => r.data ?? []);
 export const getSheet = (id: string) => request<SheetView>(`/sheets/${id}`);
-export const saveSheetEdits = (id: string, edits: { key: string; value: string; origin: "page" | "xlsx"; document_id?: string }[]) =>
+export interface SheetEditInput {
+  table: string;
+  segment_id?: string;
+  document_id?: string;
+  key: string;
+  value: string;
+  origin: "page" | "xlsx";
+}
+export const saveSheetEdits = (id: string, edits: SheetEditInput[]) =>
   request<SheetView>(`/sheets/${id}/edits`, { body: { edits } });
 export const importSheet = (id: string, file: File) => {
   const fd = new FormData();
   fd.append("file", file, file.name);
   return uploadForm<SheetImport>(`/sheets/${id}/import`, fd);
 };
-export const downloadSheet = (s: { id: string; name: string; case_code?: string }) =>
-  download(`/sheets/${s.id}/xlsx`, `${s.case_code ? s.case_code + "_" : ""}${s.name}.xlsx`);
+export const downloadSheet = (s: { id: string; name: string; case_code?: string }, tables?: string[]) =>
+  download(`/sheets/${s.id}/xlsx` + q({ tables: tables?.join(",") }), `${s.case_code ? s.case_code + "_" : ""}${s.name}.xlsx`);
+
+// ---- tách & gom trang (§6.9.7)
+
+export const getSplit = (caseId: string) => request<SplitView>(`/cases/${caseId}/split`);
+export const classifyCase = (caseId: string, body: { mode?: "titles" | "pages"; document_ids?: string[] } = {}) =>
+  request<{ queued: number }>(`/cases/${caseId}/classify`, { body });
+export const saveSplit = (
+  caseId: string,
+  bundles: { segments: { document_id: string; page_start: number; page_end: number; label: string }[] }[],
+) => request<SplitView>(`/cases/${caseId}/split`, { method: "PUT", body: { bundles } });
 
 // ---- usage and admin (§8.5)
 

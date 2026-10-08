@@ -296,3 +296,11 @@ usage:
 # Case sheets (U43, §6.9.6).
 sheets:
   low_confidence: 0.75              # cells below it are marked "cần xem"
+classify:                           # document:classify (§6.9.4); labels live in the case type
+  provider: ""                      # "" = llm.default_provider
+  model: ""                         # "" = llm.default_model
+  min_confidence: 0.6               # a case type's classification.min_confidence overrides it
+  titles_per_page: 3                # mode=titles: title/heading elements per page
+  lines_per_page: 8                 # mode=pages only
+  doc_token_budget: 16000           # mode=pages: larger files fall back to titles
+  page_marks: true                  # send cut hints (page number back to 1, blank page, size change; U49)

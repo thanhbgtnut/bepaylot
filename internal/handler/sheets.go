@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
@@ -26,10 +27,13 @@ func (h *Handlers) sheetsReady(c *app.RequestContext) bool {
 }
 
 func (h *Handlers) sheetError(c *app.RequestContext, err error) {
+	var split *sheets.SplitNotReviewedError
 	switch {
+	case errors.As(err, &split):
+		c.JSON(consts.StatusConflict, dto.NewError("split_not_reviewed", err.Error()))
 	case errors.Is(err, sheets.ErrNotFound):
 		h.notFound(c, "sheet not found")
-	case errors.Is(err, sheets.ErrNotSheet), errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNeedSource),
+	case errors.Is(err, sheets.ErrNotSheet), errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNoTables),
 		errors.Is(err, sheets.ErrUnknownKey):
 		h.unprocessable(c, err.Error())
 	case errors.Is(err, sheets.ErrNotFinished):
@@ -42,7 +46,7 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 // CreateSheet handles POST /v1/cases/{id}/sheets.
 //
 // @Summary      Build a sheet of a case from a sheet template (§6.9.6)
-// @Description  Confirmed fields are reused; the missing ones are extracted by one agent turn (task case:sheet). Poll GET /v1/sheets/{id} for progress.
+// @Description  One sub-table per document type (tables = labels, omitted = all); rows are the reviewed documents of the case. Confirmed fields are reused; the missing ones are extracted by one agent turn per bundle (task case:sheet). Poll GET /v1/sheets/{id} for progress. 409 split_not_reviewed when a file's split is not reviewed.
 // @Tags         Sheets
 // @Accept       json
 // @Produce      json
@@ -50,6 +54,7 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 // @Param        request  body      dto.CreateSheetRequest  true  "Template"
 // @Success      202      {object}  types.Sheet
 // @Failure      402      {object}  dto.ErrorResponse
+// @Failure      409      {object}  dto.ErrorResponse
 // @Failure      422      {object}  dto.ErrorResponse
 // @Security     ApiKeyAuth
 // @Router       /v1/cases/{id}/sheets [post]
@@ -75,7 +80,7 @@ func (h *Handlers) CreateSheet(ctx context.Context, c *app.RequestContext) {
 	if !h.withinBudget(ctx, c, u) {
 		return
 	}
-	sh, err := h.Sheets.Create(ctx, u, caseID, tpl)
+	sh, err := h.Sheets.Create(ctx, u, caseID, tpl, req.Tables)
 	if err != nil {
 		h.sheetError(c, err)
 		return
@@ -111,7 +116,7 @@ func (h *Handlers) ListSheets(ctx context.Context, c *app.RequestContext) {
 
 // GetSheet handles GET /v1/sheets/{id}.
 //
-// @Summary   A sheet: status, progress and each row's AI value, current value and evidence
+// @Summary   A sheet: status, progress and its sub-tables; each cell's AI value, current value, confidence and evidence
 // @Tags      Sheets
 // @Produce   json
 // @Param     id   path      string  true  "Sheet id"  format(uuid)
@@ -219,10 +224,11 @@ func (h *Handlers) ImportSheet(ctx context.Context, c *app.RequestContext) {
 
 // DownloadSheet handles GET /v1/sheets/{id}/xlsx.
 //
-// @Summary   Download the sheet as .xlsx (Tổng hợp, Nguồn, hidden _bp)
+// @Summary   Download the sheet as .xlsx: one data-only sheet per sub-table, plus the hidden _bp
 // @Tags      Sheets
 // @Produce   application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-// @Param     id   path      string  true  "Sheet id"  format(uuid)
+// @Param     id      path   string  true   "Sheet id"  format(uuid)
+// @Param     tables  query  string  false  "Labels of the sub-tables to include, comma separated (default all)"
 // @Success   200  {file}    binary
 // @Failure   404  {object}  dto.ErrorResponse
 // @Security  ApiKeyAuth
@@ -237,7 +243,13 @@ func (h *Handlers) DownloadSheet(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	var buf bytes.Buffer
-	name, err := h.Sheets.XLSX(ctx, u.ID, id, &buf)
+	var tables []string
+	for _, t := range strings.Split(string(c.Query("tables")), ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			tables = append(tables, t)
+		}
+	}
+	name, err := h.Sheets.XLSX(ctx, u.ID, id, tables, &buf)
 	if err != nil {
 		h.sheetError(c, err)
 		return

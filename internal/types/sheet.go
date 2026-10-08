@@ -34,6 +34,7 @@ type Field struct {
 	ID           uuid.UUID  `json:"id"`
 	CaseID       uuid.UUID  `json:"case_id"`
 	DocumentID   uuid.UUID  `json:"document_id"`
+	SegmentID    *uuid.UUID `json:"segment_id,omitempty"`
 	Key          string     `json:"key"`
 	Ord          int        `json:"ord"`
 	Value        any        `json:"value"`
@@ -65,6 +66,7 @@ type Evidence struct {
 // FieldInput is a field written by the agent (kb_save_fields) or a user.
 type FieldInput struct {
 	DocumentID uuid.UUID
+	SegmentID  *uuid.UUID // the document (segment) of a mixed file the field belongs to (§6.9.3)
 	Key        string
 	Ord        int
 	Value      any
@@ -84,11 +86,19 @@ const (
 	TemplateArchived  = "archived"
 )
 
-// SheetField is one row of a sheet template.
+// SheetField is one column of a sheet sub-table.
 type SheetField struct {
 	Key       string `json:"key"`
 	Label     string `json:"label"`
 	ValueType string `json:"value_type,omitempty"`
+}
+
+// SheetTable is one sub-table of a sheet template (U48): the fields of one
+// document type. Label is a classification label; "" means one row per file.
+type SheetTable struct {
+	Label  string       `json:"label"`
+	Title  string       `json:"title"`
+	Fields []SheetField `json:"fields"`
 }
 
 // PromptTemplate is a prompt preset (kind chat) or a sheet template (kind
@@ -106,7 +116,8 @@ type PromptTemplate struct {
 	LatestVersion  int          `json:"latest_version"`
 	Version        int          `json:"version"`
 	Body           string       `json:"body,omitempty"`
-	Fields         []SheetField `json:"fields,omitempty"`
+	Fields         []SheetField `json:"fields,omitempty"` // 0.16 templates; Tables supersedes it
+	Tables         []SheetTable `json:"tables,omitempty"`
 	CreatedBy      uuid.UUID    `json:"created_by"`
 	CreatedByName  string       `json:"created_by_name,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`
@@ -121,11 +132,24 @@ const (
 	SheetFailed  = "failed"
 )
 
-// SheetRow is one row of a case sheet as captured when it was built.
+// SheetRow is one row of a sheet sub-table as captured when the sheet was
+// built: one document (a reviewed segment, or a whole file for a sub-table
+// without label), its bundle and one cell per field of the sub-table.
 type SheetRow struct {
-	Key         string     `json:"key"`
-	Label       string     `json:"label"`
-	ValueType   string     `json:"value_type,omitempty"`
+	Table      string               `json:"table"`
+	Bundle     string               `json:"bundle,omitempty"`
+	SegmentID  *uuid.UUID           `json:"segment_id,omitempty"`
+	SegmentNo  int                  `json:"segment_no,omitempty"` // k of the segment ref d<n>.s<k>
+	DocumentID uuid.UUID            `json:"document_id"`
+	FileName   string               `json:"file_name,omitempty"`
+	PageStart  int                  `json:"page_start,omitempty"`
+	PageEnd    int                  `json:"page_end,omitempty"`
+	Cells      map[string]SheetCell `json:"cells"`
+}
+
+// SheetCell is one cell of a sheet row: the field it shows and the AI value
+// it is compared with (§6.9.6).
+type SheetCell struct {
 	FieldID     *uuid.UUID `json:"field_id,omitempty"`
 	AIFieldID   *uuid.UUID `json:"ai_field_id,omitempty"`
 	AIValueText string     `json:"ai_value_text"`
@@ -143,6 +167,7 @@ type Sheet struct {
 	Status          string     `json:"status"`
 	Filled          int        `json:"filled"`
 	Total           int        `json:"total"`
+	Tables          []string   `json:"tables"`
 	Rows            []SheetRow `json:"rows"`
 	Error           string     `json:"error,omitempty"`
 	CreatedBy       uuid.UUID  `json:"created_by"`
@@ -155,6 +180,8 @@ type Correction struct {
 	SheetID         uuid.UUID
 	TemplateID      uuid.UUID
 	TemplateVersion int
+	Label           string
+	SegmentID       *uuid.UUID
 	Key             string
 	AIFieldID       *uuid.UUID
 	UserFieldID     *uuid.UUID
@@ -166,6 +193,7 @@ type Correction struct {
 
 // CorrectionStat is the error rate of one field of a template version.
 type CorrectionStat struct {
+	Label    string   `json:"label"`
 	Key      string   `json:"key"`
 	Version  int      `json:"version"`
 	Sheets   int      `json:"sheets"`
@@ -213,4 +241,61 @@ type UserUsage struct {
 	User
 	Spent float64 `json:"spent"`
 	Keys  int     `json:"keys"`
+}
+
+// Segment sources and statuses (§6.9.4).
+const (
+	SegmentPipeline = "pipeline"
+	SegmentUser     = "user"
+	SegmentActive   = "active"
+	SegmentStale    = "stale"
+)
+
+// Segment is a page range of a file with its document type (§6.9.4): one
+// document of a mixed scan. Reviewed segments (source user) belong to a
+// bundle (§6.9.7).
+type Segment struct {
+	ID            uuid.UUID  `json:"id"`
+	CaseID        uuid.UUID  `json:"case_id"`
+	DocumentID    uuid.UUID  `json:"document_id"`
+	PageStart     int        `json:"page_start"`
+	PageEnd       int        `json:"page_end"`
+	Label         string     `json:"label"`
+	ProposedLabel string     `json:"proposed_label,omitempty"`
+	Confidence    float64    `json:"confidence"`
+	Source        string     `json:"source"`
+	NeedsReview   bool       `json:"needs_review,omitempty"`
+	Mode          string     `json:"mode,omitempty"`
+	BundleID      *uuid.UUID `json:"bundle_id,omitempty"`
+	BundleCode    string     `json:"bundle,omitempty"`
+}
+
+// Bundle is a document bundle of a case (bộ chứng từ, §6.9.7).
+type Bundle struct {
+	ID   uuid.UUID `json:"id"`
+	Seq  int       `json:"seq"`
+	Code string    `json:"code"`
+}
+
+// Document split statuses (§6.9.7), computed when read.
+const (
+	SplitNone     = "none"
+	SplitProposed = "proposed"
+	SplitReviewed = "reviewed"
+)
+
+// Classify statuses of a document (§6.9.4).
+const (
+	ClassifyNone    = "none"
+	ClassifyRunning = "running"
+	ClassifyDone    = "done"
+	ClassifyFailed  = "failed"
+	ClassifySkipped = "skipped"
+)
+
+// ClassifyTaskPayload is the payload of document:classify.
+type ClassifyTaskPayload struct {
+	DocumentID uuid.UUID `json:"document_id"`
+	Mode       string    `json:"mode"` // titles | pages
+	UserID     uuid.UUID `json:"user_id"`
 }

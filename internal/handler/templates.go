@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -164,12 +165,13 @@ func (h *Handlers) CreateTemplate(ctx context.Context, c *app.RequestContext) {
 		h.unprocessable(c, "slug (a-z, 0-9, _ -) and name are required")
 		return
 	}
-	if msg := checkTemplate(req.Kind, req.Body, req.Fields); msg != "" {
+	tables := req.SheetTables()
+	if msg := h.checkTemplate(req.Kind, req.Body, req.CaseType, tables); msg != "" {
 		h.unprocessable(c, msg)
 		return
 	}
 	t, err := h.Store.Templates.Create(ctx, postgres.TemplateDraft{Kind: req.Kind, Slug: req.Slug, Name: req.Name, Description: req.Description,
-		CaseType: req.CaseType, Body: req.Body, Fields: req.Fields, By: u.ID})
+		CaseType: req.CaseType, Body: req.Body, Tables: tables, By: u.ID})
 	if errors.Is(err, postgres.ErrSlugTaken) {
 		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", err.Error()))
 		return
@@ -213,12 +215,13 @@ func (h *Handlers) AddTemplateVersion(ctx context.Context, c *app.RequestContext
 		h.serviceError(c, err)
 		return
 	}
-	if msg := checkTemplate(cur.Kind, req.Body, req.Fields); msg != "" {
+	tables := req.SheetTables()
+	if msg := h.checkTemplate(cur.Kind, req.Body, cur.CaseType, tables); msg != "" {
 		h.unprocessable(c, msg)
 		return
 	}
 	t, err := h.Store.Templates.AddVersion(ctx, id, postgres.TemplateDraft{Name: req.Name, Description: req.Description,
-		Body: req.Body, Fields: req.Fields, By: u.ID})
+		Body: req.Body, Tables: tables, By: u.ID})
 	if err != nil {
 		h.serviceError(c, err)
 		return
@@ -286,22 +289,47 @@ func (h *Handlers) TemplateCorrections(ctx context.Context, c *app.RequestContex
 	c.JSON(consts.StatusOK, dto.CorrectionStats{Data: stats})
 }
 
-func checkTemplate(kind, body string, fields []types.SheetField) string {
+// checkTemplate validates a template version: a sheet template needs at
+// least one sub-table, each with fields (unique snake_case keys) and a label
+// of the case type's classification, or "" for one row per file (§6.9.6).
+func (h *Handlers) checkTemplate(kind, body, caseType string, tables []types.SheetTable) string {
 	if strings.TrimSpace(body) == "" {
 		return "body is required"
 	}
 	if kind != types.TemplateSheet {
 		return ""
 	}
-	if len(fields) == 0 {
-		return "a sheet template needs fields"
+	if len(tables) == 0 {
+		return "a sheet template needs tables (or fields)"
 	}
-	seen := map[string]bool{}
-	for _, f := range fields {
-		if !slugRe.MatchString(f.Key) || strings.TrimSpace(f.Label) == "" || seen[f.Key] {
-			return "each field needs a unique snake_case key and a label"
+	var rule types.ClassificationRule
+	if h.Cases != nil && caseType != "" {
+		rule = h.Cases.CaseType(caseType).Classification
+	}
+	labels := map[string]bool{}
+	for _, t := range tables {
+		if labels[t.Label] {
+			return fmt.Sprintf("table %q appears twice", t.Label)
 		}
-		seen[f.Key] = true
+		labels[t.Label] = true
+		if t.Label != "" {
+			if caseType == "" {
+				return "a table with a document type (label) needs the template's case_type"
+			}
+			if t.Label == types.LabelOther || t.Label == types.LabelUnknown || !rule.HasLabel(t.Label) {
+				return fmt.Sprintf("table label %q is not a classification label of case type %s", t.Label, caseType)
+			}
+		}
+		if len(t.Fields) == 0 {
+			return "each table needs fields"
+		}
+		seen := map[string]bool{}
+		for _, f := range t.Fields {
+			if !slugRe.MatchString(f.Key) || strings.TrimSpace(f.Label) == "" || seen[f.Key] {
+				return "each field needs a unique snake_case key and a label"
+			}
+			seen[f.Key] = true
+		}
 	}
 	return ""
 }

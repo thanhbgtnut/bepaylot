@@ -13,6 +13,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
+	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/application/service/usage"
@@ -50,6 +51,8 @@ type Handlers struct {
 	// U43–U46. Nil fields make their routes answer 503.
 	Sheets *sheets.Service
 	Usage  *usage.Service
+	// U48, U49: tách & gom trang. Nil makes its routes answer 503.
+	Split *docmodel.Split
 }
 
 func (h *Handlers) badRequest(c *app.RequestContext, msg string) {

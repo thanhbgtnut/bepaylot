@@ -81,6 +81,18 @@ func ValidateType(t types.CaseType) error {
 	if err := metadata.ValidateSchema(t.MetadataSchema); err != nil {
 		return fmt.Errorf("metadata_schema: %w", err)
 	}
+	seen := map[string]bool{}
+	for _, l := range t.Classification.Labels {
+		if !typeNameRe.MatchString(l.Name) || l.Name == types.LabelOther || l.Name == types.LabelUnknown || seen[l.Name] {
+			return fmt.Errorf("classification.labels: invalid or duplicate name %q", l.Name)
+		}
+		seen[l.Name] = true
+	}
+	for _, n := range t.Bundles.OpensWith {
+		if !seen[n] {
+			return fmt.Errorf("bundles.opens_with: %q is not a classification label", n)
+		}
+	}
 	return nil
 }
 

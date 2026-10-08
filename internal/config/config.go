@@ -37,6 +37,7 @@ type Config struct {
 	Cases    Cases    `yaml:"cases"`
 	Usage    Usage    `yaml:"usage"`
 	Sheets   Sheets   `yaml:"sheets"`
+	Classify Classify `yaml:"classify"`
 }
 
 // Usage prices model calls and limits each user's monthly spend (§8.5).
@@ -62,6 +63,19 @@ type ModelPrice struct {
 type Sheets struct {
 	// LowConfidence marks a cell "cần xem" below it.
 	LowConfidence float64 `yaml:"low_confidence"`
+}
+
+// Classify configures document:classify (§6.9.4); labels live in the case type.
+type Classify struct {
+	Provider       string  `yaml:"provider"`
+	Model          string  `yaml:"model"`          // "" = llm.default_model
+	MinConfidence  float64 `yaml:"min_confidence"` // a case type's classification.min_confidence overrides it
+	TitlesPerPage  int     `yaml:"titles_per_page"`
+	LinesPerPage   int     `yaml:"lines_per_page"` // mode=pages only
+	DocTokenBudget int     `yaml:"doc_token_budget"`
+	// PageMarks sends the cut hints found by code (page number back to 1,
+	// blank page, page size change) with the titles (U49).
+	PageMarks bool `yaml:"page_marks"`
 }
 
 // ToolsCfg configures the built-in tool set.
@@ -281,7 +295,7 @@ func Load(path string) (*Config, error) {
 		return os.Getenv(key)
 	})
 
-	var cfg Config
+	cfg := Config{Classify: Classify{PageMarks: true}}
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
@@ -380,6 +394,18 @@ func (c *Config) applyDefaults() {
 
 	setString(&c.Usage.Currency, "VND")
 	setString(&c.Usage.Timezone, "Asia/Ho_Chi_Minh")
+	if c.Classify.MinConfidence <= 0 {
+		c.Classify.MinConfidence = 0.6
+	}
+	if c.Classify.TitlesPerPage <= 0 {
+		c.Classify.TitlesPerPage = 3
+	}
+	if c.Classify.LinesPerPage <= 0 {
+		c.Classify.LinesPerPage = 8
+	}
+	if c.Classify.DocTokenBudget <= 0 {
+		c.Classify.DocTokenBudget = 16000
+	}
 	if c.Sheets.LowConfidence <= 0 {
 		c.Sheets.LowConfidence = 0.75
 	}
@@ -482,7 +508,7 @@ const defaultResponseStyle = `Prefer concise, skimmable answers. Use Markdown. L
 // Defaults returns a Config with every default applied and no file read.
 // Tests and tools use it as a base.
 func Defaults() *Config {
-	c := &Config{}
+	c := &Config{Classify: Classify{PageMarks: true}}
 	c.applyDefaults()
 	return c
 }

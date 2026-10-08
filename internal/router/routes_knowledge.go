@@ -82,6 +82,10 @@ func registerKnowledgeRoutes(v1 *route.RouterGroup, h *handler.Handlers) {
 	g.POST("/sheets/:id/edits", h.SaveSheetEdits)
 	g.POST("/sheets/:id/import", h.ImportSheet)
 	g.GET("/sheets/:id/xlsx", h.DownloadSheet)
+	// Tách & gom trang (U48, U49).
+	g.POST("/cases/:id/classify", h.ClassifyCase)
+	g.GET("/cases/:id/split", h.GetSplit)
+	g.PUT("/cases/:id/split", h.SaveSplit)
 	g.GET("/me/usage", h.MyUsage)
 	g.GET("/admin/usage", h.AdminUsage)
 	g.GET("/admin/users", h.AdminListUsers)

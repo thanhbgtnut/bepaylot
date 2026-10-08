@@ -29,6 +29,73 @@ definitions:
       title:
         type: string
     type: object
+  docmodel.SplitFile:
+    properties:
+      classify_status:
+        type: string
+      document_id:
+        type: string
+      file_name:
+        type: string
+      indexed:
+        type: boolean
+      marks:
+        additionalProperties:
+          type: string
+        type: object
+      page_count:
+        type: integer
+      segments:
+        items:
+          $ref: '#/definitions/types.Segment'
+        type: array
+      status:
+        description: none | proposed | reviewed
+        type: string
+    type: object
+  docmodel.SplitInput:
+    properties:
+      bundles:
+        items:
+          properties:
+            segments:
+              items:
+                properties:
+                  document_id:
+                    type: string
+                  label:
+                    type: string
+                  page_end:
+                    type: integer
+                  page_start:
+                    type: integer
+                type: object
+              type: array
+          type: object
+        type: array
+    type: object
+  docmodel.SplitView:
+    properties:
+      bundles:
+        items:
+          type: string
+        type: array
+      files:
+        items:
+          $ref: '#/definitions/docmodel.SplitFile'
+        type: array
+      labels:
+        items:
+          $ref: '#/definitions/types.ClassLabel'
+        type: array
+      opens_with:
+        items:
+          type: string
+        type: array
+      reviewed:
+        description: every indexed file is reviewed
+        type: boolean
+    type: object
   document.Accepted:
     properties:
       callback_url:
@@ -532,6 +599,22 @@ definitions:
       new_password:
         type: string
     type: object
+  dto.ClassifyCaseRequest:
+    properties:
+      document_ids:
+        items:
+          type: string
+        type: array
+      mode:
+        description: titles | pages
+        example: titles
+        type: string
+    type: object
+  dto.ClassifyCaseResponse:
+    properties:
+      queued:
+        type: integer
+    type: object
   dto.CorrectionStats:
     properties:
       data:
@@ -582,6 +665,14 @@ definitions:
     type: object
   dto.CreateSheetRequest:
     properties:
+      tables:
+        description: Tables are the labels of the sub-tables to build; omitted = all.
+        example:
+        - hop_dong
+        - hoa_don
+        items:
+          type: string
+        type: array
       template_id:
         format: uuid
         type: string
@@ -1217,6 +1308,7 @@ definitions:
       description:
         type: string
       fields:
+        description: '0.16: one table, one row per file'
         items:
           $ref: '#/definitions/types.SheetField'
         type: array
@@ -1229,6 +1321,10 @@ definitions:
       slug:
         example: pa_vay_von
         type: string
+      tables:
+        items:
+          $ref: '#/definitions/types.SheetTable'
+        type: array
     type: object
   dto.TranscriptMessage:
     properties:
@@ -1411,6 +1507,44 @@ definitions:
       status:
         type: string
     type: object
+  sheets.CellView:
+    properties:
+      ai_field_id:
+        type: string
+      ai_value_text:
+        type: string
+      calc:
+        description: value derived by the agent
+        type: boolean
+      confidence:
+        type: number
+      edited:
+        description: differs from the AI value
+        type: boolean
+      evidence:
+        items:
+          $ref: '#/definitions/types.Evidence'
+        type: array
+      field_id:
+        type: string
+      field_note:
+        type: string
+      low:
+        description: confidence below sheets.low_confidence
+        type: boolean
+      note:
+        type: string
+      source:
+        description: agent | user
+        type: string
+      status:
+        description: field status
+        type: string
+      value:
+        type: string
+      value_matched:
+        type: boolean
+    type: object
   sheets.EditInput:
     properties:
       document_id:
@@ -1419,6 +1553,10 @@ definitions:
         type: string
       origin:
         description: page | xlsx
+        type: string
+      segment_id:
+        type: string
+      table:
         type: string
       value:
         type: string
@@ -1429,6 +1567,8 @@ definitions:
         type: string
       reason:
         type: string
+      sheet:
+        type: string
       text:
         type: string
     type: object
@@ -1436,11 +1576,21 @@ definitions:
     properties:
       ai_value:
         type: string
+      bundle:
+        type: string
       cell:
+        type: string
+      document_id:
         type: string
       key:
         type: string
       label:
+        type: string
+      segment_id:
+        type: string
+      sheet:
+        type: string
+      table:
         type: string
       value:
         type: string
@@ -1465,48 +1615,45 @@ definitions:
     type: object
   sheets.RowView:
     properties:
-      ai_field_id:
+      bundle:
         type: string
-      ai_value_text:
-        type: string
-      calc:
-        description: value derived by the agent
-        type: boolean
-      confidence:
-        type: number
+      cells:
+        additionalProperties:
+          $ref: '#/definitions/types.SheetCell'
+        type: object
+      cells_view:
+        additionalProperties:
+          $ref: '#/definitions/sheets.CellView'
+        type: object
       document_id:
         type: string
-      edited:
-        description: differs from the AI value
-        type: boolean
-      evidence:
+      file_name:
+        type: string
+      page_end:
+        type: integer
+      page_start:
+        type: integer
+      segment_id:
+        type: string
+      segment_no:
+        description: k of the segment ref d<n>.s<k>
+        type: integer
+      table:
+        type: string
+    type: object
+  sheets.TableView:
+    properties:
+      fields:
         items:
-          $ref: '#/definitions/types.Evidence'
+          $ref: '#/definitions/types.SheetField'
         type: array
-      field_id:
-        type: string
-      field_note:
-        type: string
-      key:
-        type: string
       label:
         type: string
-      low:
-        description: confidence below sheets.low_confidence
-        type: boolean
-      note:
-        type: string
-      source:
-        description: agent | user
-        type: string
-      status:
-        description: field status
-        type: string
-      value:
-        type: string
-      value_matched:
-        type: boolean
-      value_type:
+      rows:
+        items:
+          $ref: '#/definitions/sheets.RowView'
+        type: array
+      title:
         type: string
     type: object
   sheets.View:
@@ -1531,16 +1678,16 @@ definitions:
         items:
           $ref: '#/definitions/types.SheetRow'
         type: array
-      rows_view:
-        items:
-          $ref: '#/definitions/sheets.RowView'
-        type: array
-      sources:
-        items:
-          $ref: '#/definitions/types.DocumentBrief'
-        type: array
       status:
         type: string
+      tables:
+        items:
+          type: string
+        type: array
+      tables_view:
+        items:
+          $ref: '#/definitions/sheets.TableView'
+        type: array
       template_id:
         type: string
       template_name:
@@ -1591,6 +1738,13 @@ definitions:
     - BlockPageNumber
     - BlockFootnote
     - BlockUnknown
+  types.BundleRule:
+    properties:
+      opens_with:
+        items:
+          type: string
+        type: array
+    type: object
   types.CallbackAttempt:
     properties:
       attempt:
@@ -1671,10 +1825,20 @@ definitions:
     type: object
   types.CaseType:
     properties:
+      bundles:
+        allOf:
+        - $ref: '#/definitions/types.BundleRule'
+        description: Bundles groups reviewed segments into document bundles (§6.9.7).
       case_metadata_schema:
         allOf:
         - $ref: '#/definitions/types.MetadataSchema'
         description: CaseMetadataSchema validates the metadata of the case itself.
+      classification:
+        allOf:
+        - $ref: '#/definitions/types.ClassificationRule'
+        description: |-
+          Classification is the set of document-type labels of the case type
+          (§6.9.4); without labels documents are never classified.
       code:
         $ref: '#/definitions/types.CaseCodeRule'
       metadata_schema:
@@ -1693,6 +1857,26 @@ definitions:
       title:
         type: string
     type: object
+  types.ClassLabel:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      title:
+        type: string
+    type: object
+  types.ClassificationRule:
+    properties:
+      auto:
+        type: boolean
+      labels:
+        items:
+          $ref: '#/definitions/types.ClassLabel'
+        type: array
+      min_confidence:
+        type: number
+    type: object
   types.CorrectionStat:
     properties:
       edited:
@@ -1702,6 +1886,8 @@ definitions:
           type: string
         type: array
       key:
+        type: string
+      label:
         type: string
       rate:
         type: number
@@ -2015,6 +2201,7 @@ definitions:
       description:
         type: string
       fields:
+        description: 0.16 templates; Tables supersedes it
         items:
           $ref: '#/definitions/types.SheetField'
         type: array
@@ -2030,6 +2217,10 @@ definitions:
         type: string
       status:
         type: string
+      tables:
+        items:
+          $ref: '#/definitions/types.SheetTable'
+        type: array
       updated_at:
         type: string
       version:
@@ -2165,6 +2356,35 @@ definitions:
       truncated:
         type: boolean
     type: object
+  types.Segment:
+    properties:
+      bundle:
+        type: string
+      bundle_id:
+        type: string
+      case_id:
+        type: string
+      confidence:
+        type: number
+      document_id:
+        type: string
+      id:
+        type: string
+      label:
+        type: string
+      mode:
+        type: string
+      needs_review:
+        type: boolean
+      page_end:
+        type: integer
+      page_start:
+        type: integer
+      proposed_label:
+        type: string
+      source:
+        type: string
+    type: object
   types.Sheet:
     properties:
       case_id:
@@ -2187,6 +2407,10 @@ definitions:
         type: array
       status:
         type: string
+      tables:
+        items:
+          type: string
+        type: array
       template_id:
         type: string
       template_name:
@@ -2196,6 +2420,17 @@ definitions:
       total:
         type: integer
       updated_at:
+        type: string
+    type: object
+  types.SheetCell:
+    properties:
+      ai_field_id:
+        type: string
+      ai_value_text:
+        type: string
+      field_id:
+        type: string
+      note:
         type: string
     type: object
   types.SheetField:
@@ -2209,19 +2444,37 @@ definitions:
     type: object
   types.SheetRow:
     properties:
-      ai_field_id:
+      bundle:
         type: string
-      ai_value_text:
+      cells:
+        additionalProperties:
+          $ref: '#/definitions/types.SheetCell'
+        type: object
+      document_id:
         type: string
-      field_id:
+      file_name:
         type: string
-      key:
+      page_end:
+        type: integer
+      page_start:
+        type: integer
+      segment_id:
         type: string
+      segment_no:
+        description: k of the segment ref d<n>.s<k>
+        type: integer
+      table:
+        type: string
+    type: object
+  types.SheetTable:
+    properties:
+      fields:
+        items:
+          $ref: '#/definitions/types.SheetField'
+        type: array
       label:
         type: string
-      note:
-        type: string
-      value_type:
+      title:
         type: string
     type: object
   types.TOCBranch:
@@ -3047,6 +3300,42 @@ paths:
       summary: Change a case's title, status (open/closed) or metadata
       tags:
       - Cases
+  /v1/cases/{id}/classify:
+    post:
+      consumes:
+      - application/json
+      description: 'Queues document:classify for the indexed files (all, or document_ids):
+        one LLM call per file reading only titles and the cut hints found by code
+        (mode titles, default), or also the first lines of every page (mode pages).
+        The user''s segments are kept.'
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Mode and files
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/dto.ClassifyCaseRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/dto.ClassifyCaseResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Propose how the files of a case split into documents (§6.9.4)
+      tags:
+      - Split
   /v1/cases/{id}/documents:
     get:
       parameters:
@@ -3206,8 +3495,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Confirmed fields are reused; the missing ones are extracted by
-        one agent turn (task case:sheet). Poll GET /v1/sheets/{id} for progress.
+      description: One sub-table per document type (tables = labels, omitted = all);
+        rows are the reviewed documents of the case. Confirmed fields are reused;
+        the missing ones are extracted by one agent turn per bundle (task case:sheet).
+        Poll GET /v1/sheets/{id} for progress. 409 split_not_reviewed when a file's
+        split is not reviewed.
       parameters:
       - description: Case id
         format: uuid
@@ -3232,6 +3524,10 @@ paths:
           description: Payment Required
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
         "422":
           description: Unprocessable Entity
           schema:
@@ -3241,6 +3537,62 @@ paths:
       summary: Build a sheet of a case from a sheet template (§6.9.6)
       tags:
       - Sheets
+  /v1/cases/{id}/split:
+    get:
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/docmodel.SplitView'
+      security:
+      - ApiKeyAuth: []
+      summary: The split of a case into documents and bundles (§6.9.7)
+      tags:
+      - Split
+    put:
+      consumes:
+      - application/json
+      description: The bundles in order, each with its documents. Every page of each
+        file in the request must be in exactly one document; the documents become
+        the user's segments and only they become rows of sheets.
+      parameters:
+      - description: Case id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Bundles
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/docmodel.SplitInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/docmodel.SplitView'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Confirm the split of a case (§6.9.7)
+      tags:
+      - Split
   /v1/cases/{id}/toc:
     get:
       description: Built from stored cards and trees, without the LLM (§6.6 step 2).
@@ -4809,8 +5161,8 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: 'A sheet: status, progress and each row''s AI value, current value
-        and evidence'
+      summary: 'A sheet: status, progress and its sub-tables; each cell''s AI value,
+        current value, confidence and evidence'
       tags:
       - Sheets
   /v1/sheets/{id}/edits:
@@ -4895,6 +5247,11 @@ paths:
         name: id
         required: true
         type: string
+      - description: Labels of the sub-tables to include, comma separated (default
+          all)
+        in: query
+        name: tables
+        type: string
       produces:
       - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
       responses:
@@ -4908,7 +5265,8 @@ paths:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
       - ApiKeyAuth: []
-      summary: Download the sheet as .xlsx (Tổng hợp, Nguồn, hidden _bp)
+      summary: 'Download the sheet as .xlsx: one data-only sheet per sub-table, plus
+        the hidden _bp'
       tags:
       - Sheets
   /v1/skills:

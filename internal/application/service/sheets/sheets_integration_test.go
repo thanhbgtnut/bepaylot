@@ -86,10 +86,19 @@ func TestSheetFlow(t *testing.T) {
 	}
 
 	q, runner := &stubQueue{}, &fakeRunner{}
-	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: q, Cases: h.Cases, Runner: runner, Config: h.Config})
+	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: q, Cases: h.Cases, Searcher: h.Index, Runner: runner, Config: h.Config})
+	// A 0.16 template (fields only) is one sub-table without label: one row
+	// per file, the fields as columns.
+	cells := func(v sheets.View) map[string]sheets.CellView {
+		t.Helper()
+		if len(v.TablesView) != 1 || len(v.TablesView[0].Rows) != 1 {
+			t.Fatalf("tables = %+v", v.TablesView)
+		}
+		return v.TablesView[0].Rows[0].CellsView
+	}
 	build := func() sheets.View {
 		t.Helper()
-		sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, tpl.ID)
+		sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, tpl.ID, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,14 +113,15 @@ func TestSheetFlow(t *testing.T) {
 	}
 
 	v := build()
-	if v.Status != types.SheetDone || v.Filled != 2 || len(v.RowsView) != 3 {
-		t.Fatalf("sheet = %s %d/%d", v.Status, v.Filled, len(v.RowsView))
+	if v.Status != types.SheetDone || v.Filled != 2 || v.Total != 3 {
+		t.Fatalf("sheet = %s %d/%d", v.Status, v.Filled, v.Total)
 	}
+	c := cells(v)
 	if p := runner.prompts[0]; !strings.Contains(p, "loi_nhuan_sau_thue") || !strings.Contains(p, "muc_dich_vay") {
 		t.Fatalf("first build must ask for every unconfirmed field:\n%s", p)
 	}
-	if v.RowsView[2].Note == "" || v.RowsView[0].Edited || !v.RowsView[0].Calc {
-		t.Fatalf("rows = %+v", v.RowsView)
+	if c["muc_dich_vay"].Note == "" || c["loi_nhuan_sau_thue"].Edited || !c["loi_nhuan_sau_thue"].Calc {
+		t.Fatalf("cells = %+v", c)
 	}
 
 	// Format-only change: no correction; a real change: one correction.
@@ -119,8 +129,9 @@ func TestSheetFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.RowsView[0].Edited || v.RowsView[1].Edited || v.RowsView[0].Status != types.FieldConfirmed || !v.RowsView[0].Matched {
-		t.Fatalf("after edits = %+v", v.RowsView[:2])
+	c = cells(v)
+	if l := c["loi_nhuan_sau_thue"]; !l.Edited || c["so_tien_vay"].Edited || l.Status != types.FieldConfirmed || !l.Matched {
+		t.Fatalf("after edits = %+v", c)
 	}
 	stats, err := svc.CorrectionStats(h.Ctx, tpl.ID)
 	if err != nil {
@@ -133,9 +144,9 @@ func TestSheetFlow(t *testing.T) {
 	if edited["loi_nhuan_sau_thue"] != 1 || edited["so_tien_vay"] != 0 {
 		t.Fatalf("corrections = %+v", stats)
 	}
-	// A row without a field needs its source file.
-	if _, err := svc.SaveEdits(h.Ctx, h.Owner, v.ID, []sheets.EditInput{{Key: "muc_dich_vay", Value: "Bổ sung vốn"}}); !errors.Is(err, sheets.ErrNeedSource) {
-		t.Fatalf("edit without source: %v", err)
+	// An unknown cell is refused.
+	if _, err := svc.SaveEdits(h.Ctx, h.Owner, v.ID, []sheets.EditInput{{Key: "khong_co", Value: "x"}}); !errors.Is(err, sheets.ErrUnknownKey) {
+		t.Fatalf("edit of an unknown key: %v", err)
 	}
 
 	// The second sheet reuses the confirmed values.
@@ -143,21 +154,21 @@ func TestSheetFlow(t *testing.T) {
 	if p := runner.prompts[1]; strings.Contains(p, "loi_nhuan_sau_thue") || strings.Contains(p, "so_tien_vay") || !strings.Contains(p, "muc_dich_vay") {
 		t.Fatalf("second build must ask only for the missing field:\n%s", p)
 	}
-	if v2.RowsView[0].Value != "6.124.800.000" || v2.RowsView[0].Edited {
-		t.Fatalf("second sheet row = %+v", v2.RowsView[0])
+	if l := cells(v2)["loi_nhuan_sau_thue"]; l.Value != "6.124.800.000" || l.Edited {
+		t.Fatalf("second sheet cell = %+v", l)
 	}
 
 	// .xlsx round trip: one changed cell and one row typed by hand.
 	var buf bytes.Buffer
-	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, v.ID, &buf); err != nil {
+	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, v.ID, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	f, err := excelize.OpenReader(bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = f.SetCellValue("Tổng hợp", "B5", "16.000.000.000")
-	_ = f.SetCellValue("Tổng hợp", "A9", "Ghi chú thẩm định: khách hàng quen")
+	_ = f.SetCellValue("Tổng hợp", "C2", "16.000.000.000")
+	_ = f.SetCellValue("Tổng hợp", "A4", "Ghi chú thẩm định: khách hàng quen")
 	var edited2 bytes.Buffer
 	if err := f.Write(&edited2); err != nil {
 		t.Fatal(err)

@@ -19,7 +19,17 @@ type TemplateRequest struct {
 	Description string             `json:"description,omitempty"`
 	CaseType    string             `json:"case_type,omitempty" example:"tin_dung_dn"`
 	Body        string             `json:"body"`
-	Fields      []types.SheetField `json:"fields,omitempty"`
+	Fields      []types.SheetField `json:"fields,omitempty"` // 0.16: one table, one row per file
+	Tables      []types.SheetTable `json:"tables,omitempty"`
+}
+
+// SheetTables returns the sub-tables of the request; fields alone make one
+// sub-table without label.
+func (r TemplateRequest) SheetTables() []types.SheetTable {
+	if len(r.Tables) == 0 && len(r.Fields) > 0 {
+		return []types.SheetTable{{Title: "Tổng hợp", Fields: r.Fields}}
+	}
+	return r.Tables
 }
 
 // PublishTemplateRequest is the body of POST /v1/templates/{id}/publish.
@@ -35,6 +45,19 @@ type CorrectionStats struct {
 // CreateSheetRequest is the body of POST /v1/cases/{id}/sheets.
 type CreateSheetRequest struct {
 	TemplateID string `json:"template_id" format:"uuid"`
+	// Tables are the labels of the sub-tables to build; omitted = all.
+	Tables []string `json:"tables,omitempty" example:"hop_dong,hoa_don"`
+}
+
+// ClassifyCaseRequest is the body of POST /v1/cases/{id}/classify.
+type ClassifyCaseRequest struct {
+	Mode        string   `json:"mode,omitempty" example:"titles"` // titles | pages
+	DocumentIDs []string `json:"document_ids,omitempty"`
+}
+
+// ClassifyCaseResponse says how many files were queued.
+type ClassifyCaseResponse struct {
+	Queued int `json:"queued"`
 }
 
 // SheetList is the body of GET /v1/cases/{id}/sheets.

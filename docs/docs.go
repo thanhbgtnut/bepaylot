@@ -1105,6 +1105,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/cases/{id}/classify": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Queues document:classify for the indexed files (all, or document_ids): one LLM call per file reading only titles and the cut hints found by code (mode titles, default), or also the first lines of every page (mode pages). The user's segments are kept.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Split"
+                ],
+                "summary": "Propose how the files of a case split into documents (§6.9.4)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Mode and files",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ClassifyCaseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ClassifyCaseResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/cases/{id}/documents": {
             "get": {
                 "security": [
@@ -1352,7 +1404,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Confirmed fields are reused; the missing ones are extracted by one agent turn (task case:sheet). Poll GET /v1/sheets/{id} for progress.",
+                "description": "One sub-table per document type (tables = labels, omitted = all); rows are the reviewed documents of the case. Confirmed fields are reused; the missing ones are extracted by one agent turn per bundle (task case:sheet). Poll GET /v1/sheets/{id} for progress. 409 split_not_reviewed when a file's split is not reviewed.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1393,6 +1445,97 @@ const docTemplate = `{
                         "description": "Payment Required",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/cases/{id}/split": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Split"
+                ],
+                "summary": "The split of a case into documents and bundles (§6.9.7)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/docmodel.SplitView"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "The bundles in order, each with its documents. Every page of each file in the request must be in exactly one document; the documents become the user's segments and only they become rows of sheets.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Split"
+                ],
+                "summary": "Confirm the split of a case (§6.9.7)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Case id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Bundles",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/docmodel.SplitInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/docmodel.SplitView"
                         }
                     },
                     "422": {
@@ -3811,7 +3954,7 @@ const docTemplate = `{
                 "tags": [
                     "Sheets"
                 ],
-                "summary": "A sheet: status, progress and each row's AI value, current value and evidence",
+                "summary": "A sheet: status, progress and its sub-tables; each cell's AI value, current value, confidence and evidence",
                 "parameters": [
                     {
                         "type": "string",
@@ -3961,7 +4104,7 @@ const docTemplate = `{
                 "tags": [
                     "Sheets"
                 ],
-                "summary": "Download the sheet as .xlsx (Tổng hợp, Nguồn, hidden _bp)",
+                "summary": "Download the sheet as .xlsx: one data-only sheet per sub-table, plus the hidden _bp",
                 "parameters": [
                     {
                         "type": "string",
@@ -3970,6 +4113,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Labels of the sub-tables to include, comma separated (default all)",
+                        "name": "tables",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4391,6 +4540,108 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "docmodel.SplitFile": {
+            "type": "object",
+            "properties": {
+                "classify_status": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "indexed": {
+                    "type": "boolean"
+                },
+                "marks": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "page_count": {
+                    "type": "integer"
+                },
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Segment"
+                    }
+                },
+                "status": {
+                    "description": "none | proposed | reviewed",
+                    "type": "string"
+                }
+            }
+        },
+        "docmodel.SplitInput": {
+            "type": "object",
+            "properties": {
+                "bundles": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "segments": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "document_id": {
+                                            "type": "string"
+                                        },
+                                        "label": {
+                                            "type": "string"
+                                        },
+                                        "page_end": {
+                                            "type": "integer"
+                                        },
+                                        "page_start": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "docmodel.SplitView": {
+            "type": "object",
+            "properties": {
+                "bundles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/docmodel.SplitFile"
+                    }
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.ClassLabel"
+                    }
+                },
+                "opens_with": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reviewed": {
+                    "description": "every indexed file is reviewed",
+                    "type": "boolean"
                 }
             }
         },
@@ -5144,6 +5395,30 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.ClassifyCaseRequest": {
+            "type": "object",
+            "properties": {
+                "document_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "mode": {
+                    "description": "titles | pages",
+                    "type": "string",
+                    "example": "titles"
+                }
+            }
+        },
+        "dto.ClassifyCaseResponse": {
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "type": "integer"
+                }
+            }
+        },
         "dto.CorrectionStats": {
             "type": "object",
             "properties": {
@@ -5221,6 +5496,17 @@ const docTemplate = `{
         "dto.CreateSheetRequest": {
             "type": "object",
             "properties": {
+                "tables": {
+                    "description": "Tables are the labels of the sub-tables to build; omitted = all.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "hop_dong",
+                        "hoa_don"
+                    ]
+                },
                 "template_id": {
                     "type": "string",
                     "format": "uuid"
@@ -6176,6 +6462,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "fields": {
+                    "description": "0.16: one table, one row per file",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/types.SheetField"
@@ -6192,6 +6479,12 @@ const docTemplate = `{
                 "slug": {
                     "type": "string",
                     "example": "pa_vay_von"
+                },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetTable"
+                    }
                 }
             }
         },
@@ -6462,6 +6755,61 @@ const docTemplate = `{
                 }
             }
         },
+        "sheets.CellView": {
+            "type": "object",
+            "properties": {
+                "ai_field_id": {
+                    "type": "string"
+                },
+                "ai_value_text": {
+                    "type": "string"
+                },
+                "calc": {
+                    "description": "value derived by the agent",
+                    "type": "boolean"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "edited": {
+                    "description": "differs from the AI value",
+                    "type": "boolean"
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.Evidence"
+                    }
+                },
+                "field_id": {
+                    "type": "string"
+                },
+                "field_note": {
+                    "type": "string"
+                },
+                "low": {
+                    "description": "confidence below sheets.low_confidence",
+                    "type": "boolean"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "source": {
+                    "description": "agent | user",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "field status",
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "value_matched": {
+                    "type": "boolean"
+                }
+            }
+        },
         "sheets.EditInput": {
             "type": "object",
             "properties": {
@@ -6473,6 +6821,12 @@ const docTemplate = `{
                 },
                 "origin": {
                     "description": "page | xlsx",
+                    "type": "string"
+                },
+                "segment_id": {
+                    "type": "string"
+                },
+                "table": {
                     "type": "string"
                 },
                 "value": {
@@ -6489,6 +6843,9 @@ const docTemplate = `{
                 "reason": {
                     "type": "string"
                 },
+                "sheet": {
+                    "type": "string"
+                },
                 "text": {
                     "type": "string"
                 }
@@ -6500,13 +6857,28 @@ const docTemplate = `{
                 "ai_value": {
                     "type": "string"
                 },
+                "bundle": {
+                    "type": "string"
+                },
                 "cell": {
+                    "type": "string"
+                },
+                "document_id": {
                     "type": "string"
                 },
                 "key": {
                     "type": "string"
                 },
                 "label": {
+                    "type": "string"
+                },
+                "segment_id": {
+                    "type": "string"
+                },
+                "sheet": {
+                    "type": "string"
+                },
+                "table": {
                     "type": "string"
                 },
                 "value": {
@@ -6544,66 +6916,64 @@ const docTemplate = `{
         "sheets.RowView": {
             "type": "object",
             "properties": {
-                "ai_field_id": {
+                "bundle": {
                     "type": "string"
                 },
-                "ai_value_text": {
-                    "type": "string"
+                "cells": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.SheetCell"
+                    }
                 },
-                "calc": {
-                    "description": "value derived by the agent",
-                    "type": "boolean"
-                },
-                "confidence": {
-                    "type": "number"
+                "cells_view": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/sheets.CellView"
+                    }
                 },
                 "document_id": {
                     "type": "string"
                 },
-                "edited": {
-                    "description": "differs from the AI value",
-                    "type": "boolean"
+                "file_name": {
+                    "type": "string"
                 },
-                "evidence": {
+                "page_end": {
+                    "type": "integer"
+                },
+                "page_start": {
+                    "type": "integer"
+                },
+                "segment_id": {
+                    "type": "string"
+                },
+                "segment_no": {
+                    "description": "k of the segment ref d\u003cn\u003e.s\u003ck\u003e",
+                    "type": "integer"
+                },
+                "table": {
+                    "type": "string"
+                }
+            }
+        },
+        "sheets.TableView": {
+            "type": "object",
+            "properties": {
+                "fields": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/types.Evidence"
+                        "$ref": "#/definitions/types.SheetField"
                     }
-                },
-                "field_id": {
-                    "type": "string"
-                },
-                "field_note": {
-                    "type": "string"
-                },
-                "key": {
-                    "type": "string"
                 },
                 "label": {
                     "type": "string"
                 },
-                "low": {
-                    "description": "confidence below sheets.low_confidence",
-                    "type": "boolean"
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.RowView"
+                    }
                 },
-                "note": {
-                    "type": "string"
-                },
-                "source": {
-                    "description": "agent | user",
-                    "type": "string"
-                },
-                "status": {
-                    "description": "field status",
-                    "type": "string"
-                },
-                "value": {
-                    "type": "string"
-                },
-                "value_matched": {
-                    "type": "boolean"
-                },
-                "value_type": {
+                "title": {
                     "type": "string"
                 }
             }
@@ -6641,20 +7011,20 @@ const docTemplate = `{
                         "$ref": "#/definitions/types.SheetRow"
                     }
                 },
-                "rows_view": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/sheets.RowView"
-                    }
-                },
-                "sources": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.DocumentBrief"
-                    }
-                },
                 "status": {
                     "type": "string"
+                },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tables_view": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/sheets.TableView"
+                    }
                 },
                 "template_id": {
                     "type": "string"
@@ -6720,6 +7090,17 @@ const docTemplate = `{
                 "BlockFootnote",
                 "BlockUnknown"
             ]
+        },
+        "types.BundleRule": {
+            "type": "object",
+            "properties": {
+                "opens_with": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
         },
         "types.CallbackAttempt": {
             "type": "object",
@@ -6836,11 +7217,27 @@ const docTemplate = `{
         "types.CaseType": {
             "type": "object",
             "properties": {
+                "bundles": {
+                    "description": "Bundles groups reviewed segments into document bundles (§6.9.7).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.BundleRule"
+                        }
+                    ]
+                },
                 "case_metadata_schema": {
                     "description": "CaseMetadataSchema validates the metadata of the case itself.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/types.MetadataSchema"
+                        }
+                    ]
+                },
+                "classification": {
+                    "description": "Classification is the set of document-type labels of the case type\n(§6.9.4); without labels documents are never classified.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/types.ClassificationRule"
                         }
                     ]
                 },
@@ -6871,6 +7268,37 @@ const docTemplate = `{
                 }
             }
         },
+        "types.ClassLabel": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.ClassificationRule": {
+            "type": "object",
+            "properties": {
+                "auto": {
+                    "type": "boolean"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.ClassLabel"
+                    }
+                },
+                "min_confidence": {
+                    "type": "number"
+                }
+            }
+        },
         "types.CorrectionStat": {
             "type": "object",
             "properties": {
@@ -6884,6 +7312,9 @@ const docTemplate = `{
                     }
                 },
                 "key": {
+                    "type": "string"
+                },
+                "label": {
                     "type": "string"
                 },
                 "rate": {
@@ -7346,6 +7777,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "fields": {
+                    "description": "0.16 templates; Tables supersedes it",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/types.SheetField"
@@ -7368,6 +7800,12 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetTable"
+                    }
                 },
                 "updated_at": {
                     "type": "string"
@@ -7570,6 +8008,50 @@ const docTemplate = `{
                 }
             }
         },
+        "types.Segment": {
+            "type": "object",
+            "properties": {
+                "bundle": {
+                    "type": "string"
+                },
+                "bundle_id": {
+                    "type": "string"
+                },
+                "case_id": {
+                    "type": "string"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "needs_review": {
+                    "type": "boolean"
+                },
+                "page_end": {
+                    "type": "integer"
+                },
+                "page_start": {
+                    "type": "integer"
+                },
+                "proposed_label": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
         "types.Sheet": {
             "type": "object",
             "properties": {
@@ -7603,6 +8085,12 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "template_id": {
                     "type": "string"
                 },
@@ -7616,6 +8104,23 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SheetCell": {
+            "type": "object",
+            "properties": {
+                "ai_field_id": {
+                    "type": "string"
+                },
+                "ai_value_text": {
+                    "type": "string"
+                },
+                "field_id": {
+                    "type": "string"
+                },
+                "note": {
                     "type": "string"
                 }
             }
@@ -7637,25 +8142,52 @@ const docTemplate = `{
         "types.SheetRow": {
             "type": "object",
             "properties": {
-                "ai_field_id": {
+                "bundle": {
                     "type": "string"
                 },
-                "ai_value_text": {
+                "cells": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/types.SheetCell"
+                    }
+                },
+                "document_id": {
                     "type": "string"
                 },
-                "field_id": {
+                "file_name": {
                     "type": "string"
                 },
-                "key": {
+                "page_end": {
+                    "type": "integer"
+                },
+                "page_start": {
+                    "type": "integer"
+                },
+                "segment_id": {
                     "type": "string"
+                },
+                "segment_no": {
+                    "description": "k of the segment ref d\u003cn\u003e.s\u003ck\u003e",
+                    "type": "integer"
+                },
+                "table": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.SheetTable": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.SheetField"
+                    }
                 },
                 "label": {
                     "type": "string"
                 },
-                "note": {
-                    "type": "string"
-                },
-                "value_type": {
+                "title": {
                     "type": "string"
                 }
             }

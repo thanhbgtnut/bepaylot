@@ -60,6 +60,12 @@ func (s *Service) saveOne(ctx context.Context, owner, caseID uuid.UUID, sessionI
 	if !ok {
 		return types.Field{}, fmt.Errorf("document %s not found", f.DocumentID)
 	}
+	if f.SegmentID != nil {
+		g, err := s.st.Segments.Get(ctx, *f.SegmentID)
+		if err != nil || g.DocumentID != f.DocumentID {
+			return types.Field{}, fmt.Errorf("segment %s is not a document of file %s", f.SegmentID, f.DocumentID)
+		}
+	}
 	vt := f.ValueType
 	if !valueTypes[vt] {
 		vt = "string"
@@ -81,7 +87,7 @@ func (s *Service) saveOne(ctx context.Context, owner, caseID uuid.UUID, sessionI
 	}
 	conf := math.Max(0, math.Min(1, f.Confidence))
 	return s.st.Fields.Save(ctx, postgres.FieldWrite{
-		CaseID: caseID, DocumentID: f.DocumentID, Key: key, Ord: f.Ord, Value: f.Value, ValueType: vt, ValueText: text,
+		CaseID: caseID, DocumentID: f.DocumentID, SegmentID: f.SegmentID, Key: key, Ord: f.Ord, Value: f.Value, ValueType: vt, ValueText: text,
 		ValueMatched: matched, Confidence: conf, Status: types.FieldProposed, Source: types.FieldSourceAgent,
 		SessionID: sessionID, CreatedBy: &owner, Note: f.Note, Evidence: evidence,
 	})
@@ -124,6 +130,19 @@ func union(bs []types.BBox) []float64 {
 		u.X1, u.Y1 = math.Max(u.X1, b.X1), math.Max(u.Y1, b.Y1)
 	}
 	return []float64{u.X0, u.Y0, u.X1, u.Y1}
+}
+
+// SegmentAt returns the k-th (1-based) document of a file in page order: the
+// s<k> of a segment ref d<n>.s<k> (§8.2).
+func (s *Service) SegmentAt(ctx context.Context, doc uuid.UUID, k int) (uuid.UUID, error) {
+	segs, err := s.st.Segments.ByDocument(ctx, doc)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if k < 1 || k > len(segs) {
+		return uuid.Nil, fmt.Errorf("segment s%d not found (the file has %d documents)", k, len(segs))
+	}
+	return segs[k-1].ID, nil
 }
 
 // CaseFields lists the current and unreviewed fields of a case.

@@ -38,6 +38,7 @@ type Store struct {
 	Callbacks *CallbacksRepo
 
 	Fields    *FieldsRepo
+	Segments  *SegmentsRepo
 	Templates *TemplatesRepo
 	Sheets    *SheetsRepo
 	Usage     *UsageRepo
@@ -94,6 +95,7 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		Callbacks: &CallbacksRepo{pool},
 
 		Fields:    &FieldsRepo{pool},
+		Segments:  &SegmentsRepo{pool},
 		Templates: &TemplatesRepo{pool},
 		Sheets:    &SheetsRepo{pool},
 		Usage:     &UsageRepo{pool},

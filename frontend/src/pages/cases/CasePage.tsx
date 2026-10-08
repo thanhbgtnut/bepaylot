@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { getCaseTOC, getTree } from "../../api/endpoints";
-import type { CaseTOC, TOCDoc, TreeNode } from "../../api/types";
+import { getCaseTOC, getSplit, getTree } from "../../api/endpoints";
+import type { CaseTOC, SplitFile, SplitView, TOCDoc, TreeNode } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { CasePicker, caseLabel } from "../../components/CasePicker";
 import { NeedKB, TopBar } from "../../components/Layout";
@@ -69,6 +69,9 @@ export function CasePage() {
   const [toc, setToc] = useState<CaseTOC | null>(null);
   const [err, setErr] = useState("");
   const [reload, setReload] = useState(0);
+  // How the files split into documents and bundles (§6.9.7); null when the
+  // case type has no classification.
+  const [split, setSplit] = useState<SplitView | null>(null);
   // Narrow screens show one column at a time, like NotebookLM's tabs.
   const [col, setCol] = useState<"sources" | "chat" | "studio">("chat");
 
@@ -93,6 +96,17 @@ export function CasePage() {
     };
   }, [caseId, reload]);
   useEffect(() => setToc(null), [caseId]);
+  useEffect(() => {
+    if (!caseId) return;
+    let alive = true;
+    getSplit(caseId).then(
+      (v) => alive && setSplit(v.labels.length ? v : null),
+      () => alive && setSplit(null),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [caseId, reload]);
 
   // While files are still being parsed or indexed, poll the TOC.
   const busy = !!toc?.pending?.length;
@@ -172,7 +186,7 @@ export function CasePage() {
             ))}
           </div>
           <div className="flex min-h-0 flex-1 border-t border-line">
-            <Sidebar toc={toc} docId={docId} nodeId={nodeId} onSelect={select} className={show("sources")} />
+            <Sidebar toc={toc} split={split} caseId={c.id} docId={docId} nodeId={nodeId} onSelect={select} className={show("sources")} />
             <section className={show("chat") + " min-w-0 flex-1 flex-col"}>
               {doc ? (
                 <div className="flex min-h-0 flex-1 flex-col">
@@ -190,7 +204,7 @@ export function CasePage() {
                 <CaseChat key={c.id} kcase={c} toc={toc} />
               )}
             </section>
-            <Studio key={c.id} kcase={c} className={show("studio")} />
+            <Studio key={c.id} kcase={c} split={split} className={show("studio")} />
           </div>
         </>
       )}
@@ -205,12 +219,16 @@ const rowCls = (active: boolean) =>
 
 function Sidebar({
   toc,
+  split,
+  caseId,
   docId,
   nodeId,
   onSelect,
   className,
 }: {
   toc: CaseTOC;
+  split: SplitView | null;
+  caseId: string;
   docId: string | null;
   nodeId: string | null;
   onSelect: (doc: string, node?: string) => void;
@@ -224,9 +242,23 @@ function Sidebar({
           <Icon name="add" size={20} />
         </Link>
       </div>
+      {split && (
+        <Link className="btn btn-tonal btn-sm mx-2 mb-2" to={`/cases/${caseId}/split`}>
+          <Icon name="content_cut" size={18} /> Tách & gom trang
+          {!split.reviewed && <span className="badge badge-warn">{split.files.filter((f) => f.indexed && f.status !== "reviewed").length}</span>}
+        </Link>
+      )}
       {!toc.documents.length && !toc.pending?.length && <div className="px-3 py-2 text-sm text-subtle">Hồ sơ chưa có file</div>}
       {toc.documents.map((d) => (
-        <FileEntry key={d.document_id} d={d} open={d.document_id === docId} nodeId={d.document_id === docId ? nodeId : null} onSelect={onSelect} />
+        <FileEntry
+          key={d.document_id}
+          d={d}
+          sf={split?.files.find((f) => f.document_id === d.document_id)}
+          labels={split?.labels}
+          open={d.document_id === docId}
+          nodeId={d.document_id === docId ? nodeId : null}
+          onSelect={onSelect}
+        />
       ))}
       {!!toc.pending?.length && (
         <>
@@ -244,7 +276,21 @@ function Sidebar({
   );
 }
 
-function FileEntry({ d, open, nodeId, onSelect }: { d: TOCDoc; open: boolean; nodeId: string | null; onSelect: (doc: string, node?: string) => void }) {
+function FileEntry({
+  d,
+  sf,
+  labels,
+  open,
+  nodeId,
+  onSelect,
+}: {
+  d: TOCDoc;
+  sf?: SplitFile;
+  labels?: { name: string; title: string }[];
+  open: boolean;
+  nodeId: string | null;
+  onSelect: (doc: string, node?: string) => void;
+}) {
   const [expanded, setExpanded] = useState(open);
   useEffect(() => {
     if (open) setExpanded(true);
@@ -265,6 +311,31 @@ function FileEntry({ d, open, nodeId, onSelect }: { d: TOCDoc; open: boolean; no
           <span className="text-xs whitespace-nowrap text-muted">{d.page_count} tr.</span>
         </button>
       </div>
+      {sf && (
+        <div className="py-0.5 pl-11">
+          {sf.status === "reviewed" ? (
+            <span className="badge badge-ok">
+              <Icon name="check" size={14} /> {sf.segments.filter((g) => g.label !== "other").length} giấy tờ · đã duyệt
+            </span>
+          ) : sf.status === "proposed" ? (
+            <span className="badge badge-warn">
+              <Icon name="auto_awesome" size={14} /> AI đề xuất · cần duyệt
+            </span>
+          ) : (
+            <span className="badge">chưa tách</span>
+          )}
+        </div>
+      )}
+      {sf?.status === "reviewed" &&
+        sf.segments
+          .filter((g) => g.label !== "other")
+          .map((g) => (
+            <button key={g.id ?? g.page_start} onClick={() => onSelect(d.document_id)} className={rowCls(false) + " text-[13px]"} style={{ paddingLeft: 44 }}>
+              <span className="min-w-0 flex-1 truncate">{labels?.find((l) => l.name === g.label)?.title ?? g.label}</span>
+              <span className="text-xs whitespace-nowrap text-muted">{pages(g.page_start, g.page_end)}</span>
+              {g.bundle && <span className="badge">{g.bundle}</span>}
+            </button>
+          ))}
       {expanded &&
         (!nodes ? (
           <div className="py-1 pl-12">

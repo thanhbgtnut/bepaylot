@@ -107,6 +107,9 @@ type Completer interface {
 type FieldService interface {
 	SaveAgentFields(ctx context.Context, owner, caseID uuid.UUID, sessionID *uuid.UUID, in []types.FieldInput) []FieldResult
 	CaseFields(ctx context.Context, caseID uuid.UUID, doc *uuid.UUID, key string) ([]types.Field, error)
+	// SegmentAt resolves s<k> of a segment ref d<n>.s<k>: the k-th document
+	// of the file in page order (§6.9.4).
+	SegmentAt(ctx context.Context, doc uuid.UUID, k int) (uuid.UUID, error)
 }
 
 // FieldResult is the outcome of one field of kb_save_fields.

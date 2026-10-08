@@ -323,6 +323,7 @@ export interface PromptTemplate {
   version: number;
   body?: string;
   fields?: SheetField[];
+  tables?: SheetTable[];
   created_by_name?: string;
   updated_at: string;
 }
@@ -338,14 +339,32 @@ export interface Evidence {
   citation_id: string;
 }
 
-export interface SheetRow {
-  key: string;
+// One sub-table of a sheet template (U48): the fields of one document type;
+// label "" = one row per file.
+export interface SheetTable {
   label: string;
-  value_type?: string;
+  title: string;
+  fields: SheetField[];
+}
+
+export interface SheetCell {
   field_id?: string;
   ai_field_id?: string;
   ai_value_text: string;
   note?: string;
+}
+
+// One row = one document (a reviewed segment) of a sub-table (§6.9.6).
+export interface SheetRow {
+  table: string;
+  bundle?: string;
+  segment_id?: string;
+  segment_no?: number;
+  document_id: string;
+  file_name?: string;
+  page_start?: number;
+  page_end?: number;
+  cells: Record<string, SheetCell>;
 }
 
 export interface Sheet {
@@ -358,35 +377,47 @@ export interface Sheet {
   status: "pending" | "running" | "done" | "failed";
   filled: number;
   total: number;
+  tables: string[];
   rows: SheetRow[];
   error?: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface SheetRowView extends SheetRow {
+export interface SheetCellView extends SheetCell {
   value: string;
   confidence: number;
   status?: string;
   source?: string;
   value_matched: boolean;
   field_note?: string;
-  document_id?: string;
   evidence: Evidence[];
   edited: boolean;
   calc: boolean;
   low: boolean;
 }
 
+export interface SheetRowView extends SheetRow {
+  cells_view: Record<string, SheetCellView>;
+}
+
+export interface SheetTableView extends SheetTable {
+  rows: SheetRowView[];
+}
+
 export interface SheetView extends Sheet {
   case_code: string;
-  rows_view: SheetRowView[];
-  sources?: { id: string; file_name: string; page_count: number }[];
+  tables_view: SheetTableView[];
 }
 
 export interface SheetImportEdit {
+  table: string;
+  segment_id?: string;
+  document_id?: string;
   key: string;
   label: string;
+  bundle?: string;
+  sheet: string;
   cell: string;
   value: string;
   ai_value: string;
@@ -396,7 +427,47 @@ export interface SheetImportEdit {
 export interface SheetImport {
   edits: SheetImportEdit[];
   conflicts: SheetImportEdit[];
-  ignored: { cell: string; text: string; reason: string }[];
+  ignored: { sheet: string; cell: string; text: string; reason: string }[];
+}
+
+// ---- U48, U49: tách & gom trang (§6.9.7)
+
+export interface ClassLabel {
+  name: string;
+  title: string;
+  description?: string;
+}
+
+export interface Segment {
+  id?: string;
+  document_id: string;
+  page_start: number;
+  page_end: number;
+  label: string;
+  proposed_label?: string;
+  confidence: number;
+  source: "pipeline" | "user";
+  needs_review?: boolean;
+  bundle?: string;
+}
+
+export interface SplitFile {
+  document_id: string;
+  file_name: string;
+  page_count: number;
+  status: "none" | "proposed" | "reviewed";
+  classify_status: string;
+  indexed: boolean;
+  marks: Record<string, string>;
+  segments: Segment[];
+}
+
+export interface SplitView {
+  labels: ClassLabel[];
+  opens_with: string[];
+  files: SplitFile[];
+  bundles: string[];
+  reviewed: boolean;
 }
 
 export interface UsagePeriod {
@@ -429,6 +500,7 @@ export interface LLMKeyView {
 }
 
 export interface CorrectionStat {
+  label: string;
   key: string;
   version: number;
   sheets: number;

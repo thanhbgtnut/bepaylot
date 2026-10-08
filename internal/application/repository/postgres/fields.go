@@ -21,6 +21,7 @@ type FieldsRepo struct{ pool *pgxpool.Pool }
 type FieldWrite struct {
 	CaseID       uuid.UUID
 	DocumentID   uuid.UUID
+	SegmentID    *uuid.UUID // the segment (one document of a mixed file) or nil for the whole file
 	Key          string
 	Ord          int
 	Value        any
@@ -36,14 +37,14 @@ type FieldWrite struct {
 	Evidence     []types.Evidence
 }
 
-const fieldCols = `f.id, f.case_id, f.document_id, f.key, f.ord, f.value, f.value_type, f.value_text, f.value_matched,
+const fieldCols = `f.id, f.case_id, f.document_id, f.segment_id, f.key, f.ord, f.value, f.value_type, f.value_text, f.value_matched,
 	f.confidence, f.status, f.source, f.supersedes, f.note, f.created_at`
 
 func scanField(row pgx.Row) (types.Field, error) {
 	var f types.Field
 	var raw []byte
 	var conf float32
-	err := row.Scan(&f.ID, &f.CaseID, &f.DocumentID, &f.Key, &f.Ord, &raw, &f.ValueType, &f.ValueText, &f.ValueMatched,
+	err := row.Scan(&f.ID, &f.CaseID, &f.DocumentID, &f.SegmentID, &f.Key, &f.Ord, &raw, &f.ValueType, &f.ValueText, &f.ValueMatched,
 		&conf, &f.Status, &f.Source, &f.Supersedes, &f.Note, &f.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return f, ErrNotFound
@@ -57,7 +58,7 @@ func scanField(row pgx.Row) (types.Field, error) {
 }
 
 // Save writes a field (§6.9.3). An agent field supersedes the proposed field
-// of the same (document, key, ord); a user field is confirmed and supersedes
+// of the same (document, segment, key, ord); a user field is confirmed and supersedes
 // both the proposed and the confirmed one. Rows of the slot are locked so two
 // writers cannot both win.
 func (r *FieldsRepo) Save(ctx context.Context, w FieldWrite) (types.Field, error) {
@@ -77,8 +78,10 @@ func (r *FieldsRepo) Save(ctx context.Context, w FieldWrite) (types.Field, error
 }
 
 func saveField(ctx context.Context, tx pgx.Tx, w FieldWrite) (types.Field, error) {
-	if _, err := tx.Exec(ctx, `SELECT id FROM extracted_fields WHERE document_id = $1 AND key = $2 AND ord = $3 FOR UPDATE`,
-		w.DocumentID, w.Key, w.Ord); err != nil {
+	// The slot of a field is (document, segment, key, ord); $5 is the segment.
+	const slot = `document_id = $1 AND segment_id IS NOT DISTINCT FROM $5::uuid AND key = $2 AND ord = $3`
+	if _, err := tx.Exec(ctx, `SELECT id FROM extracted_fields WHERE document_id = $1 AND segment_id IS NOT DISTINCT FROM $4::uuid
+		AND key = $2 AND ord = $3 FOR UPDATE`, w.DocumentID, w.Key, w.Ord, w.SegmentID); err != nil {
 		return types.Field{}, fmt.Errorf("fields.Save lock: %w", err)
 	}
 	replaced := []string{types.FieldProposed}
@@ -87,10 +90,10 @@ func saveField(ctx context.Context, tx pgx.Tx, w FieldWrite) (types.Field, error
 	}
 	var prev *uuid.UUID
 	// The field the new one replaces: the confirmed one first, else the proposal.
-	_ = tx.QueryRow(ctx, `SELECT id FROM extracted_fields WHERE document_id = $1 AND key = $2 AND ord = $3 AND status = ANY($4)
-		ORDER BY (status = 'confirmed') DESC, created_at DESC LIMIT 1`, w.DocumentID, w.Key, w.Ord, replaced).Scan(&prev)
+	_ = tx.QueryRow(ctx, `SELECT id FROM extracted_fields WHERE `+slot+` AND status = ANY($4)
+		ORDER BY (status = 'confirmed') DESC, created_at DESC LIMIT 1`, w.DocumentID, w.Key, w.Ord, replaced, w.SegmentID).Scan(&prev)
 	if _, err := tx.Exec(ctx, `UPDATE extracted_fields SET status = 'superseded', updated_at = now()
-		WHERE document_id = $1 AND key = $2 AND ord = $3 AND status = ANY($4)`, w.DocumentID, w.Key, w.Ord, replaced); err != nil {
+		WHERE `+slot+` AND status = ANY($4)`, w.DocumentID, w.Key, w.Ord, replaced, w.SegmentID); err != nil {
 		return types.Field{}, fmt.Errorf("fields.Save supersede: %w", err)
 	}
 	val, err := cleanJSON(w.Value)
@@ -103,12 +106,12 @@ func saveField(ctx context.Context, tx pgx.Tx, w FieldWrite) (types.Field, error
 	}
 	f, err := scanField(tx.QueryRow(ctx, `
 		INSERT INTO extracted_fields AS f (case_id, document_id, gen, key, ord, value, value_type, value_text, value_matched,
-			confidence, status, source, supersedes, session_id, created_by, reviewed_by, reviewed_at, note)
+			confidence, status, source, supersedes, session_id, created_by, reviewed_by, reviewed_at, note, segment_id)
 		VALUES ($1, $2, (SELECT gen FROM documents WHERE id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			$15, CASE WHEN $15::uuid IS NULL THEN NULL ELSE now() END, $16)
+			$15, CASE WHEN $15::uuid IS NULL THEN NULL ELSE now() END, $16, $17)
 		RETURNING `+fieldCols,
 		w.CaseID, w.DocumentID, w.Key, w.Ord, val, w.ValueType, cleanText(w.ValueText), w.ValueMatched, w.Confidence,
-		w.Status, w.Source, prev, w.SessionID, w.CreatedBy, reviewer, cleanText(w.Note)))
+		w.Status, w.Source, prev, w.SessionID, w.CreatedBy, reviewer, cleanText(w.Note), w.SegmentID))
 	if err != nil {
 		return types.Field{}, fmt.Errorf("fields.Save insert: %w", err)
 	}
@@ -195,7 +198,7 @@ func (r *FieldsRepo) ListByCase(ctx context.Context, caseID uuid.UUID, doc *uuid
 		JOIN documents d ON d.id = f.document_id AND d.case_id = $1 AND d.deleted_at IS NULL
 		WHERE f.case_id = $1 AND f.status IN ('proposed','confirmed')
 		  AND ($2::uuid IS NULL OR f.document_id = $2) AND ($3 = '' OR f.key = $3)
-		ORDER BY f.key, f.ord, (f.status = 'confirmed') DESC, f.created_at DESC`, caseID, doc, key)
+		ORDER BY f.key, f.segment_id NULLS FIRST, f.ord, (f.status = 'confirmed') DESC, f.created_at DESC`, caseID, doc, key)
 	if err != nil {
 		return nil, fmt.Errorf("fields.ListByCase: %w", err)
 	}

@@ -18,31 +18,64 @@ import (
 type SheetsRepo struct{ pool *pgxpool.Pool }
 
 const sheetCols = `s.id, s.case_id, s.template_id, s.template_version, COALESCE(t.name, ''), s.name, s.status, s.filled, s.total,
-	s.rows, s.error, s.created_by, s.created_at, s.updated_at`
+	s.rows, s.error, s.created_by, s.created_at, s.updated_at, s.tables`
 
 func scanSheet(row pgx.Row) (types.Sheet, error) {
 	var s types.Sheet
 	var rows []byte
 	err := row.Scan(&s.ID, &s.CaseID, &s.TemplateID, &s.TemplateVersion, &s.TemplateName, &s.Name, &s.Status, &s.Filled, &s.Total,
-		&rows, &s.Error, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+		&rows, &s.Error, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &s.Tables)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, ErrNotFound
 	}
 	if err != nil {
 		return s, err
 	}
-	_ = json.Unmarshal(rows, &s.Rows)
-	if s.Rows == nil {
-		s.Rows = []types.SheetRow{}
+	s.Rows = decodeRows(rows)
+	if len(s.Tables) == 0 {
+		s.Tables = []string{""} // a 0.16 sheet: one sub-table without label
 	}
 	return s, nil
+}
+
+// decodeRows reads case_sheets.rows; a 0.16 sheet (one row per field) becomes
+// one row of a sub-table without label whose cells are those fields.
+func decodeRows(raw []byte) []types.SheetRow {
+	var probe []map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &probe)
+	if len(probe) > 0 {
+		if _, legacy := probe[0]["cells"]; !legacy {
+			var old []struct {
+				Key         string     `json:"key"`
+				FieldID     *uuid.UUID `json:"field_id"`
+				AIFieldID   *uuid.UUID `json:"ai_field_id"`
+				AIValueText string     `json:"ai_value_text"`
+				Note        string     `json:"note"`
+			}
+			_ = json.Unmarshal(raw, &old)
+			row := types.SheetRow{Cells: map[string]types.SheetCell{}}
+			for _, o := range old {
+				row.Cells[o.Key] = types.SheetCell{FieldID: o.FieldID, AIFieldID: o.AIFieldID, AIValueText: o.AIValueText, Note: o.Note}
+			}
+			return []types.SheetRow{row}
+		}
+	}
+	var out []types.SheetRow
+	_ = json.Unmarshal(raw, &out)
+	if out == nil {
+		out = []types.SheetRow{}
+	}
+	return out
 }
 
 // Create inserts a pending sheet.
 func (r *SheetsRepo) Create(ctx context.Context, s types.Sheet) (types.Sheet, error) {
 	var id uuid.UUID
-	err := r.pool.QueryRow(ctx, `INSERT INTO case_sheets (case_id, template_id, template_version, name, total, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, s.CaseID, s.TemplateID, s.TemplateVersion, cleanText(s.Name), s.Total, s.CreatedBy).Scan(&id)
+	if s.Tables == nil {
+		s.Tables = []string{}
+	}
+	err := r.pool.QueryRow(ctx, `INSERT INTO case_sheets (case_id, template_id, template_version, name, total, created_by, tables)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, s.CaseID, s.TemplateID, s.TemplateVersion, cleanText(s.Name), s.Total, s.CreatedBy, s.Tables).Scan(&id)
 	if err != nil {
 		return types.Sheet{}, fmt.Errorf("sheets.Create: %w", err)
 	}
@@ -74,8 +107,14 @@ func (r *SheetsRepo) ListByCase(ctx context.Context, caseID uuid.UUID) ([]types.
 	return out, rows.Err()
 }
 
-// SetState records the progress of a sheet; rows are written when not nil.
+// SetState records the progress of a sheet; rows are written when not nil,
+// total when > 0.
 func (r *SheetsRepo) SetState(ctx context.Context, id uuid.UUID, status string, filled int, rows []types.SheetRow, errMsg string) error {
+	return r.SetProgress(ctx, id, status, filled, 0, rows, errMsg)
+}
+
+// SetProgress is SetState that also sets the number of cells (total > 0).
+func (r *SheetsRepo) SetProgress(ctx context.Context, id uuid.UUID, status string, filled, total int, rows []types.SheetRow, errMsg string) error {
 	var raw any
 	if rows != nil {
 		b, err := cleanJSON(rows)
@@ -85,7 +124,8 @@ func (r *SheetsRepo) SetState(ctx context.Context, id uuid.UUID, status string, 
 		raw = b
 	}
 	_, err := r.pool.Exec(ctx, `UPDATE case_sheets SET status = $2, filled = $3, rows = COALESCE($4::jsonb, rows),
-		error = $5, updated_at = now() WHERE id = $1`, id, status, filled, raw, cleanText(errMsg))
+		error = $5, total = CASE WHEN $6 > 0 THEN $6 ELSE total END, updated_at = now() WHERE id = $1`,
+		id, status, filled, raw, cleanText(errMsg), total)
 	return err
 }
 
@@ -98,14 +138,14 @@ func (r *SheetsRepo) DeleteByCase(ctx context.Context, caseID uuid.UUID) error {
 // SheetEdit is one cell a user saves (§6.9.6): the field to write and, when
 // the value differs from the AI's, the correction to record.
 type SheetEdit struct {
-	Row        int
+	Row        int // index in Sheet.Rows
 	Field      FieldWrite
 	Correction *types.Correction
 }
 
 // SaveEdits writes the user's fields, records corrections (a value set back
-// to the AI's reverts the earlier ones of that key) and stores the new field
-// ids in the sheet rows, in one transaction.
+// to the AI's reverts the earlier ones of that cell) and stores the new field
+// ids in the sheet cells, in one transaction.
 func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []SheetEdit) (types.Sheet, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -122,19 +162,28 @@ func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []S
 		if err != nil {
 			return types.Sheet{}, err
 		}
+		key, label := e.Field.Key, ""
 		if e.Row >= 0 && e.Row < len(sh.Rows) {
+			row := &sh.Rows[e.Row]
+			label = row.Table
+			if row.Cells == nil {
+				row.Cells = map[string]types.SheetCell{}
+			}
+			cell := row.Cells[key]
 			id := f.ID
-			sh.Rows[e.Row].FieldID = &id
+			cell.FieldID = &id
+			row.Cells[key] = cell
 		}
-		key := e.Field.Key
-		if _, err := tx.Exec(ctx, `UPDATE field_corrections SET reverted = true WHERE sheet_id = $1 AND key = $2 AND NOT reverted`, sheetID, key); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE field_corrections SET reverted = true WHERE sheet_id = $1 AND label = $2 AND key = $3
+			AND segment_id IS NOT DISTINCT FROM $4::uuid AND NOT reverted`, sheetID, label, key, e.Field.SegmentID); err != nil {
 			return types.Sheet{}, err
 		}
 		if c := e.Correction; c != nil {
 			id := f.ID
 			if _, err := tx.Exec(ctx, `INSERT INTO field_corrections (sheet_id, template_id, template_version, key, ai_field_id, user_field_id,
-				ai_value_text, user_value_text, origin, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-				sheetID, sh.TemplateID, sh.TemplateVersion, key, c.AIFieldID, &id, cleanText(c.AIValueText), cleanText(c.UserValueText), c.Origin, c.UserID); err != nil {
+				ai_value_text, user_value_text, origin, user_id, label, segment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+				sheetID, sh.TemplateID, sh.TemplateVersion, key, c.AIFieldID, &id, cleanText(c.AIValueText), cleanText(c.UserValueText), c.Origin, c.UserID,
+				label, e.Field.SegmentID); err != nil {
 				return types.Sheet{}, fmt.Errorf("sheets.SaveEdits correction: %w", err)
 			}
 		}
@@ -152,22 +201,22 @@ func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []S
 	return r.Get(ctx, sheetID)
 }
 
-// CorrectionStats counts, per field and template version, how many sheets had
-// the field and how many times users corrected the AI value (§6.9.6).
+// CorrectionStats counts, per sub-table, field and template version, how many
+// documents had the field and how many of them users corrected (§6.9.6).
 func (r *SheetsRepo) CorrectionStats(ctx context.Context, templateID uuid.UUID) ([]types.CorrectionStat, error) {
 	rows, err := r.pool.Query(ctx, `
 		WITH used AS (
-			SELECT s.template_version AS version, r->>'key' AS key, count(*) AS sheets
-			FROM case_sheets s, jsonb_array_elements(s.rows) r
-			WHERE s.template_id = $1 AND s.status = 'done' GROUP BY 1, 2
+			SELECT s.template_version AS version, COALESCE(r->>'table', '') AS label, c.key, count(*) AS docs
+			FROM case_sheets s, jsonb_array_elements(s.rows) r, jsonb_object_keys(COALESCE(r->'cells', '{}')) c(key)
+			WHERE s.template_id = $1 AND s.status = 'done' GROUP BY 1, 2, 3
 		), fixed AS (
-			SELECT template_version AS version, key, count(DISTINCT sheet_id) AS edited,
+			SELECT template_version AS version, label, key, count(DISTINCT (sheet_id, segment_id)) AS edited,
 			       (array_agg(ai_value_text || ' → ' || user_value_text ORDER BY created_at DESC))[1:3] AS examples
-			FROM field_corrections WHERE template_id = $1 AND NOT reverted GROUP BY 1, 2
+			FROM field_corrections WHERE template_id = $1 AND NOT reverted GROUP BY 1, 2, 3
 		)
-		SELECT u.key, u.version, u.sheets, COALESCE(f.edited, 0), COALESCE(f.examples, '{}')
-		FROM used u LEFT JOIN fixed f ON f.version = u.version AND f.key = u.key
-		ORDER BY u.version DESC, COALESCE(f.edited, 0)::float / u.sheets DESC, u.key`, templateID)
+		SELECT u.label, u.key, u.version, u.docs, COALESCE(f.edited, 0), COALESCE(f.examples, '{}')
+		FROM used u LEFT JOIN fixed f ON f.version = u.version AND f.label = u.label AND f.key = u.key
+		ORDER BY u.version DESC, COALESCE(f.edited, 0)::float / u.docs DESC, u.label, u.key`, templateID)
 	if err != nil {
 		return nil, fmt.Errorf("sheets.CorrectionStats: %w", err)
 	}
@@ -175,7 +224,7 @@ func (r *SheetsRepo) CorrectionStats(ctx context.Context, templateID uuid.UUID) 
 	out := []types.CorrectionStat{}
 	for rows.Next() {
 		var s types.CorrectionStat
-		if err := rows.Scan(&s.Key, &s.Version, &s.Sheets, &s.Edited, &s.Examples); err != nil {
+		if err := rows.Scan(&s.Label, &s.Key, &s.Version, &s.Sheets, &s.Edited, &s.Examples); err != nil {
 			return nil, err
 		}
 		if s.Sheets > 0 {

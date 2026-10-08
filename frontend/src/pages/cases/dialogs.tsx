@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { addTemplateVersion, createTemplate, listTemplates, publishTemplate, templateCorrections } from "../../api/endpoints";
-import { canEditPrompts, type CorrectionStat, type PromptTemplate, type SheetField } from "../../api/types";
+import { canEditPrompts, type ClassLabel, type CorrectionStat, type PromptTemplate, type SheetField, type SheetTable } from "../../api/types";
 import { useAuth } from "../../components/AuthContext";
 import { useToast } from "../../components/toast";
 import { Icon, Modal } from "../../components/ui";
@@ -141,40 +141,68 @@ export function ChatConfigDialog({
   );
 }
 
-// A starting point for the first sheet template of a "phương án vay vốn".
-const DEFAULT_SHEET: { name: string; body: string; fields: SheetField[] } = {
-  name: "Bảng tổng hợp phương án vay",
-  body: "Bóc tách các trường dưới đây từ các nguồn của phương án. Tìm đúng trang qua cây hồ sơ, đọc trang rồi ghi bằng kb_save_fields kèm citation_id của dòng gốc. Không tìm thấy thì không ghi và nêu lý do. Giá trị tính (tỷ lệ, tổng) phải ghi note cách tính.",
-  fields: [
+// Starting points for a first sheet template: one sub-table per document
+// type the case type knows (a payment bundle), else one table of a whole file
+// (a loan plan).
+const DEFAULT_BODY =
+  "Với mỗi giấy tờ được liệt kê (ref, loại, trang), bóc tách các trường còn thiếu. Đọc đúng các trang của giấy tờ, ghi bằng kb_save_fields với segment và citation_id của dòng gốc. Không tìm thấy thì không ghi và nêu lý do. Giá trị tính (tỷ lệ, tổng) phải ghi note cách tính.";
+const DEFAULT_FIELDS: Record<string, SheetField[]> = {
+  hop_dong: [
+    { key: "so_hop_dong", label: "Số hợp đồng", value_type: "string" },
+    { key: "ngay_ky", label: "Ngày ký", value_type: "date" },
+    { key: "ben_ban", label: "Bên bán", value_type: "string" },
+    { key: "ben_mua", label: "Bên mua", value_type: "string" },
+    { key: "gia_tri", label: "Giá trị hợp đồng (đồng)", value_type: "money" },
+    { key: "thoi_han_tt", label: "Thời hạn thanh toán", value_type: "string" },
+  ],
+  hoa_don: [
+    { key: "ky_hieu", label: "Ký hiệu", value_type: "string" },
+    { key: "so_hoa_don", label: "Số hoá đơn", value_type: "string" },
+    { key: "ngay_lap", label: "Ngày lập", value_type: "date" },
+    { key: "mst_ban", label: "MST bên bán", value_type: "string" },
+    { key: "tien_truoc_thue", label: "Tiền trước thuế", value_type: "money" },
+    { key: "thue_gtgt", label: "Thuế GTGT", value_type: "money" },
+    { key: "tong_tien", label: "Tổng thanh toán", value_type: "money" },
+  ],
+  bb_ban_giao: [
+    { key: "so_bb", label: "Số biên bản", value_type: "string" },
+    { key: "ngay_bg", label: "Ngày bàn giao", value_type: "date" },
+    { key: "can_cu_hd", label: "Căn cứ HĐ số", value_type: "string" },
+    { key: "hang_hoa", label: "Hàng hoá", value_type: "string" },
+    { key: "so_luong", label: "Số lượng", value_type: "string" },
+  ],
+  "": [
     { key: "ten_doanh_nghiep", label: "Tên doanh nghiệp", value_type: "string" },
     { key: "ma_so_thue", label: "Mã số thuế", value_type: "string" },
-    { key: "nguoi_dai_dien", label: "Người đại diện theo pháp luật", value_type: "string" },
     { key: "von_dieu_le", label: "Vốn điều lệ (đồng)", value_type: "money" },
-    { key: "doanh_thu_nam_gan_nhat", label: "Doanh thu thuần năm gần nhất (đồng)", value_type: "money" },
     { key: "loi_nhuan_sau_thue", label: "Lợi nhuận sau thuế năm gần nhất (đồng)", value_type: "money" },
-    { key: "tong_tai_san", label: "Tổng tài sản (đồng)", value_type: "money" },
     { key: "so_tien_vay", label: "Số tiền đề nghị vay (đồng)", value_type: "money" },
-    { key: "thoi_han_vay", label: "Thời hạn vay (tháng)", value_type: "number" },
     { key: "muc_dich_vay", label: "Mục đích vay", value_type: "string" },
-    { key: "tai_san_dam_bao", label: "Tài sản bảo đảm", value_type: "string" },
-    { key: "gia_tri_tsbd", label: "Giá trị TSBĐ định giá (đồng)", value_type: "money" },
-    { key: "ty_le_vay_tsbd", label: "Tỷ lệ vay / TSBĐ", value_type: "number" },
   ],
 };
+function defaultSheet(labels: ClassLabel[]): { name: string; tables: SheetTable[] } {
+  const typed = labels.filter((l) => DEFAULT_FIELDS[l.name]);
+  if (typed.length) return { name: "Bộ chứng từ", tables: typed.map((l) => ({ label: l.name, title: l.title, fields: DEFAULT_FIELDS[l.name] })) };
+  return { name: "Bảng tổng hợp phương án vay", tables: [{ label: "", title: "Tổng hợp", fields: DEFAULT_FIELDS[""] }] };
+}
 const TYPES = ["string", "number", "money", "date", "bool"];
+const copyTables = (ts?: SheetTable[]) => (ts ?? []).map((t) => ({ ...t, fields: t.fields.map((f) => ({ ...f })) }));
 
 // Sheet template of the Studio's Excel card (§7.7): users pick a published
-// one; prompt editors also edit its fields and prompt (a new version, then
-// published) and see how often users corrected each field.
+// one; prompt editors also edit its sub-tables (one per document type, fields
+// as columns) and prompt — a new version, then published — and see how often
+// users corrected each field.
 export function SheetTemplateDialog({
   templates,
   caseType,
+  labels,
   value,
   onClose,
   onSave,
 }: {
   templates: PromptTemplate[];
   caseType?: string;
+  labels: ClassLabel[];
   value: string;
   onClose: () => void;
   onSave: (id: string, templates?: PromptTemplate[]) => void;
@@ -187,29 +215,42 @@ export function SheetTemplateDialog({
   const cur = templates.find((t) => t.id === pick);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-  const [fields, setFields] = useState<SheetField[]>([]);
+  const [tables, setTables] = useState<SheetTable[]>([]);
+  const [active, setActive] = useState(0);
   const [stats, setStats] = useState<CorrectionStat[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const labelKey = labels.map((l) => l.name).join(",");
 
   useEffect(() => {
-    const src = creating ? DEFAULT_SHEET : cur;
-    setName(creating ? DEFAULT_SHEET.name : (cur?.name ?? ""));
-    setBody(src?.body ?? "");
-    setFields((src?.fields ?? []).map((f) => ({ ...f })));
-  }, [creating, cur]);
+    const def = defaultSheet(labels);
+    setName(creating ? def.name : (cur?.name ?? ""));
+    setBody(creating ? DEFAULT_BODY : (cur?.body ?? ""));
+    setTables(creating ? copyTables(def.tables) : copyTables(cur?.tables));
+    setActive(0);
+  }, [creating, cur, labelKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setStats(null);
     if (editor && cur && !creating) templateCorrections(cur.id).then(setStats, () => setStats([]));
   }, [editor, cur, creating]);
 
+  const table = tables[active];
+  const titleOf = (l: string) => labels.find((x) => x.name === l)?.title ?? (l ? l : "Cả file");
+  const setFields = (fn: (fs: SheetField[]) => SheetField[]) => setTables((ts) => ts.map((t, i) => (i === active ? { ...t, fields: fn(t.fields) } : t)));
   const setField = (i: number, f: Partial<SheetField>) => setFields((xs) => xs.map((x, j) => (j === i ? { ...x, ...f } : x)));
+  const unused = [...labels.map((l) => l.name), ""].filter((l) => !tables.some((t) => t.label === l));
+  const addTable = (l: string) => {
+    setTables((ts) => [...ts, { label: l, title: titleOf(l), fields: [{ key: "", label: "", value_type: "string" }] }]);
+    setActive(tables.length);
+  };
   const publish = async () => {
     setBusy(true);
     try {
-      const clean = fields.filter((f) => f.key.trim() && f.label.trim()).map((f) => ({ ...f, key: f.key.trim() }));
+      const clean = tables
+        .map((t) => ({ ...t, fields: t.fields.filter((f) => f.key.trim() && f.label.trim()).map((f) => ({ ...f, key: f.key.trim() })) }))
+        .filter((t) => t.fields.length);
       let t: PromptTemplate;
-      if (creating) t = await createTemplate({ kind: "sheet", slug: slug(name), name: name.trim(), case_type: caseType, body, fields: clean });
-      else t = await addTemplateVersion(pick, { name: name.trim(), body, fields: clean });
+      if (creating) t = await createTemplate({ kind: "sheet", slug: slug(name), name: name.trim(), case_type: caseType, body, tables: clean });
+      else t = await addTemplateVersion(pick, { name: name.trim(), body, tables: clean });
       t = await publishTemplate(t.id, t.version);
       toast(`Đã phát hành ${t.name} v${t.current_version}`);
       const list = await listTemplates("sheet", caseType);
@@ -229,14 +270,14 @@ export function SheetTemplateDialog({
       title={editor ? "Tuỳ chỉnh bảng Excel" : "Chọn mẫu bảng Excel"}
       icon="table_view"
       onClose={onClose}
-      width={editor ? 720 : 560}
+      width={editor ? 760 : 560}
       footer={
         <>
           <button className="btn btn-text" onClick={onClose}>
             Huỷ
           </button>
           {editor && (
-            <button className="btn" onClick={publish} disabled={busy || !name.trim() || !body.trim() || !fields.length}>
+            <button className="btn" onClick={publish} disabled={busy || !name.trim() || !body.trim() || !tables.some((t) => t.fields.some((f) => f.key.trim()))}>
               {creating ? "Tạo & phát hành" : `Lưu & phát hành v${(cur?.latest_version ?? 0) + 1}`}
             </button>
           )}
@@ -264,7 +305,7 @@ export function SheetTemplateDialog({
               <span>
                 <span className="block text-sm font-medium text-fg">{t.name}</span>
                 <span className="block text-xs">
-                  {t.fields?.length ?? "?"} trường · v{t.current_version}
+                  {t.tables?.length ? t.tables.map((x) => x.title || titleOf(x.label)).join(" · ") : "?"} · v{t.current_version}
                   {t.created_by_name ? ` · do ${t.created_by_name} soạn` : ""}
                 </span>
               </span>
@@ -278,13 +319,13 @@ export function SheetTemplateDialog({
         ) : (
           <div className="flex gap-3 rounded-xl bg-surface-2 px-4 py-3 text-xs">
             <Icon name="lock" size={20} className="text-subtle" />
-            <div>Danh sách trường và prompt của mẫu do người được cấp quyền đặt prompt quản lý. Bạn chọn mẫu có sẵn.</div>
+            <div>Bảng con, trường và prompt của mẫu do người được cấp quyền đặt prompt quản lý. Bạn chọn mẫu có sẵn và chọn bảng cần tạo ở thẻ Xuất Excel.</div>
           </div>
         )
       ) : (
         <>
           <div className="flex items-center gap-2">
-            <h3 className="flex-1 text-sm font-medium text-fg">{creating ? "Mẫu bảng mới" : "Trường của bảng"}</h3>
+            <h3 className="flex-1 text-sm font-medium text-fg">{creating ? "Mẫu bảng mới" : "Bảng con theo loại giấy tờ"}</h3>
             {!creating ? (
               <button className="btn btn-text btn-sm" onClick={() => setCreating(true)}>
                 <Icon name="add" size={18} /> Mẫu mới
@@ -301,49 +342,88 @@ export function SheetTemplateDialog({
             <span>Tên mẫu</span>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
           </label>
-          <div className="overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-130 text-[13px]">
-              <thead>
-                <tr className="bg-surface-2 text-left text-xs">
-                  <th className="px-3 py-2 font-medium">Key</th>
-                  <th className="px-3 py-2 font-medium">Nhãn cột</th>
-                  <th className="px-3 py-2 font-medium">Kiểu</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {fields.map((f, i) => (
-                  <tr key={i} className="border-t border-line">
-                    <td className="px-2 py-1">
-                      <input className="w-full bg-transparent px-1 py-1 font-mono text-xs text-fg outline-none focus:bg-surface-2" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} />
-                    </td>
-                    <td className="px-2 py-1">
-                      <input className="w-full bg-transparent px-1 py-1 text-fg outline-none focus:bg-surface-2" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} />
-                    </td>
-                    <td className="px-2 py-1">
-                      <select className="bg-transparent text-fg" value={f.value_type || "string"} onChange={(e) => setField(i, { value_type: e.target.value })}>
-                        {TYPES.map((t) => (
-                          <option key={t}>{t}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="pr-2 text-right">
-                      <button className="btn-icon btn-sm" title="Xoá trường" onClick={() => setFields((xs) => xs.filter((_, j) => j !== i))}>
-                        <Icon name="close" size={18} />
-                      </button>
-                    </td>
-                  </tr>
+          <div className="flex flex-wrap items-center gap-1">
+            {tables.map((t, i) => (
+              <button key={t.label || "_"} className={"chip " + (i === active ? "chip-on" : "")} onClick={() => setActive(i)}>
+                {t.title || titleOf(t.label)}
+              </button>
+            ))}
+            {unused.length > 0 && (
+              <select className="chip" value="" onChange={(e) => e.target.value !== "-" && addTable(e.target.value === "_" ? "" : e.target.value)} aria-label="Thêm bảng con">
+                <option value="-">+ Thêm bảng con…</option>
+                {unused.map((l) => (
+                  <option key={l || "_"} value={l || "_"}>
+                    {l ? titleOf(l) : "Cả file (mỗi file một dòng)"}
+                  </option>
                 ))}
-                <tr className="border-t border-line">
-                  <td colSpan={4} className="px-3 py-1.5">
-                    <button className="text-xs text-accent" onClick={() => setFields((xs) => [...xs, { key: "", label: "", value_type: "string" }])}>
-                      + Thêm trường
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+              </select>
+            )}
           </div>
+          {table && (
+            <>
+              <div className="flex items-end gap-2">
+                <label className="field flex-1">
+                  <span>Tên sheet · loại giấy tờ: {table.label ? titleOf(table.label) : "cả file"}</span>
+                  <input className="input" value={table.title} onChange={(e) => setTables((ts) => ts.map((t, i) => (i === active ? { ...t, title: e.target.value } : t)))} />
+                </label>
+                <button
+                  className="btn btn-text btn-danger btn-sm mb-1"
+                  onClick={() => {
+                    setTables((ts) => ts.filter((_, i) => i !== active));
+                    setActive(0);
+                  }}
+                >
+                  Xoá bảng con
+                </button>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-line">
+                <table className="w-full min-w-130 text-[13px]">
+                  <thead>
+                    <tr className="bg-surface-2 text-left text-xs">
+                      <th className="px-3 py-2 font-medium">Cột</th>
+                      <th className="px-3 py-2 font-medium">Key</th>
+                      <th className="px-3 py-2 font-medium">Nhãn cột</th>
+                      <th className="px-3 py-2 font-medium">Kiểu</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {table.fields.map((f, i) => (
+                      <tr key={i} className="border-t border-line">
+                        <td className="px-3 py-1 font-mono text-xs">{String.fromCharCode(66 + i)}</td>
+                        <td className="px-2 py-1">
+                          <input className="w-full bg-transparent px-1 py-1 font-mono text-xs text-fg outline-none focus:bg-surface-2" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input className="w-full bg-transparent px-1 py-1 text-fg outline-none focus:bg-surface-2" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} />
+                        </td>
+                        <td className="px-2 py-1">
+                          <select className="bg-transparent text-fg" value={f.value_type || "string"} onChange={(e) => setField(i, { value_type: e.target.value })}>
+                            {TYPES.map((t) => (
+                              <option key={t}>{t}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="pr-2 text-right">
+                          <button className="btn-icon btn-sm" title="Xoá trường" onClick={() => setFields((xs) => xs.filter((_, j) => j !== i))}>
+                            <Icon name="close" size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="border-t border-line">
+                      <td colSpan={5} className="px-3 py-1.5 text-xs">
+                        Cột A luôn là <b>{table.label ? "Bộ" : "File"}</b> ·{" "}
+                        <button className="text-accent" onClick={() => setFields((xs) => [...xs, { key: "", label: "", value_type: "string" }])}>
+                          + Thêm trường
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
           <label className="field">
             <span>Prompt bóc tách</span>
             <textarea className="input font-mono text-xs" rows={5} value={body} onChange={(e) => setBody(e.target.value)} />
@@ -359,9 +439,10 @@ export function SheetTemplateDialog({
                       .map((s) => {
                         const p = Math.round(s.rate * 100);
                         return (
-                          <tr key={s.key} className="border-t border-line first:border-0">
+                          <tr key={s.label + "." + s.key} className="border-t border-line first:border-0">
+                            <td className="px-3 py-1.5 text-xs text-muted">{titleOf(s.label)}</td>
                             <td className="px-3 py-1.5 font-mono text-xs text-fg">{s.key}</td>
-                            <td className="w-1/3 px-3 py-1.5">
+                            <td className="w-1/4 px-3 py-1.5">
                               <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
                                 <i className={"block h-full rounded-full " + (p > 15 ? "bg-err" : p > 8 ? "bg-warn" : "bg-accent")} style={{ width: `${Math.max(p, 1)}%` }} />
                               </div>

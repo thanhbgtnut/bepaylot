@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -12,6 +14,9 @@ import (
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
+
+// segmentRef is d<n>.s<k>: the k-th document of the file d<n> (§8.2).
+var segmentRef = regexp.MustCompile(`^(d\d+)\.s(\d+)$`)
 
 // SetFieldTools adds kb_save_fields and kb_get_fields to the case tools
 // (§8.2). Call after SetKnowledgeTools, which resets the case tools.
@@ -26,13 +31,33 @@ func (r *Registry) SetFieldTools(searcher interfaces.Searcher, fields interfaces
 		Note       string   `json:"note,omitempty" jsonschema_description:"Required when the value is derived (a sum, a ratio) and not written in the quoted lines: how it was computed."`
 	}
 	type saveArgs struct {
-		DocumentID string     `json:"document_id" jsonschema:"required" jsonschema_description:"The file the fields belong to (document id or ref d<n>)."`
+		DocumentID string     `json:"document_id,omitempty" jsonschema_description:"The file the fields belong to (document id or ref d<n>). Not needed with segment."`
+		Segment    string     `json:"segment,omitempty" jsonschema_description:"One document of a file that holds several (ref d<n>.s<k>, as listed by kb_list_documents): the fields belong to that document."`
 		Fields     []fieldArg `json:"fields" jsonschema:"required"`
 	}
 	save, err := utils.InferTool("kb_save_fields",
 		"Store extracted field values of a file of this case, each with the citation_id of the lines it is read from. Values are saved as proposals for a person to review; the result says per field whether it was saved and whether the value appears in the cited lines.",
 		func(ctx context.Context, a saveArgs) (map[string]any, error) {
-			sc, doc, err := docArg(ctx, searcher, a.DocumentID)
+			docRef, seg := strings.TrimSpace(a.DocumentID), (*uuid.UUID)(nil)
+			if m := segmentRef.FindStringSubmatch(strings.TrimSpace(a.Segment)); m != nil {
+				docRef = m[1]
+				_, d, err := docArg(ctx, searcher, docRef)
+				if err != nil {
+					return nil, err
+				}
+				k, _ := strconv.Atoi(m[2])
+				id, err := fields.SegmentAt(ctx, d, k)
+				if err != nil {
+					return nil, err
+				}
+				seg = &id
+			} else if strings.TrimSpace(a.Segment) != "" {
+				return nil, errors.New("segment must look like d<n>.s<k>")
+			}
+			if docRef == "" {
+				return nil, errors.New("give document_id or segment")
+			}
+			sc, doc, err := docArg(ctx, searcher, docRef)
 			if err != nil {
 				return nil, err
 			}
@@ -51,7 +76,7 @@ func (r *Registry) SetFieldTools(searcher interfaces.Searcher, fields interfaces
 					}
 					cites = append(cites, c)
 				}
-				in = append(in, types.FieldInput{DocumentID: doc, Key: f.Key, Ord: f.Ord, Value: f.Value, ValueType: f.ValueType,
+				in = append(in, types.FieldInput{DocumentID: doc, SegmentID: seg, Key: f.Key, Ord: f.Ord, Value: f.Value, ValueType: f.ValueType,
 					Confidence: f.Confidence, Citations: cites, Note: f.Note})
 			}
 			var sid *uuid.UUID

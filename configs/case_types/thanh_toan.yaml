@@ -15,3 +15,14 @@ metadata_schema:                 # metadata của file trong case; thay metadata
     - { key: loai_giay_to, type: string, description: "Loại giấy tờ (tuỳ chọn, do người upload gán)" }
 parser:
   engine: ""                     # rỗng = parser_engine của KB, rồi parser.default_engine; vd turboocr_vlm
+classification:                  # §6.9.4: nhãn loại giấy tờ (dữ liệu, không phải workflow)
+  auto: false                    # true: phân loại (chế độ titles) ngay sau khi dựng cây
+  labels:
+    - { name: hop_dong,     title: Hợp đồng }
+    - { name: hoa_don,      title: Hoá đơn, description: "hoá đơn GTGT / hoá đơn bán hàng" }
+    - { name: bb_ban_giao,  title: BB bàn giao, description: "biên bản bàn giao, nghiệm thu hàng hoá" }
+    - { name: uy_nhiem_chi, title: Uỷ nhiệm chi, description: "lệnh chuyển tiền do ngân hàng xác nhận" }
+    - { name: cccd,         title: Căn cước công dân }
+  min_confidence: 0.6            # dưới ngưỡng thì segment mang nhãn unknown
+bundles:                         # §6.9.7: đề xuất gom bộ (code, không gọi LLM)
+  opens_with: [hop_dong]         # giấy tờ mang nhãn này mở bộ mới

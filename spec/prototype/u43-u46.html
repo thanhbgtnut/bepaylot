@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BePaylot U43–U46 Prototype</title>
+<title>BePaylot U43–U49 Prototype</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
@@ -42,22 +42,35 @@ body { margin:0; background:var(--bg); color:var(--fg); font:14px/20px "Google S
 .icon-fill { font-variation-settings:"FILL" 1,"wght" 400,"GRAD" 0,"opsz" 24; }
 .cite { display:inline-flex; align-items:center; height:20px; padding:0 8px; margin:0 2px; border-radius:10px; background:var(--accent-soft); color:var(--on-accent-soft); font:500 11.5px/20px inherit; border:0; cursor:pointer; vertical-align:1px; }
 .gradient-text { background:linear-gradient(74deg,#4285f4 0%,#9b72cb 9%,#d96570 20%,#d96570 24%,#9b72cb 35%,#4285f4 44%,#9b72cb 50%,#d96570 56%,var(--fg) 75%); background-size:400% 100%; -webkit-background-clip:text; background-clip:text; color:transparent; }
-/* Excel grid */
-.sheet { border-collapse:collapse; font-size:13px; min-width:860px; width:100%; }
-.sheet th, .sheet td { border:1px solid var(--line); padding:0; height:32px; }
-.sheet thead th { background:var(--surface-2); color:var(--subtle); font-weight:400; font-size:11.5px; text-align:center; position:sticky; top:0; z-index:1; }
-.sheet td.rh { background:var(--surface-2); color:var(--subtle); text-align:center; font-size:11.5px; width:40px; }
+/* Excel grid: trường là cột, mỗi giấy tờ một dòng (U47) */
+.sheet { border-collapse:separate; border-spacing:0; font-size:13px; }
+.sheet th, .sheet td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:0; height:32px; background:var(--surface); }
+.sheet thead th { background:var(--surface-2); color:var(--subtle); font-weight:400; font-size:11.5px; text-align:center; position:sticky; top:0; z-index:2; height:24px; }
+.sheet .rh { background:var(--surface-2); color:var(--subtle); text-align:center; font-size:11.5px; width:40px; min-width:40px; position:sticky; left:0; z-index:1; }
+.sheet thead th.rh { z-index:3; }
+.sheet .colA { position:sticky; left:40px; z-index:1; min-width:64px; }
+.sheet thead th.colA { z-index:3; }
 .sheet td > .c { padding:6px 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sheet td.hd > .c { font-weight:500; background:var(--xl-soft); color:var(--fg); }
-.sheet input.cell { width:100%; height:100%; min-height:31px; border:0; outline:0; background:transparent; color:var(--fg); font:inherit; padding:6px 10px; font-variant-numeric:tabular-nums; }
+.sheet input.cell { width:100%; min-width:120px; height:100%; min-height:31px; border:0; outline:0; background:transparent; color:var(--fg); font:inherit; padding:6px 10px; font-variant-numeric:tabular-nums; }
 .sheet td.val:focus-within { outline:2px solid var(--xl); outline-offset:-2px; }
 .sheet td.low { background:var(--warn-soft); }
 .sheet td.calc { background:var(--vlm-soft); }
 .sheet td.edited { background:var(--accent-container); position:relative; }
 .sheet td.edited::after { content:""; position:absolute; top:0; right:0; border:5px solid transparent; border-top-color:var(--accent); border-right-color:var(--accent); }
-.sheet tr.sel td.rh { background:var(--xl); color:#fff; }
+.sheet tr.bstart td { border-top:2px solid var(--outline); }
+.sheet tr.sel .rh { background:var(--xl); color:#fff; }
 .num { font-variant-numeric:tabular-nums; }
 .proto { background:repeating-linear-gradient(135deg,var(--surface-2) 0 10px,var(--surface-3) 10px 20px); }
+/* Tách & gom: ảnh thu nhỏ trang */
+.thumb { width:58px; height:76px; flex:none; border:1px solid var(--line); border-radius:6px; background:var(--surface); padding:6px 5px; display:flex; flex-direction:column; gap:3px; cursor:pointer; position:relative; }
+.thumb i { display:block; height:3px; border-radius:2px; background:color-mix(in srgb, var(--fg) 14%, transparent); }
+.thumb b { display:block; height:4px; border-radius:2px; background:color-mix(in srgb, var(--fg) 45%, transparent); }
+.thumb span { position:absolute; bottom:2px; right:4px; font-size:10px; color:var(--subtle); }
+.thumb.on { outline:2px solid var(--accent); outline-offset:1px; }
+.cut { width:18px; flex:none; align-self:center; display:grid; place-items:center; height:76px; border-radius:6px; color:var(--subtle); cursor:pointer; opacity:.35; }
+.cut:hover { opacity:1; background:color-mix(in srgb, var(--fg) 8%, transparent); color:var(--fg); }
+.cut.mark { opacity:.9; color:var(--warn); }
 dialog::backdrop { background:var(--scrim); }
 @media (prefers-reduced-motion:reduce) { * { animation:none!important; transition:none!important; } }
 </style>
@@ -102,40 +115,63 @@ dialog::backdrop { background:var(--scrim); }
 
 <script>
 /* ------------------------------------------------------------ sample data (fictional) */
-const CASE = { code:'TD-2026-000123', title:'Phương án vay vốn lưu động 2026 · Công ty CP Thương mại An Phát (ví dụ)', type:'tin_dung_dn' };
+const CASE = { code:'RT112233', title:'Thanh toán đợt 3 · Công ty CP Thương mại An Phát (ví dụ)', type:'thanh_toan' };
+const LABELS = { hop_dong:'Hợp đồng', hoa_don:'Hoá đơn', bb_ban_giao:'BB bàn giao', other:'Khác' };
+const LICON = { hop_dong:'article', hoa_don:'receipt_long', bb_ban_giao:'local_shipping', other:'draft' };
+const DOC_TITLE = { hop_dong:'HỢP ĐỒNG MUA BÁN', hoa_don:'HOÁ ĐƠN GIÁ TRỊ GIA TĂNG', bb_ban_giao:'BIÊN BẢN BÀN GIAO HÀNG HOÁ', other:'PHIẾU XUẤT KHO' };
 const FILES = [
-  { n:'01_Giay_DKKD.pdf', p:4, s:'Giấy chứng nhận đăng ký doanh nghiệp, thay đổi lần 5.' },
-  { n:'02_BCTC_kiem_toan_2025.pdf', p:38, s:'Báo cáo tài chính đã kiểm toán năm 2025.' },
-  { n:'03_Phuong_an_SXKD_2026.pdf', p:22, s:'Phương án kinh doanh và nhu cầu vốn lưu động 2026.',
-    tree:[['I. Thông tin khách hàng','tr. 1–3'],['II. Nhu cầu vốn','tr. 3–6'],['III. Hiệu quả phương án','tr. 7–15'],['IV. Tài sản bảo đảm','tr. 16–22']] },
-  { n:'04_HD_the_chap_QSDD.pdf', p:11, s:'Hợp đồng thế chấp quyền sử dụng đất.' },
-  { n:'05_BB_dinh_gia_TSBD.pdf', p:6, s:'Biên bản định giá tài sản bảo đảm.' },
+  { n:'RT112233_scan_dot3.pdf', p:14, s:'Scan liền 2 bộ chứng từ: hợp đồng, hoá đơn, biên bản bàn giao.', reviewed:true },
+  { n:'HD_045-2026_Minh_Long.pdf', p:5, s:'Hợp đồng mua bán số 045/2026/HĐMB.', reviewed:true },
+  { n:'HDon_BB_Minh_Long.pdf', p:4, s:'Hoá đơn và biên bản bàn giao của Minh Long (mới tải lên).', reviewed:false },
 ];
-// key, label, AI value, confidence, file idx, page, quote, kind
-const FIELDS = [
-  ['ten_doanh_nghiep','Tên doanh nghiệp','Công ty CP Thương mại An Phát',.98,0,1,'Tên công ty viết bằng tiếng Việt: CÔNG TY CỔ PHẦN THƯƠNG MẠI AN PHÁT',''],
-  ['ma_so_thue','Mã số thuế','0109876543',.97,0,1,'Mã số doanh nghiệp: 0109876543',''],
-  ['nguoi_dai_dien','Người đại diện theo pháp luật','Trần Minh Khoa',.95,0,2,'Họ và tên: TRẦN MINH KHOA  Chức danh: Tổng giám đốc',''],
-  ['von_dieu_le','Vốn điều lệ (đồng)','25.000.000.000',.93,0,2,'Vốn điều lệ: 25.000.000.000 đồng',''],
-  ['doanh_thu_2025','Doanh thu thuần 2025 (đồng)','184.562.300.000',.91,1,7,'10. Doanh thu thuần về bán hàng … 184.562.300.000',''],
-  ['loi_nhuan_st_2025','Lợi nhuận sau thuế 2025 (đồng)','6.214.800.000',.64,1,9,'60. Lợi nhuận sau thuế TNDN … 6.124.800.000','low'],
-  ['tong_tai_san','Tổng tài sản 31/12/2025 (đồng)','97.310.450.000',.92,1,5,'270. TỔNG CỘNG TÀI SẢN … 97.310.450.000',''],
-  ['so_tien_vay','Số tiền đề nghị vay (đồng)','15.000.000.000',.96,2,3,'Hạn mức tín dụng đề nghị: 15.000.000.000 đồng',''],
-  ['thoi_han_vay','Thời hạn duy trì hạn mức (tháng)','12',.9,2,3,'Thời hạn duy trì hạn mức: 12 tháng',''],
-  ['muc_dich_vay','Mục đích vay','Bổ sung vốn lưu động mua hàng điện máy',.88,2,4,'Mục đích: bổ sung vốn lưu động phục vụ mua hàng điện máy, điện lạnh',''],
-  ['tai_san_dam_bao','Tài sản bảo đảm','QSDĐ thửa 112, tờ bản đồ 07, P. Dịch Vọng',.71,3,2,'Thửa đất số 112, tờ bản đồ số 07, phường Dịch Vọng Hậu','low'],
-  ['gia_tri_tsbd','Giá trị TSBĐ định giá (đồng)','21.400.000.000',.94,4,5,'Tổng giá trị tài sản định giá: 21.400.000.000 đồng',''],
-  ['ty_le_vay_tsbd','Tỷ lệ vay / TSBĐ','70,1%',.99,4,5,'= so_tien_vay / gia_tri_tsbd (agent tính)','calc'],
+// dấu điểm cắt do code tìm (§6.9.4): file → trang → lý do
+const MARKS = {
+  0:{ 1:'Trang 1/4', 5:'đổi khổ A5 ngang', 6:'số hoá đơn đổi, Trang 1/1', 7:'Trang 1/2', 9:'Trang 1/4', 13:'đổi khổ A5 ngang', 14:'Trang 1/1' },
+  1:{ 1:'Trang 1/5' },
+  2:{ 1:'Trang 1/1', 2:'Trang 1/1', 3:'Trang 1/2' },
+};
+// segment = một giấy tờ; bundle = bộ (§6.9.7). File 2 mới có đề xuất của AI, chưa duyệt.
+const SEG0 = [
+  { id:'s1', f:0, a:1, b:4, label:'hop_dong', conf:.95, bundle:'B01' },
+  { id:'s2', f:0, a:5, b:5, label:'hoa_don', conf:.93, bundle:'B01' },
+  { id:'s3', f:0, a:6, b:6, label:'hoa_don', conf:.9, bundle:'B01' },
+  { id:'s4', f:0, a:7, b:8, label:'bb_ban_giao', conf:.91, bundle:'B01' },
+  { id:'s5', f:0, a:9, b:12, label:'hop_dong', conf:.96, bundle:'B02' },
+  { id:'s6', f:0, a:13, b:13, label:'hoa_don', conf:.92, bundle:'B02' },
+  { id:'s7', f:0, a:14, b:14, label:'bb_ban_giao', conf:.89, bundle:'B02' },
+  { id:'s8', f:1, a:1, b:5, label:'hop_dong', conf:.97, bundle:'B03' },
+  { id:'s9', f:2, a:1, b:1, label:'hoa_don', conf:.93, bundle:'B03' },
+  { id:'s10', f:2, a:2, b:2, label:'hoa_don', conf:.58, bundle:'B03', truth:'other' },
+  { id:'s11', f:2, a:3, b:4, label:'bb_ban_giao', conf:.88, bundle:'B03' },
 ];
+// mẫu bảng: mỗi loại giấy tờ một bảng con, trường là cột (U48)
+const TABLES = [
+  { label:'hop_dong', title:'Hợp đồng', fields:[['so_hop_dong','Số hợp đồng'],['ngay_ky','Ngày ký'],['ben_ban','Bên bán'],['gia_tri','Giá trị HĐ (đồng)'],['thoi_han_tt','Thời hạn thanh toán']] },
+  { label:'hoa_don', title:'Hoá đơn', fields:[['ky_hieu','Ký hiệu'],['so_hoa_don','Số hoá đơn'],['ngay_lap','Ngày lập'],['mst_ban','MST bên bán'],['tien_truoc_thue','Tiền trước thuế'],['thue_gtgt','Thuế GTGT'],['tong_tien','Tổng thanh toán']] },
+  { label:'bb_ban_giao', title:'BB bàn giao', fields:[['so_bb','Số biên bản'],['ngay_bg','Ngày bàn giao'],['can_cu_hd','Căn cứ HĐ số'],['hang_hoa','Hàng hoá'],['so_luong','Số lượng']] },
+];
+const TBL = l => TABLES.find(t => t.label === l);
+// giá trị AI theo giấy tờ: chuỗi, hoặc [giá trị, tin cậy, câu gốc, kiểu]
+const AI = {
+  s1:['012/2026/HĐMB-AP','05/03/2026','Công ty TNHH Điện máy Hoà Bình','660.000.000','30 ngày kể từ ngày nhận hàng'],
+  s2:['1C26THB','0001234','12/03/2026','0312345678','500.000.000','50.000.000','550.000.000'],
+  s3:['1C26THB','0001240',['20/03/2026',.62,'Ngày 26 tháng 03 năm 2026'],'0312345678','100.000.000','10.000.000','110.000.000'],
+  s4:['03/BBBG','15/03/2026','012/2026/HĐMB-AP','Điều hoà Daikin 2HP',['40 bộ',.9,'Lô 1: 20 bộ; Lô 2: 20 bộ','calc']],
+  s5:['031/2026/HĐ-AP','28/03/2026','Công ty CP Thiết bị Nam Việt','1.320.000.000','45 ngày'],
+  s6:['1K26TNV','0000877','02/04/2026','0108765432','1.200.000.000',['120.000.000',.66,'Tiền thuế GTGT: 12O.000.000'],'1.320.000.000'],
+  s7:['07/BB-NV','05/04/2026','031/2026/HĐ-AP','Tủ lạnh Samsung 380L','120 chiếc'],
+  s8:['045/2026/HĐMB','10/04/2026','Công ty TNHH Minh Long','385.000.000','Thanh toán 100% sau bàn giao'],
+  s9:['1C26TML','0000312','15/04/2026','0109998887','350.000.000','35.000.000','385.000.000'],
+  s11:['11/BBBG-ML','18/04/2026','045/2026/HĐMB','Máy giặt LG 9kg','50 chiếc'],
+};
 const PRESETS = [
   { id:'default', name:'Mặc định', desc:'Agent tra cây hồ sơ, đọc đúng trang rồi trả lời có trích dẫn.' },
-  { id:'tham_dinh', name:'Thẩm định phương án vay', desc:'Tập trung năng lực tài chính, nhu cầu vốn, khả năng trả nợ. Do lan.nt soạn · v4.' },
-  { id:'tsbd', name:'Kiểm tra tài sản bảo đảm', desc:'Đối chiếu hợp đồng thế chấp với biên bản định giá. Do lan.nt soạn · v2.' },
-  { id:'doi_chieu', name:'Đối chiếu số liệu giữa các file', desc:'So số tiền, ngày, mã giữa các tài liệu và chỉ ra chỗ lệch. Do hung.pv soạn · v7.' },
+  { id:'doi_chieu', name:'Đối chiếu bộ chứng từ thanh toán', desc:'So hợp đồng, hoá đơn, biên bản trong từng bộ: số HĐ, số tiền, ngày, hàng hoá. Do lan.nt soạn · v3.' },
+  { id:'ktra_hd', name:'Kiểm tra hoá đơn', desc:'MST, ký hiệu, thuế suất; tổng tiền bằng tiền trước thuế cộng thuế. Do hung.pv soạn · v5.' },
 ];
 const SHEET_TPLS = [
-  { id:'pa_vay', name:'Bảng tổng hợp phương án vay', fields:13, v:4 },
-  { id:'tsbd', name:'Bảng tài sản bảo đảm', fields:6, v:2 },
+  { id:'tt', name:'Bộ chứng từ thanh toán', tables:['hop_dong','hoa_don','bb_ban_giao'], v:2 },
+  { id:'bk_hd', name:'Bảng kê hoá đơn', tables:['hoa_don'], v:1 },
 ];
 const USERS = [
   { name:'Quản trị hệ thống', email:'admin@bank.vn', role:'admin', keys:1, limit:0, spent:96000 },
@@ -147,14 +183,7 @@ const USERS = [
 const ROLE = { admin:'Quản trị', editor:'Được đặt prompt', user:'Người dùng' };
 const ME = { admin:USERS[0], editor:USERS[1], user:USERS[3] };
 
-/* ------------------------------------------------------------ state */
-const S = {
-  role:'user', route:'case', mobileCol:'chat',
-  preset:'tham_dinh', customPrompt:'', sheetTpl:'pa_vay',
-  exports:[{ id:'e1', name:'Bảng tổng hợp phương án vay', tpl:'v4', at:'Hôm nay, 10:31', rows:13, status:'done' }],
-  openExport:'e1', values:FIELDS.map(f => f[2]), saved:FIELDS.map(f => f[2]), fromFile:new Set(),
-  sel:5, side:'edits', sheetTab:'tong_hop', dialog:null, setTab:'keys', issued:'',
-};
+/* ------------------------------------------------------------ helpers */
 const fmt = n => n.toLocaleString('vi-VN');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ic = (n, size=20, cls='', fill=false) => `<span class="material-symbols-rounded ${fill?'icon-fill ':''}${cls}" style="font-size:${size}px" aria-hidden="true">${n}</span>`;
@@ -162,16 +191,51 @@ const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase(
 const pdf = (size=18) => ic('picture_as_pdf', size, 'text-[#ea4335]', true);
 const canPrompt = () => S.role !== 'user';
 const meBudget = () => ME[S.role];
-function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2800); }
-const edits = () => S.values.map((v,i) => ({ i, v })).filter(x => norm(x.v) !== norm(FIELDS[x.i][2]));
-const unsaved = () => S.values.some((v,i) => v !== S.saved[i]);
+const clone = a => a.map(x => ({...x}));
+const col = i => String.fromCharCode(65 + i);
+const short = f => FILES[f].n.length > 22 ? FILES[f].n.slice(0, 20) + '…' : FILES[f].n;
+const pages = s => s.a === s.b ? `tr. ${s.a}` : `tr. ${s.a}–${s.b}`;
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 3200); }
+function aiCell(segId, key) {
+  const orig = SEG0.find(s => s.id === segId), cur = S.segs.find(s => s.id === segId) || orig;
+  const t = TBL(cur.label), i = t ? t.fields.findIndex(f => f[0] === key) : -1;
+  const raw = orig && orig.label === cur.label && AI[segId] && i >= 0 ? AI[segId][i] : '';
+  const [v, conf, quote, kind] = Array.isArray(raw) ? raw : [raw, .95, null, ''];
+  return { v, conf: v === '' ? 0 : conf, quote: v === '' ? '' : (quote || `${t.fields[i][1]}: ${v}`), kind: kind || '', page: cur.a + Math.max(i, 0) % (cur.b - cur.a + 1) };
+}
+const bundleOrder = segs => [...new Set(segs.slice().sort((x,y) => x.bundle.localeCompare(y.bundle)).map(s => s.bundle))];
+const sortSegs = segs => segs.slice().sort((x,y) => x.bundle.localeCompare(y.bundle) || x.f - y.f || x.a - y.a);
+const reviewedSegs = () => S.segs.filter(s => S.reviewed[s.f]);
+const unreviewed = () => FILES.map((f,i) => i).filter(i => !S.reviewed[i]);
+
+/* ------------------------------------------------------------ state */
+const S = {
+  role:'user', route:'case', mobileCol:'chat',
+  preset:'doi_chieu', customPrompt:'', sheetTpl:'tt', cfgTab:'hoa_don',
+  segs:clone(SEG0), reviewed:FILES.map(f => f.reviewed), draft:null, spSel:{ f:2, p:2 }, spFile:2,
+  pick:{ hop_dong:true, hoa_don:true, bb_ban_giao:true },
+  exports:[{ id:'e1', name:'Bộ chứng từ thanh toán', tpl:'v2', at:'Hôm qua, 16:05', tables:['hop_dong','hoa_don','bb_ban_giao'], files:[0,1], status:'done' }],
+  openExport:'e1', table:'hoa_don', values:{}, saved:{}, fromFile:new Set(),
+  sel:null, panel:null, dialog:null, setTab:'keys', issued:'', dlPick:null,
+};
+Object.keys(AI).forEach(id => TBL(SEG0.find(s => s.id === id).label).fields.forEach(([k]) => { S.values[id+'.'+k] = aiCell(id,k).v; }));
+S.saved = {...S.values};
+const curEx = () => S.exports.find(e => e.id === S.openExport);
+const exRows = (ex, label) => sortSegs(S.segs.filter(s => ex.files.includes(s.f) && s.label === label));
+const isEdited = k => { const [id, key] = k.split('.'); return norm(S.values[k] ?? '') !== norm(aiCell(id, key).v); };
+function edits() {
+  const ex = curEx(); const out = [];
+  ex.tables.forEach(l => exRows(ex, l).forEach(s => TBL(l).fields.forEach(([k], ci) => { const kk = s.id+'.'+k; if (isEdited(kk)) out.push({ kk, seg:s, key:k, ci, label:l }); })));
+  return out;
+}
+const unsaved = () => Object.keys(S.values).some(k => S.values[k] !== S.saved[k]);
 
 /* ------------------------------------------------------------ shell (same as Layout.tsx) */
 function shell(content) {
   const nav = [['folder_open','Tài liệu',false],['forum','Hỏi đáp',false],['account_tree','Hồ sơ',true]];
   return `
   <div class="proto flex flex-none flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 text-xs text-muted">
-    <b class="text-fg">Prototype U43–U46</b><span>dữ liệu mẫu</span>
+    <b class="text-fg">Prototype U43–U49</b><span>dữ liệu mẫu</span>
     <span class="flex items-center gap-1">Xem với vai trò:
       ${['user','editor','admin'].map(r => `<button data-act="role" data-v="${r}" class="chip h-6 px-2 text-xs ${S.role===r?'chip-on':''}">${ROLE[r]}</button>`).join('')}</span>
     <button data-act="notes" class="ml-auto underline">Ghi chú spec</button>
@@ -181,7 +245,7 @@ function shell(content) {
       <svg viewBox="0 0 32 32" class="size-9" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)"/><path d="M11 7.7v16.6M11 7.7h5.6c2.4 0 4 1.6 4 4.2s-1.6 4.2-4 4.2H11M11 16.1h6.3c2.8 0 4.6 1.6 4.6 4.1s-1.8 4.1-4.6 4.1H11" fill="none" stroke="var(--on-accent)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
       <span class="max-sm:hidden">BePaylot</span></a>
     <div class="flex h-12 max-w-180 min-w-0 flex-1 items-center gap-2 rounded-full bg-surface-3 px-2">
-      <span class="btn-icon">${ic('search',24)}</span><span class="text-base text-muted truncate">Tìm trong Tín dụng DN 2026</span></div>
+      <span class="btn-icon">${ic('search',24)}</span><span class="text-base text-muted truncate">Tìm trong Thanh toán</span></div>
     <div class="flex-1 max-md:hidden"></div>
     <button class="btn-icon" title="Cài đặt" data-act="settings">${ic('settings',24)}</button>
     <button class="grid size-8 flex-none place-items-center rounded-full bg-accent text-sm font-medium text-on-accent" data-act="settings" data-tab="account" title="${esc(ME[S.role].email)}">${ME[S.role].name[0]}</button>
@@ -191,16 +255,25 @@ function shell(content) {
       <button class="mt-1 mb-4 flex h-14 w-fit items-center gap-3 rounded-2xl bg-surface pr-5 pl-4 text-sm font-medium text-fg shadow-1">${ic('add',24)} Mới</button>
       ${nav.map(([i,l,on]) => `<a class="flex h-8 items-center gap-4 rounded-full px-4 text-sm ${on?'bg-accent-soft font-semibold text-on-accent-soft':'text-fg hover:bg-fg/8'}">${ic(i,20,'',on)}${l}</a>`).join('')}
       <div class="mt-4 flex items-center pr-1 pl-4"><span class="flex-1 text-xs font-medium text-muted">Knowledge base</span></div>
-      <a class="flex h-8 items-center gap-4 rounded-full bg-surface-3 px-4 text-sm font-medium">${ic('folder_shared',20,'text-accent',true)}Tín dụng DN 2026</a>
-      <a class="flex h-8 items-center gap-4 rounded-full px-4 text-sm hover:bg-fg/8">${ic('folder_shared',20,'text-muted')}Thanh toán</a>
+      <a class="flex h-8 items-center gap-4 rounded-full bg-surface-3 px-4 text-sm font-medium">${ic('folder_shared',20,'text-accent',true)}Thanh toán</a>
+      <a class="flex h-8 items-center gap-4 rounded-full px-4 text-sm hover:bg-fg/8">${ic('folder_shared',20,'text-muted')}Tín dụng DN 2026</a>
       <div class="flex-1"></div>
     </div></aside>
     <main class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface md:mr-4 md:mb-4 md:rounded-2xl">${content}</main>
   </div>`;
 }
+
 /* ------------------------------------------------------------ phương án = NotebookLM workspace */
+function splitChip(i) {
+  if (S.reviewed[i]) { const n = S.segs.filter(s => s.f === i).length; return `<span class="badge badge-ok">${ic('check',14)}${n} giấy tờ · đã duyệt</span>`; }
+  return `<span class="badge badge-warn">${ic('auto_awesome',14)}AI đề xuất · cần duyệt</span>`;
+}
 function caseView() {
-  const col = c => S.mobileCol === c ? 'flex' : 'hidden md:flex';
+  const colc = c => S.mobileCol === c ? 'flex' : 'hidden md:flex';
+  const tpl = SHEET_TPLS.find(t => t.id === S.sheetTpl);
+  const rs = reviewedSegs(), un = unreviewed();
+  const picked = tpl.tables.filter(l => S.pick[l] && rs.some(s => s.label === l));
+  const nB = bundleOrder(rs).length;
   return `
   <header class="flex min-h-16 flex-none flex-wrap items-center gap-2 px-6 pt-3 pb-2">
     <div class="min-w-0 flex-1"><h1 class="truncate text-[22px] leading-7 font-normal">${CASE.code}</h1>
@@ -211,34 +284,36 @@ function caseView() {
     ${[['sources','Nguồn'],['chat','Trò chuyện'],['studio','Studio']].map(([k,l]) => `<button data-act="mcol" data-v="${k}" class="tab flex-1 ${S.mobileCol===k?'tab-active':''}">${l}</button>`).join('')}
   </div>
   <div class="flex min-h-0 flex-1 border-t border-line">
-    <aside class="${col('sources')} w-full flex-none flex-col overflow-auto border-r border-line px-2 py-3 md:w-72">
+    <aside class="${colc('sources')} w-full flex-none flex-col overflow-auto border-r border-line px-2 py-3 md:w-72">
       <div class="flex items-center px-3 pb-2"><span class="flex-1 text-sm font-medium">Nguồn</span><button class="btn-icon btn-sm" title="Thêm nguồn">${ic('add',20)}</button></div>
+      <button class="btn btn-tonal btn-sm mx-2 mb-2" data-act="split">${ic('content_cut',18)}Tách & gom trang${un.length?` <span class="badge badge-warn">${un.length}</span>`:''}</button>
       <label class="flex h-8 items-center gap-2 rounded-full px-3 text-xs text-muted"><input type="checkbox" checked> Chọn tất cả nguồn</label>
       ${FILES.map((f,i) => `
-        <div class="mb-px">
+        <div class="mb-1">
           <div class="flex min-h-8 items-center gap-2 rounded-full py-1 pr-3 pl-1 text-sm hover:bg-fg/8">
-            <span class="btn-icon btn-sm -my-1">${ic('arrow_right',20, f.tree?'rotate-90':'')}</span>
+            <span class="btn-icon btn-sm -my-1">${ic('arrow_right',20,'rotate-90')}</span>
             ${pdf()}<span class="min-w-0 flex-1 truncate" title="${esc(f.s)}">${f.n}</span>
             <input type="checkbox" checked aria-label="Dùng nguồn ${f.n}"></div>
-          ${f.tree ? f.tree.map(([t,p]) => `<div class="flex min-h-8 items-center gap-2 rounded-full py-1 pr-3 text-sm hover:bg-fg/8" style="padding-left:44px"><span class="min-w-0 flex-1 truncate">${t}</span><span class="text-xs text-muted">${p}</span></div>`).join('') : ''}
+          <div class="py-0.5" style="padding-left:44px">${splitChip(i)}</div>
+          ${S.reviewed[i] ? S.segs.filter(s => s.f === i).map(s => `<div class="flex min-h-7 items-center gap-2 rounded-full py-0.5 pr-3 text-[13px] hover:bg-fg/8" style="padding-left:44px">${ic(LICON[s.label],16,'text-muted')}<span class="min-w-0 flex-1 truncate">${LABELS[s.label]}</span><span class="text-xs text-muted">${pages(s)}</span><span class="badge">${s.bundle}</span></div>`).join('') : ''}
         </div>`).join('')}
     </aside>
 
-    <section class="${col('chat')} min-w-0 flex-1 flex-col">
+    <section class="${colc('chat')} min-w-0 flex-1 flex-col">
       <div class="min-h-0 flex-1 overflow-auto"><div class="mx-auto flex max-w-200 flex-col gap-6 px-6 pt-5 pb-6">
         <div class="rounded-2xl bg-surface-2 p-5">
-          <div class="flex items-center gap-2 text-xs text-muted">${ic('folder_open',16)} ${CASE.code} · ${FILES.length} nguồn · ${FILES.reduce((a,f)=>a+f.p,0)} trang</div>
+          <div class="flex items-center gap-2 text-xs text-muted">${ic('folder_open',16)} ${CASE.code} · ${FILES.length} nguồn · ${FILES.reduce((a,f)=>a+f.p,0)} trang · ${bundleOrder(S.segs).length} bộ chứng từ</div>
           <h2 class="mt-2 text-[22px] leading-8">${esc(CASE.title)}</h2>
-          <p class="mt-2 text-[15px] leading-6">Hồ sơ đề nghị cấp hạn mức tín dụng 15 tỷ đồng trong 12 tháng để bổ sung vốn lưu động mua hàng điện máy. Kèm BCTC kiểm toán 2025, phương án kinh doanh 2026 và tài sản bảo đảm là QSDĐ định giá 21,4 tỷ đồng.</p>
+          <p class="mt-2 text-[15px] leading-6">Ba bộ chứng từ mua hàng điện máy: mỗi bộ gồm hợp đồng mua bán, hoá đơn GTGT và biên bản bàn giao, tổng giá trị hợp đồng 2,365 tỷ đồng. Bộ thứ ba (Minh Long) vừa tải thêm hoá đơn và biên bản.</p>
           <div class="mt-3 flex flex-wrap gap-2">
-            ${['Khả năng trả nợ từ dòng tiền 2026?','Tỷ lệ vay trên TSBĐ có đạt quy định?','Số liệu BCTC có khớp phương án?'].map(q => `<button class="chip">${q}</button>`).join('')}</div>
+            ${['Tổng hoá đơn từng bộ có khớp giá trị hợp đồng?','Biên bản bàn giao có ghi đúng số hợp đồng?','Hoá đơn nào lập trước ngày ký hợp đồng?'].map(q => `<button class="chip">${q}</button>`).join('')}</div>
         </div>
-        <div class="max-w-[80%] self-end rounded-3xl rounded-tr-md bg-surface-2 px-5 py-3 text-[15px] leading-6">Lợi nhuận sau thuế 2025 là bao nhiêu, có đủ trả lãi vay không?</div>
+        <div class="max-w-[80%] self-end rounded-3xl rounded-tr-md bg-surface-2 px-5 py-3 text-[15px] leading-6">Tổng tiền hoá đơn của bộ B01 có khớp giá trị hợp đồng không?</div>
         <div class="flex gap-4">
           <svg viewBox="0 0 24 24" class="size-7 flex-none" aria-hidden="true"><defs><linearGradient id="sp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4285f4"/><stop offset=".55" stop-color="#9b72cb"/><stop offset="1" stop-color="#d96570"/></linearGradient></defs><path d="M12 2c.6 4.8 3.2 8.4 10 10-6.8 1.6-9.4 5.2-10 10-.6-4.8-3.2-8.4-10-10 6.8-1.6 9.4-5.2 10-10z" fill="url(#sp)"/></svg>
           <div class="flex min-w-0 flex-1 flex-col gap-3 pt-1 text-[15px] leading-7">
-            <details class="rounded-2xl border border-line"><summary class="flex h-11 cursor-pointer list-none items-center gap-2 px-4 text-sm text-muted">${ic('construction',18)}<span class="flex-1">Đã dùng 3 công cụ · kb_case_toc, kb_read_pages</span>${ic('expand_more',20)}</summary></details>
-            <p>Lợi nhuận sau thuế năm 2025 là <b>6.124.800.000 đồng</b><button class="cite">02 · tr.9</button>. Với hạn mức 15 tỷ và lãi suất dự kiến 7,5%/năm, lãi vay tối đa khoảng 1,125 tỷ đồng/năm<button class="cite">03 · tr.5</button>, tức bằng khoảng 18% lợi nhuận sau thuế.</p>
+            <details class="rounded-2xl border border-line"><summary class="flex h-11 cursor-pointer list-none items-center gap-2 px-4 text-sm text-muted">${ic('construction',18)}<span class="flex-1">Đã dùng 3 công cụ · kb_list_documents, kb_read_pages</span>${ic('expand_more',20)}</summary></details>
+            <p>Có. Hai hoá đơn của bộ B01 cộng lại <b>660.000.000 đồng</b> (550.000.000<button class="cite">01 · tr.5</button> + 110.000.000<button class="cite">01 · tr.6</button>), bằng giá trị hợp đồng 012/2026/HĐMB-AP<button class="cite">01 · tr.2</button>.</p>
           </div>
         </div>
       </div></div>
@@ -255,112 +330,222 @@ function caseView() {
       </div>
     </section>
 
-    <aside class="${col('studio')} w-full flex-none flex-col overflow-auto border-l border-line px-3 py-3 md:w-80">
+    <aside class="${colc('studio')} w-full flex-none flex-col overflow-auto border-l border-line px-3 py-3 md:w-80">
       <div class="px-1 pb-3 text-sm font-medium">Studio</div>
       <div class="rounded-2xl bg-xl-soft p-4">
         <div class="flex items-start gap-3">
           <span class="grid size-10 flex-none place-items-center rounded-xl bg-surface">${ic('table_view',24,'text-xl',true)}</span>
           <div class="min-w-0 flex-1"><div class="text-sm font-medium">Xuất Excel</div>
-            <div class="truncate text-xs text-muted">${esc(SHEET_TPLS.find(t=>t.id===S.sheetTpl).name)}</div></div>
-          <button class="btn-icon btn-sm" data-act="sheetcfg" title="${canPrompt()?'Tuỳ chỉnh trường và prompt':'Chọn mẫu bảng'}">${ic(canPrompt()?'edit':'tune',18)}</button>
+            <div class="truncate text-xs text-muted">${esc(tpl.name)} · v${tpl.v}</div></div>
+          <button class="btn-icon btn-sm" data-act="sheetcfg" title="${canPrompt()?'Tuỳ chỉnh bảng con, trường và prompt':'Chọn mẫu bảng'}">${ic(canPrompt()?'edit':'tune',18)}</button>
         </div>
-        <button class="btn mt-3 w-full border-transparent bg-xl text-white hover:bg-xl hover:shadow-1" data-act="export">${ic('auto_awesome',18)}Tạo bảng từ ${FILES.length} nguồn</button>
+        <div class="mt-3 flex flex-col gap-0.5 rounded-xl bg-surface p-1.5">
+          <div class="px-2 pt-1 pb-0.5 text-xs text-muted">Chọn bảng cần tạo (mỗi loại giấy tờ một bảng)</div>
+          ${tpl.tables.map(l => { const n = rs.filter(s => s.label === l).length; return `
+            <label class="flex h-9 items-center gap-2 rounded-lg px-2 text-sm ${n?'cursor-pointer hover:bg-fg/5':'opacity-50'}">
+              <input type="checkbox" data-pick="${l}" ${S.pick[l]&&n?'checked':''} ${n?'':'disabled'}>${ic(LICON[l],18,'text-muted')}
+              <span class="flex-1">${TBL(l).title}</span><span class="text-xs text-muted">${n} giấy tờ · ${TBL(l).fields.length} cột</span></label>`; }).join('')}
+        </div>
+        ${un.length ? `
+        <div class="mt-3 flex gap-2 rounded-xl bg-warn-soft p-3 text-xs text-warn">${ic('content_cut',18)}
+          <div class="flex-1">${un.length} file chưa duyệt tách & gom (${un.map(i => esc(short(i))).join(', ')}). Bảng chỉ dùng giấy tờ đã duyệt.</div></div>
+        <button class="btn mt-2 w-full border-transparent bg-xl text-white hover:bg-xl hover:shadow-1" data-act="split">${ic('content_cut',18)}Tách & gom trang</button>`
+        : `<button class="btn mt-3 w-full border-transparent bg-xl text-white hover:bg-xl hover:shadow-1" data-act="export" ${picked.length?'':'disabled'}>${ic('auto_awesome',18)}Tạo ${picked.length} bảng từ ${nB} bộ</button>`}
         <div class="mt-2 text-xs text-muted">Trường đã duyệt được dùng lại, không bóc tách lại.</div>
       </div>
       <div class="mt-4 border-t border-line pt-3">
         <div class="px-1 pb-1 text-xs font-medium text-muted">Đã tạo</div>
-        ${S.exports.map(e => `
+        ${S.exports.map(e => { const nd = e.tables.reduce((a,l) => a + exRows(e,l).length, 0); return `
           <button data-act="openx" data-v="${e.id}" ${e.status!=='done'?'disabled':''} class="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left hover:bg-fg/5">
             ${e.status==='done' ? ic('table_view',22,'text-xl',true) : '<span class="spinner size-5"></span>'}
             <span class="min-w-0 flex-1"><span class="block truncate text-sm">${esc(e.name)}</span>
-              <span class="block truncate text-xs text-muted">${e.status==='done' ? `${e.rows} trường · mẫu ${e.tpl} · ${e.at}` : `Đang bóc tách ${e.progress}/13 trường…`}</span></span>
+              <span class="block truncate text-xs text-muted">${e.status==='done' ? `${e.tables.map(l => TBL(l).title).join(' · ')} · ${nd} giấy tờ · ${e.at}` : `Đang bóc tách bộ ${e.progress}/${e.nb}…`}</span></span>
             ${e.status==='done' && e.id===S.openExport && edits().length ? `<span class="badge badge-info">${edits().length} sửa</span>` : ''}
             ${e.status==='done' ? ic('chevron_right',20,'text-muted') : ''}
-          </button>`).join('')}
+          </button>`; }).join('')}
       </div>
     </aside>
   </div>`;
 }
 const presetLabel = () => S.preset === 'custom' ? 'Prompt tuỳ chỉnh' : 'Mẫu: ' + PRESETS.find(p => p.id === S.preset).name;
 
-/* ------------------------------------------------------------ Excel page (separate route) */
-function excelView() {
-  const ex = S.exports.find(e => e.id === S.openExport);
-  const E = edits(), changed = unsaved();
-  const rows = FIELDS.map((f,i) => {
-    const ed = norm(S.values[i]) !== norm(f[2]);
-    const cls = ed ? 'edited' : f[7];
-    return `<tr class="${S.sel===i?'sel':''}" data-row="${i}">
-      <td class="rh">${i+4}</td>
-      <td><div class="c">${esc(f[1])}</div></td>
-      <td class="val ${cls}"><input class="cell" data-cell="${i}" value="${esc(S.values[i])}" aria-label="${esc(f[1])}"></td>
-      <td class="num"><div class="c text-right">${Math.round(f[3]*100)}%</div></td>
-      <td><div class="c"><button class="cite" data-act="src" data-v="${i}">${FILES[f[4]].n.slice(0,2)} · tr.${f[5]}</button></div></td>
-      <td><div class="c">${ed ? '<span class="badge badge-info">người dùng sửa</span>' : f[7]==='calc' ? '<span class="badge badge-vlm">agent tính</span>' : f[3] < .75 ? '<span class="badge badge-warn">cần xem</span>' : '<span class="badge">AI đề xuất</span>'}</div></td></tr>`;
-  }).join('');
-  const srcRows = FIELDS.map((f,i) => `<tr><td class="rh">${i+2}</td><td><div class="c font-mono text-xs">${f[0]}</div></td><td><div class="c">${FILES[f[4]].n}</div></td><td class="num"><div class="c">${f[5]}</div></td><td><div class="c">${esc(f[6])}</div></td></tr>`).join('');
-  const f = FIELDS[S.sel];
-  const side = S.side === 'edits' ? `
-      ${E.length ? E.map(({i,v}) => `
-        <div class="rounded-xl border border-line p-3">
-          <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium">${esc(FIELDS[i][1])}</span><span class="font-mono text-[11px] text-subtle">C${i+4}</span></div>
-          <div class="mt-1 text-[13px] text-err line-through">${esc(FIELDS[i][2])}</div>
-          <div class="text-[13px] font-medium text-ok">${esc(v) || '(để trống)'}</div>
-          <div class="mt-2 flex items-center gap-2">
-            <span class="badge ${S.fromFile.has(i)?'badge-vlm':'badge-info'}">${S.fromFile.has(i)?'từ file Excel tải lên':'sửa trên trang này'}</span>
-            <span class="flex-1"></span><button class="btn btn-text btn-sm" data-act="undo" data-v="${i}">Hoàn tác</button></div>
-        </div>`).join('') : `<div class="px-2 py-6 text-center text-sm text-subtle">Chưa có ô nào khác giá trị AI.<br>Sửa trực tiếp ở cột C hoặc tải lên file .xlsx đã sửa.</div>`}
-      <p class="px-1 text-xs text-muted">Khi lưu, mỗi chỉnh sửa thành giá trị đã duyệt của trường và được ghi là <b>AI sai</b> cho mẫu "${esc(SHEET_TPLS[0].name)}" v4. Người soạn mẫu xem tỷ lệ sai theo trường để sửa prompt.</p>`
-    : `
-      <div class="text-sm font-medium">${esc(f[1])}</div>
-      <div class="flex items-center gap-2 text-xs text-muted">${pdf(16)} ${FILES[f[4]].n} · trang ${f[5]}</div>
-      <div class="relative overflow-hidden rounded-xl border border-line bg-surface-2 p-4" style="aspect-ratio:1/1.3;max-width:100%">
-        ${[...Array(14)].map((_,k) => `<div class="mb-2 h-2 rounded bg-fg/10" style="width:${55 + (k*37)%40}%"></div>`).join('')}
-        <div class="absolute inset-x-3 rounded border-2 border-[#f9ab00] bg-[#fbbc04]/35 px-2 py-1 text-[11px] text-fg" style="top:46%">${esc(f[6])}</div>
+/* ------------------------------------------------------------ Tách & gom trang (U49, route riêng) */
+function pageMock(f, p, big) {
+  const seg = SEG0.find(s => s.f === f && p >= s.a && p <= s.b);
+  const first = seg && p === seg.a, lab = seg ? (seg.truth || seg.label) : 'other';
+  const n = big ? 16 : 6;
+  return `${first ? (big ? `<div class="mb-3 text-center text-[13px] font-medium text-fg">${DOC_TITLE[lab]}</div>` : '<b style="width:70%;margin:0 auto 2px"></b>') : ''}
+    ${[...Array(n)].map((_,k) => big ? `<div class="mb-2 h-2 rounded bg-fg/10" style="width:${50 + (k*37+p*11)%45}%"></div>` : `<i style="width:${45 + (k*29+p*13)%50}%"></i>`).join('')}`;
+}
+function splitView() {
+  const D = S.draft, bl = bundleOrder(D);
+  const nDocs = D.filter(s => s.label !== 'other').length;
+  const fileSt = i => S.reviewed[i] ? '<span class="badge badge-ok">đã duyệt</span>' : '<span class="badge badge-warn">AI đề xuất</span>';
+  const segRow = (s, idx, arr) => {
+    const prev = D.filter(x => x.f === s.f && x.b === s.a - 1)[0];
+    const th = [];
+    for (let p = s.a; p <= s.b; p++) {
+      if (p > s.a) th.push(`<button class="cut ${MARKS[s.f]?.[p]?'mark':''}" data-act="cut" data-v="${s.id}:${p}" title="Tách tại đây${MARKS[s.f]?.[p]?' · dấu điểm cắt: '+MARKS[s.f][p]:''}">${ic('content_cut',16)}</button>`);
+      th.push(`<div class="thumb ${S.spSel.f===s.f&&S.spSel.p===p?'on':''}" data-act="thumb" data-v="${s.f}:${p}" title="${esc(FILES[s.f].n)} · trang ${p}">${pageMock(s.f,p,false)}<span>${p}</span></div>`);
+    }
+    const low = !S.reviewed[s.f] && s.conf < .75;
+    return `
+    <div class="flex gap-3 rounded-xl border p-2.5 ${low?'border-[#f9ab00]':'border-line'} max-sm:flex-col">
+      <div class="flex w-52 flex-none flex-col gap-1.5">
+        <div class="flex items-center gap-1.5">${ic(LICON[s.label],18,'text-muted')}
+          <select class="input h-8 min-w-0 flex-1 px-2 text-[13px]" data-slabel="${s.id}" aria-label="Loại giấy tờ">${Object.keys(LABELS).map(l => `<option value="${l}" ${s.label===l?'selected':''}>${LABELS[l]}</option>`).join('')}</select></div>
+        <div class="flex flex-wrap items-center gap-1 text-xs text-muted">${pdf(14)}<span class="truncate" title="${esc(FILES[s.f].n)}">${esc(short(s.f))}</span> · ${pages(s)}</div>
+        <div class="flex flex-wrap items-center gap-1">
+          ${S.reviewed[s.f] ? '<span class="badge">đã duyệt</span>' : low ? `<span class="badge badge-warn">AI ${Math.round(s.conf*100)}% · cần xem</span>` : `<span class="badge badge-info">AI ${Math.round(s.conf*100)}%</span>`}
+          <select class="input h-7 px-1.5 text-xs" data-smove="${s.id}" aria-label="Chuyển sang bộ">${bl.map(b => `<option value="${b}" ${s.bundle===b?'selected':''}>Bộ ${b}</option>`).join('')}<option value="new">+ Bộ mới</option></select>
+          ${prev ? `<button class="btn btn-text btn-sm h-7 px-2 text-xs" data-act="merge" data-v="${s.id}" title="Gộp với giấy tờ ngay trước trong cùng file">${ic('merge',16)}Gộp lên</button>` : ''}
+        </div>
       </div>
-      <div class="rounded-lg bg-surface-2 p-3 text-[13px]"><div class="text-xs text-muted">Câu gốc</div>${esc(f[6])}</div>
-      ${norm(f[6]).includes(norm(f[2])) ? '' : `<div class="rounded-lg bg-warn-soft p-2 text-xs text-warn">Giá trị AI không xuất hiện nguyên văn trong câu gốc.</div>`}`;
+      <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-1">${th.join('')}</div>
+    </div>`;
+  };
+  const sel = S.spSel, mark = MARKS[sel.f]?.[sel.p];
+  return `
+  <header class="flex min-h-16 flex-none flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+    <button class="btn btn-text" data-act="back" title="Quay lại phương án">${ic('arrow_back',20)}Phương án ${CASE.code}</button>
+    <span class="h-6 border-l border-line"></span>
+    <div class="min-w-0 flex-1 px-2">
+      <h1 class="flex items-center gap-2 truncate text-[22px] leading-7 font-normal">${ic('content_cut',24,'text-accent')}Tách & gom trang</h1>
+      <div class="truncate text-xs text-muted">${FILES.length} file · ${nDocs} giấy tờ · ${bl.length} bộ · Hợp đồng mở bộ mới, giấy tờ sau nối vào bộ đang mở (sửa được)</div></div>
+    <button class="btn" data-act="rerun">${ic('auto_awesome',18)}AI đề xuất lại</button>
+    <button class="btn btn-primary" data-act="confirmSplit">${ic('check',18)}Xác nhận tách & gom</button>
+  </header>
+  <div class="flex min-h-0 flex-1 border-t border-line">
+    <aside class="hidden w-60 flex-none flex-col gap-1 overflow-auto border-r border-line p-2 lg:flex">
+      <div class="px-2 pb-1 text-xs font-medium text-muted">File</div>
+      ${FILES.map((f,i) => `<button data-act="spfile" data-v="${i}" class="flex flex-col gap-1 rounded-xl px-3 py-2 text-left ${S.spFile===i?'bg-accent-soft text-on-accent-soft':'hover:bg-fg/5'}">
+        <span class="flex items-center gap-2 text-sm">${pdf(16)}<span class="min-w-0 flex-1 truncate">${f.n}</span></span>
+        <span class="flex items-center gap-2 text-xs">${fileSt(i)}<span class="text-muted">${f.p} trang</span></span></button>`).join('')}
+      <div class="mt-3 rounded-xl bg-surface-2 p-3 text-xs text-muted">
+        <div class="mb-1 font-medium text-fg">Cách AI đề xuất</div>
+        Code đánh dấu chỗ "Trang 1/n", trang trắng, đổi khổ giấy (${ic('content_cut',12,'text-warn align-[-2px]')}). Một lần gọi LLM mỗi file chỉ đọc tiêu đề trang để gán loại. Gom bộ bằng quy tắc của loại case, không gọi LLM.</div>
+    </aside>
+    <div class="min-h-0 min-w-0 flex-1 overflow-auto p-4">
+      <div class="mx-auto flex max-w-230 flex-col gap-5">
+        ${bl.map(b => { const ss = sortSegs(D.filter(s => s.bundle === b)); return `
+        <section>
+          <div class="mb-2 flex items-center gap-2"><span class="rounded-lg bg-surface-3 px-2.5 py-1 text-sm font-medium">Bộ ${b}</span>
+            <span class="text-xs text-muted">${ss.filter(s => s.label!=='other').map(s => LABELS[s.label]).join(' · ')}</span></div>
+          <div class="flex flex-col gap-2">${ss.map(segRow).join('')}</div>
+        </section>`; }).join('')}
+      </div>
+    </div>
+    <aside class="hidden w-80 flex-none flex-col gap-3 overflow-auto border-l border-line p-3 xl:flex">
+      <div class="text-sm font-medium">${esc(FILES[sel.f].n)} · trang ${sel.p}</div>
+      <div class="rounded-xl border border-line bg-surface-2 p-5" style="aspect-ratio:1/1.35">${pageMock(sel.f, sel.p, true)}
+        <div class="mt-4 text-center text-[11px] text-subtle">${mark && /Trang/.test(mark) ? mark.match(/Trang \d+\/\d+/)[0] : ''}</div></div>
+      <div class="rounded-lg bg-surface-2 p-3 text-[13px]"><div class="text-xs text-muted">Tiêu đề trên trang</div>${(() => { const s0 = SEG0.find(s => s.f===sel.f && sel.p>=s.a && sel.p<=s.b); return s0 && sel.p===s0.a ? DOC_TITLE[s0.truth||s0.label] : '<span class="text-subtle">(không có, trang tiếp theo của giấy tờ)</span>'; })()}</div>
+      ${mark ? `<div class="flex gap-2 rounded-lg bg-warn-soft p-2 text-xs text-warn">${ic('content_cut',16)}Dấu điểm cắt: ${esc(mark)}</div>` : ''}
+    </aside>
+  </div>`;
+}
+
+/* ------------------------------------------------------------ Excel page (separate route) */
+function cellState(kk) {
+  const [id, key] = kk.split('.'), a = aiCell(id, key);
+  if (isEdited(kk)) return { cls:'edited', badge:'<span class="badge badge-info">người dùng sửa</span>' };
+  if (a.v === '') return { cls:'', badge:'<span class="badge">không tìm thấy</span>' };
+  if (a.kind === 'calc') return { cls:'calc', badge:'<span class="badge badge-vlm">agent tính</span>' };
+  if (a.conf < .75) return { cls:'low', badge:'<span class="badge badge-warn">cần xem</span>' };
+  return { cls:'', badge:'<span class="badge">AI đề xuất</span>' };
+}
+function sideBody() {
+  const ex = curEx();
+  if (S.panel === 'edits') {
+    const E = edits();
+    return `${E.length ? E.map(({kk,seg,key,ci,label}) => { const r = exRows(ex,label).indexOf(seg) + 2; return `
+      <div class="rounded-xl border border-line p-3">
+        <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium">${esc(TBL(label).fields[ci][1])}</span><span class="font-mono text-[11px] text-subtle">${TBL(label).title} · ${col(ci+1)}${r}</span></div>
+        <div class="text-xs text-muted">Bộ ${seg.bundle} · ${esc(short(seg.f))} · ${pages(seg)}</div>
+        <div class="mt-1 text-[13px] text-err line-through">${esc(aiCell(seg.id,key).v) || '(trống)'}</div>
+        <div class="text-[13px] font-medium text-ok">${esc(S.values[kk]) || '(để trống)'}</div>
+        <div class="mt-2 flex items-center gap-2">
+          <span class="badge ${S.fromFile.has(kk)?'badge-vlm':'badge-info'}">${S.fromFile.has(kk)?'từ file Excel tải lên':'sửa trên trang này'}</span>
+          <span class="flex-1"></span><button class="btn btn-text btn-sm" data-act="undo" data-v="${kk}">Hoàn tác</button></div>
+      </div>`; }).join('') : `<div class="px-2 py-6 text-center text-sm text-subtle">Chưa có ô nào khác giá trị AI.<br>Sửa trực tiếp trên lưới hoặc tải lên file .xlsx đã sửa.</div>`}
+      <p class="px-1 text-xs text-muted">Khi lưu, mỗi chỉnh sửa thành giá trị đã duyệt của trường và được ghi là <b>AI sai</b> cho mẫu "${esc(ex.name)}" ${ex.tpl}, theo từng bảng và trường.</p>`;
+  }
+  if (!S.sel) return `<div class="px-2 py-6 text-center text-sm text-subtle">Chọn một ô trên lưới để xem nguồn, độ tin cậy và trạng thái.</div>`;
+  const { kk, label } = S.sel, [id, key] = kk.split('.'), seg = S.segs.find(s => s.id === id), t = TBL(label), ci = t.fields.findIndex(f => f[0] === key);
+  const a = aiCell(id, key), st = cellState(kk), r = exRows(ex,label).indexOf(seg) + 2;
+  return `
+    <div class="flex items-center gap-2"><span class="flex-1 text-sm font-medium">${esc(t.fields[ci][1])}</span><span class="font-mono text-[11px] text-subtle">${col(ci+1)}${r}</span></div>
+    <div class="flex flex-wrap gap-1"><span class="badge">Bộ ${seg.bundle}</span><span class="badge">${LABELS[label]}</span>${st.badge}</div>
+    <div class="flex items-center gap-2 text-xs text-muted">${pdf(16)} ${esc(FILES[seg.f].n)} · trang ${a.page}</div>
+    ${a.v === '' ? `<div class="rounded-lg bg-surface-2 p-3 text-[13px] text-muted">Agent không tìm thấy trường này trong giấy tờ. Ô lưu được dù không có nguồn.</div>` : `
+    <div class="flex flex-col gap-1"><div class="flex text-xs"><span class="flex-1 text-muted">Độ tin cậy</span><span class="num text-fg">${Math.round(a.conf*100)}%</span></div>
+      <div class="h-1.5 overflow-hidden rounded-full bg-surface-3"><i class="block h-full rounded-full ${a.conf<.75?'bg-warn':'bg-ok'}" style="width:${Math.round(a.conf*100)}%"></i></div></div>
+    <div class="relative overflow-hidden rounded-xl border border-line bg-surface-2 p-4" style="aspect-ratio:1/1.3;max-width:100%">
+      ${[...Array(14)].map((_,k) => `<div class="mb-2 h-2 rounded bg-fg/10" style="width:${55 + (k*37)%40}%"></div>`).join('')}
+      <div class="absolute inset-x-3 rounded border-2 border-[#f9ab00] bg-[#fbbc04]/35 px-2 py-1 text-[11px] text-fg" style="top:46%">${esc(a.quote)}</div>
+    </div>
+    <div class="rounded-lg bg-surface-2 p-3 text-[13px]"><div class="text-xs text-muted">Câu gốc</div>${esc(a.quote)}</div>
+    ${a.kind==='calc' ? `<div class="rounded-lg bg-vlm-soft p-2 text-xs text-vlm">Agent tính từ câu gốc: 20 + 20 = 40 bộ.</div>` : norm(a.quote).includes(norm(a.v)) ? '' : `<div class="rounded-lg bg-warn-soft p-2 text-xs text-warn">Giá trị AI không xuất hiện nguyên văn trong câu gốc.</div>`}`}
+    ${isEdited(kk) ? `<div class="text-xs text-muted">Giá trị AI: <s>${esc(a.v)}</s></div>` : ''}`;
+}
+function excelView() {
+  const ex = curEx(), E = edits(), changed = unsaved();
+  if (!ex.tables.includes(S.table)) S.table = ex.tables[0];
+  const t = TBL(S.table), rows = exRows(ex, S.table);
+  const nDoc = ex.tables.reduce((a,l) => a + exRows(ex,l).length, 0), nB = bundleOrder(S.segs.filter(s => ex.files.includes(s.f))).length;
+  const body = rows.map((s,ri) => {
+    const bstart = ri > 0 && rows[ri-1].bundle !== s.bundle;
+    return `<tr class="${bstart?'bstart':''} ${S.sel&&S.sel.kk.startsWith(s.id+'.')?'sel':''}">
+      <td class="rh">${ri+2}</td><td class="colA"><div class="c font-medium">${s.bundle}</div></td>
+      ${t.fields.map(([k,l]) => { const kk = s.id+'.'+k, w = Math.min(34, Math.max(12, l.length + 2, ...rows.map(r => String(S.values[r.id+'.'+k] ?? '').length + 3))); return `<td class="val ${cellState(kk).cls}" style="min-width:${w}ch"><input class="cell" data-cell="${kk}" data-label="${S.table}" value="${esc(S.values[kk] ?? '')}" aria-label="${esc(l)} · Bộ ${s.bundle}"></td>`; }).join('')}</tr>`;
+  }).join('');
+  const open = !!S.panel;
+  const rail = `
+    <aside class="flex flex-none items-center gap-1 border-line p-1.5 lg:w-12 lg:flex-col lg:border-l max-lg:border-t">
+      <button class="btn-icon" data-act="panel" data-v="src" title="Nguồn của ô">${ic('find_in_page',22)}</button>
+      <button class="btn-icon relative" data-act="panel" data-v="edits" title="Lịch sử chỉnh sửa">${ic('history',22)}${E.length?`<span class="absolute top-1 right-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] text-on-accent">${E.length}</span>`:''}</button>
+    </aside>`;
+  const panel = `
+    <aside class="flex w-full flex-none flex-col border-line lg:w-88 lg:border-l max-lg:max-h-[50%] max-lg:border-t">
+      <div class="flex flex-none items-center border-b border-line px-2">
+        <button data-act="panel" data-v="src" class="tab ${S.panel==='src'?'tab-active':''}">Nguồn${S.sel?` ô ${col(t.fields.findIndex(f => S.sel.kk.endsWith('.'+f[0]))+1)}${rows.findIndex(s => S.sel.kk.startsWith(s.id+'.'))+2}`:''}</button>
+        <button data-act="panel" data-v="edits" class="tab ${S.panel==='edits'?'tab-active':''}">Lịch sử chỉnh sửa${E.length?` (${E.length})`:''}</button>
+        <span class="flex-1"></span><button class="btn-icon btn-sm" data-act="panel" data-v="" title="Thu gọn">${ic('right_panel_close',20)}</button>
+      </div>
+      <div id="sideBody" class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">${sideBody()}</div>
+    </aside>`;
   return `
   <header class="flex min-h-16 flex-none flex-wrap items-center gap-2 px-4 pt-3 pb-2">
     <button class="btn btn-text" data-act="back" title="Quay lại phương án">${ic('arrow_back',20)}Phương án ${CASE.code}</button>
     <span class="h-6 border-l border-line"></span>
     <div class="min-w-0 flex-1 px-2">
       <h1 class="flex items-center gap-2 truncate text-[22px] leading-7 font-normal">${ic('table_view',24,'text-xl',true)}${esc(ex.name)}</h1>
-      <div class="truncate text-xs text-muted">Mẫu ${esc(SHEET_TPLS[0].name)} ${ex.tpl} · tạo ${ex.at} · ${FIELDS.length} trường từ ${FILES.length} nguồn</div></div>
+      <div class="truncate text-xs text-muted">Mẫu ${ex.tpl} · tạo ${ex.at} · ${ex.tables.length} bảng · ${nDoc} giấy tờ · ${nB} bộ</div></div>
     <button class="btn" data-act="upload">${ic('upload_file',18)}Tải lên bản đã sửa</button>
     <button class="btn" data-act="dl">${ic('download',18)}Tải .xlsx</button>
     <button class="btn btn-primary" data-act="save" ${changed?'':'disabled'}>${ic('save',18)}Lưu${E.length?` ${E.length} chỉnh sửa`:''}</button>
+    <button class="btn-icon ${open?'bg-accent-soft text-on-accent-soft':''}" data-act="panel" data-v="${open?'':'src'}" title="${open?'Ẩn':'Hiện'} nguồn & lịch sử">${ic(open?'right_panel_close':'right_panel_open',22)}</button>
   </header>
   <div class="flex min-h-0 flex-1 border-t border-line max-lg:flex-col">
     <div class="flex min-h-0 min-w-0 flex-1 flex-col">
       <div class="min-h-0 flex-1 overflow-auto">
         <table class="sheet">
-          ${S.sheetTab === 'tong_hop' ? `
-          <thead><tr><th></th><th style="width:26%">B</th><th style="width:30%">C</th><th style="width:8%">D</th><th style="width:12%">E</th><th>F</th></tr></thead>
+          <thead><tr><th class="rh"></th><th class="colA">A</th>${t.fields.map((_,i) => `<th>${col(i+1)}</th>`).join('')}</tr></thead>
           <tbody>
-            <tr><td class="rh">1</td><td colspan="5" class="hd"><div class="c">BẢNG TỔNG HỢP PHƯƠNG ÁN VAY · ${CASE.code}</div></td></tr>
-            <tr><td class="rh">2</td><td colspan="5"><div class="c text-xs text-muted">Giá trị AI chưa duyệt. Sửa ở cột C; ô khác giá trị AI được đánh dấu xanh.</div></td></tr>
-            <tr><td class="rh">3</td><td class="hd"><div class="c">Trường</div></td><td class="hd"><div class="c">Giá trị</div></td><td class="hd"><div class="c">Tin cậy</div></td><td class="hd"><div class="c">Nguồn</div></td><td class="hd"><div class="c">Trạng thái</div></td></tr>
-            ${rows}</tbody>` : `
-          <thead><tr><th></th><th>A · key</th><th>B · file</th><th>C · trang</th><th>D · câu gốc</th></tr></thead><tbody>${srcRows}</tbody>`}
+            <tr><td class="rh">1</td><td class="colA hd"><div class="c">Bộ</div></td>${t.fields.map(([,l]) => `<td class="hd"><div class="c">${esc(l)}</div></td>`).join('')}</tr>
+            ${body}</tbody>
         </table>
       </div>
-      <div class="flex flex-none gap-1 border-t border-line bg-surface-2 px-2 pt-1">
-        ${[['tong_hop','Tổng hợp'],['nguon','Nguồn']].map(([k,l]) => `<button data-act="stab" data-v="${k}" class="rounded-t-md px-4 py-1.5 text-[13px] ${S.sheetTab===k?'border-b-2 border-xl bg-surface font-medium text-xl':'text-muted'}">${l}</button>`).join('')}
+      <div class="flex flex-none flex-wrap gap-1 border-t border-line bg-surface-2 px-2 pt-1">
+        ${ex.tables.map(l => `<button data-act="stab" data-v="${l}" class="rounded-t-md px-4 py-1.5 text-[13px] ${S.table===l?'border-b-2 border-xl bg-surface font-medium text-xl':'text-muted'}">${TBL(l).title} <span class="text-xs text-muted">${exRows(ex,l).length}</span></button>`).join('')}
         <span class="flex-1"></span>
         <div class="flex flex-wrap items-center gap-3 px-2 text-[11.5px] text-muted">
           <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-accent-container"></i>người dùng sửa</span>
-          <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-warn-soft"></i>tin cậy thấp</span>
+          <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-warn-soft"></i>cần xem</span>
           <span class="flex items-center gap-1"><i class="inline-block size-3 rounded-sm bg-vlm-soft"></i>agent tính</span></div>
       </div>
     </div>
-    <aside class="flex w-full flex-none flex-col border-line lg:w-88 lg:border-l max-lg:max-h-[45%] max-lg:border-t">
-      <div class="flex flex-none border-b border-line px-2">
-        <button data-act="side" data-v="edits" class="tab ${S.side==='edits'?'tab-active':''}">Chỉnh sửa so với AI ${E.length?`(${E.length})`:''}</button>
-        <button data-act="side" data-v="src" class="tab ${S.side==='src'?'tab-active':''}">Nguồn ô C${S.sel+4}</button>
-      </div>
-      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">${side}</div>
-    </aside>
+    ${open ? panel : rail}
   </div>`;
 }
 
@@ -395,30 +580,48 @@ function chatCfgDialog() {
 function sheetCfgDialog() {
   const list = SHEET_TPLS.map(t => `<label class="flex cursor-pointer gap-3 rounded-xl border px-4 py-3 ${S.sheetTpl===t.id?'border-xl bg-xl-soft':'border-line hover:bg-fg/4'}">
       <input type="radio" name="sheetTpl" value="${t.id}" ${S.sheetTpl===t.id?'checked':''} class="mt-1">
-      <span><span class="block text-sm font-medium text-fg">${esc(t.name)}</span><span class="block text-xs">${t.fields} trường · v${t.v}</span></span></label>`).join('');
+      <span><span class="block text-sm font-medium text-fg">${esc(t.name)}</span><span class="block text-xs">${t.tables.map(l => TBL(l).title).join(' · ')} · v${t.v}</span></span></label>`).join('');
+  const tpl = SHEET_TPLS.find(t => t.id === S.sheetTpl);
+  if (!tpl.tables.includes(S.cfgTab)) S.cfgTab = tpl.tables[0];
+  const t = TBL(S.cfgTab);
   const editor = canPrompt() ? `
-    <div class="flex items-center"><h3 class="flex-1 text-sm font-medium text-fg">Trường của bảng</h3><span class="text-xs">sửa sẽ tạo v5, bản v4 vẫn chạy cho tới khi phát hành</span></div>
+    <div class="flex items-center"><h3 class="flex-1 text-sm font-medium text-fg">Bảng con theo loại giấy tờ</h3><span class="text-xs">sửa sẽ tạo v${tpl.v+1}, bản v${tpl.v} vẫn chạy cho tới khi phát hành</span></div>
+    <div class="flex flex-wrap items-center gap-1">${tpl.tables.map(l => `<button class="chip ${S.cfgTab===l?'chip-on':''}" data-act="cfgTab" data-v="${l}">${ic(LICON[l],16)}${TBL(l).title}</button>`).join('')}
+      <button class="chip">${ic('add',16)}Thêm bảng con</button></div>
     <div class="overflow-x-auto rounded-xl border border-line"><table class="w-full text-[13px]">
-      <thead><tr class="bg-surface-2 text-left text-xs"><th class="px-3 py-2 font-medium">Key</th><th class="px-3 py-2 font-medium">Nhãn cột</th><th class="px-3 py-2 font-medium">Kiểu</th><th></th></tr></thead>
-      <tbody>${FIELDS.slice(0,6).map(f => `<tr class="border-t border-line"><td class="px-3 py-1.5 font-mono text-xs text-fg">${f[0]}</td><td class="px-3 py-1.5 text-fg">${esc(f[1])}</td><td class="px-3 py-1.5">${/đồng/.test(f[1])?'money':'string'}</td><td class="pr-2 text-right"><button class="btn-icon btn-sm">${ic('drag_indicator',18)}</button></td></tr>`).join('')}
-      <tr class="border-t border-line"><td colspan="4" class="px-3 py-1.5 text-xs">… 7 trường nữa · <button class="text-accent">+ Thêm trường</button></td></tr></tbody></table></div>
-    <label class="field"><span>Prompt bóc tách</span><textarea class="input font-mono text-xs" rows="5">Bóc tách các trường dưới đây từ các nguồn của phương án. Tìm đúng trang qua cây hồ sơ, ghi bằng kb_save_fields kèm trích dẫn. Không tìm thấy thì để trống và ghi lý do. Giá trị tính (tỷ lệ, tổng) phải ghi cách tính.</textarea></label>`
-  : `<div class="flex gap-3 rounded-xl bg-surface-2 px-4 py-3 text-xs">${ic('lock',20,'text-subtle')}<div>Danh sách trường và prompt của mẫu do người được cấp quyền đặt prompt quản lý. Bạn chọn mẫu có sẵn.</div></div>`;
+      <thead><tr class="bg-surface-2 text-left text-xs"><th class="px-3 py-2 font-medium">Cột</th><th class="px-3 py-2 font-medium">Key</th><th class="px-3 py-2 font-medium">Nhãn cột</th><th class="px-3 py-2 font-medium">Kiểu</th><th></th></tr></thead>
+      <tbody>${t.fields.map(([k,l],i) => `<tr class="border-t border-line"><td class="px-3 py-1.5 font-mono text-xs">${col(i+1)}</td><td class="px-3 py-1.5 font-mono text-xs text-fg">${k}</td><td class="px-3 py-1.5 text-fg">${esc(l)}</td><td class="px-3 py-1.5">${/tien|gia_tri|thue/.test(k)?'money':/ngay/.test(k)?'date':'string'}</td><td class="pr-2 text-right"><button class="btn-icon btn-sm" title="Kéo để đổi thứ tự cột">${ic('drag_indicator',18)}</button></td></tr>`).join('')}
+      <tr class="border-t border-line"><td colspan="5" class="px-3 py-1.5 text-xs">Cột A luôn là <b>Bộ</b> · <button class="text-accent">+ Thêm trường</button></td></tr></tbody></table></div>
+    <label class="field"><span>Prompt bóc tách</span><textarea class="input font-mono text-xs" rows="4">Với mỗi giấy tờ được liệt kê (ref segment, loại, trang), bóc tách các trường còn thiếu. Đọc đúng các trang của giấy tờ, ghi bằng kb_save_fields với segment và trích dẫn. Không tìm thấy thì để trống và ghi lý do. Giá trị tính phải ghi cách tính.</textarea></label>`
+  : `<div class="flex gap-3 rounded-xl bg-surface-2 px-4 py-3 text-xs">${ic('lock',20,'text-subtle')}<div>Bảng con, trường và prompt của mẫu do người được cấp quyền đặt prompt quản lý. Bạn chọn mẫu có sẵn và chọn bảng cần tạo ở thẻ Xuất Excel.</div></div>`;
   return modal(canPrompt() ? 'Tuỳ chỉnh bảng Excel' : 'Chọn mẫu bảng Excel', 'table_view', `
     <div class="flex flex-col gap-2">${list}</div>${editor}`,
-    `<button class="btn btn-text" data-act="close">Huỷ</button>${canPrompt()?'<button class="btn" data-act="close">Lưu nháp v5</button>':''}<button class="btn btn-primary" data-act="saveSheetCfg">Dùng mẫu này</button>`, 640);
+    `<button class="btn btn-text" data-act="close">Huỷ</button>${canPrompt()?`<button class="btn" data-act="close">Lưu nháp v${tpl.v+1}</button>`:''}<button class="btn btn-primary" data-act="saveSheetCfg">Dùng mẫu này</button>`, 680);
 }
 
 function uploadDialog() {
   return modal('Tải lên bản đã sửa','upload_file', `
-    <p class="text-sm">Chọn file .xlsx đã tải từ trang này rồi sửa trong Excel. Hệ thống đọc mã ẩn trong file để biết mỗi ô là trường nào, rồi so với giá trị AI.</p>
+    <p class="text-sm">Chọn file .xlsx đã tải từ trang này rồi sửa trong Excel. Hệ thống đọc mã ẩn trong file để biết mỗi ô là trường nào của giấy tờ nào, rồi so với giá trị AI.</p>
     <div class="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-outline px-6 py-8 text-center">
       ${ic('upload_file',36,'text-subtle')}<span class="text-sm text-fg">Kéo file vào đây</span>
-      <button class="btn btn-tonal btn-sm" data-act="doUpload">${ic('science',18)}Dùng file mẫu: ${CASE.code}_tong-hop (da sua).xlsx</button></div>
+      <button class="btn btn-tonal btn-sm" data-act="doUpload">${ic('science',18)}Dùng file mẫu: ${CASE.code}_chung-tu (da sua).xlsx</button></div>
     <ul class="list-disc pl-5 text-xs">
-      <li>Ô chỉ khác định dạng (15.000.000.000 và 15000000000) không bị tính là sửa.</li>
-      <li>Dòng thêm tay hoặc file không phải xuất từ bepaylot sẽ bị bỏ qua và liệt kê lý do.</li>
+      <li>Ô chỉ khác định dạng (550.000.000 và 550000000) không bị tính là sửa.</li>
+      <li>Dòng, cột hoặc sheet thêm tay, hay file không phải xuất từ bepaylot sẽ bị bỏ qua và liệt kê lý do.</li>
       <li>Trường đã bị sửa trên web sau lúc tải file sẽ hiện là xung đột để bạn chọn.</li></ul>`, '<button class="btn btn-text" data-act="close">Huỷ</button>');
+}
+
+function dlDialog() {
+  const ex = curEx();
+  if (!S.dlPick) S.dlPick = Object.fromEntries(ex.tables.map(l => [l, true]));
+  const n = ex.tables.filter(l => S.dlPick[l]).length;
+  return modal('Tải .xlsx','download', `
+    <p class="text-sm">Mỗi bảng được chọn là một sheet: dòng 1 là tên trường, cột A là Bộ, mỗi giấy tờ một dòng. File chỉ có dữ liệu, không có cột nguồn, độ tin cậy hay trạng thái.</p>
+    <div class="flex flex-col gap-1 rounded-xl border border-line p-1.5">
+      ${ex.tables.map(l => `<label class="flex h-10 cursor-pointer items-center gap-3 rounded-lg px-2 text-sm text-fg hover:bg-fg/5"><input type="checkbox" data-dl="${l}" ${S.dlPick[l]?'checked':''}>${ic(LICON[l],18,'text-muted')}<span class="flex-1">${TBL(l).title}</span><span class="text-xs text-muted">${exRows(ex,l).length} dòng · ${TBL(l).fields.length + 1} cột</span></label>`).join('')}
+    </div>
+    <p class="text-xs">Kèm một sheet ẩn chứa mã ô để nhập lại bản đã sửa.</p>`,
+    `<button class="btn btn-text" data-act="close">Huỷ</button><button class="btn btn-primary" data-act="doDl" ${n?'':'disabled'}>${ic('download',18)}Tải ${n} sheet</button>`, 520);
 }
 
 function usageBar(label, spent, limit, reset) {
@@ -489,30 +692,39 @@ function settingsDialog() {
 function notesDialog() {
   const row = (a,b) => `<tr class="border-t border-line"><td class="px-3 py-2 align-top text-fg">${a}</td><td class="px-3 py-2 align-top">${b}</td></tr>`;
   return modal('Ghi chú spec','description', `
-    <p class="text-sm">Đã đưa vào spec.md bản 0.16: §6.9.6, §7.2–§7.8, §8.4–§8.5, §10.8, migration <code>0020</code>, lộ trình P13–P16. Màn hình bám theo frontend hiện tại: <code>Layout</code>, <code>CasePage</code>, <code>ChatPage</code>, hộp thoại Tài khoản trong <code>AppContext</code>.</p>
+    <p class="text-sm">Đã đưa vào spec.md bản 0.17: §6.9.4, §6.9.6, §6.9.7, §7.2, §7.6, §7.9, §10.7–§10.8, migration <code>0021</code>, lộ trình P17. Màn hình bám theo frontend hiện tại: <code>Layout</code>, <code>CasePage</code>, <code>ChatPage</code>.</p>
     <div class="overflow-x-auto rounded-xl border border-line"><table class="w-full text-[13px]"><tbody>
-      ${row('Phương án (U43)','<code>/cases/:id</code> đổi thành 3 cột kiểu NotebookLM: Nguồn (mục lục hiện có) · Trò chuyện (ChatPage gắn sẵn case) · Studio. Nút <b>Xuất Excel</b> nằm ở Studio, chạy task <code>case:export</code>. Kết quả nằm trong danh sách "Đã tạo".')}
-      ${row('Trang Excel (U43, U44)','Route riêng <code>/cases/:id/sheets/:sheetId</code>, có nút quay lại phương án. Bảng sửa trực tiếp được, tải .xlsx (có sheet ẩn chứa field_id), tải lên bản đã sửa. Ô khác giá trị AI được đánh dấu; lưu thì ghi field <code>source=user, confirmed</code> và bản ghi AI sai (<code>field_corrections</code>).')}
-      ${row('Mẫu prompt (U45)','Nút "Cấu hình cuộc trò chuyện" giống NotebookLM. Người dùng chọn mẫu; mục Tuỳ chỉnh và sửa trường của bảng chỉ mở cho quyền <code>prompt_editor</code>. Server trả 403 nếu user thường gửi <code>system</code>.')}
-      ${row('Key & hạn mức (U46)','Chỉ hiển thị trong Cài đặt, tab "Key & chi phí", kiểu trang Usage của ChatGPT/Claude: thanh đã dùng tháng này và hôm nay, chia theo việc. Một key LLM dùng chung cho mọi model; chi phí = token thực tế × đơn giá model trong config. Quản trị thấy tổng hệ thống, đổi key và đặt giới hạn cho từng user ở tab "Người dùng".')}
-      ${row('Phụ thuộc','U43, U44 cần P8 (<code>extracted_fields</code>, evidence, <code>kb_save_fields</code>) mới có trong spec. U45, U46 làm độc lập.')}
-    </tbody></table></div>`, closeFooter('Đóng'), 680);
+      ${row('Bảng theo loại (U47, U48)','Mẫu bảng gồm nhiều bảng con, mỗi loại giấy tờ một bảng (Hợp đồng, Hoá đơn, BB bàn giao). <b>Trường là cột</b>, mỗi giấy tờ là một dòng, cột A là <b>Bộ</b>. Chọn bảng ở thẻ Xuất Excel và khi tải .xlsx; mỗi bảng một sheet.')}
+      ${row('Nguồn & lịch sử (U47)','Không còn cột Tin cậy, Nguồn, Trạng thái và sheet Nguồn (trên trang lẫn trong .xlsx). Nguồn, độ tin cậy, lịch sử chỉnh sửa nằm ở panel phải, <b>mặc định thu gọn</b>; chỉ mở khi bấm.')}
+      ${row('Tách & gom (U49)','Route <code>/cases/:id/split</code>. Code đánh dấu điểm cắt (Trang 1/n, trang trắng, đổi khổ); <code>classify</code> chế độ <code>titles</code> gán loại (1 lần gọi LLM mỗi file); code gom bộ theo <code>bundles.opens_with</code> (Hợp đồng mở bộ mới). Người dùng sửa rồi Xác nhận (<code>PUT /cases/:id/split</code>). Bảng chỉ dùng giấy tờ đã duyệt.')}
+      ${row('Phương án (U43)','3 cột kiểu NotebookLM: Nguồn (file, trạng thái tách, giấy tờ theo bộ) · Trò chuyện · Studio. Bảng mở ở route riêng <code>/cases/:id/sheets/:sheetId</code>, có nút quay lại.')}
+      ${row('Mẫu prompt, chi phí (U45, U46)','Như bản 0.16: hộp thoại Cấu hình cuộc trò chuyện; Cài đặt → Key & chi phí.')}
+    </tbody></table></div>`, closeFooter('Đóng'), 700);
 }
 
 /* ------------------------------------------------------------ render + events */
 function render() {
-  document.getElementById('app').innerHTML = shell(S.route === 'excel' ? excelView() : caseView());
-  const D = { chatcfg:chatCfgDialog, sheetcfg:sheetCfgDialog, upload:uploadDialog, settings:settingsDialog, notes:notesDialog }[S.dialog];
+  const view = S.route === 'excel' ? excelView() : S.route === 'split' ? splitView() : caseView();
+  document.getElementById('app').innerHTML = shell(view);
+  const D = { chatcfg:chatCfgDialog, sheetcfg:sheetCfgDialog, upload:uploadDialog, dl:dlDialog, settings:settingsDialog, notes:notesDialog }[S.dialog];
   const host = document.getElementById('dlg');
   host.innerHTML = D ? D() : '';
   const m = document.getElementById('modal');
-  if (m) { m.showModal(); m.addEventListener('cancel', e => { e.preventDefault(); S.dialog = null; render(); }); }
+  if (m) { m.showModal(); m.addEventListener('cancel', e => { e.preventDefault(); S.dialog = null; S.dlPick = null; render(); }); }
 }
 function startExport() {
-  const id = 'e' + (S.exports.length + 1);
-  const ex = { id, name:SHEET_TPLS.find(t=>t.id===S.sheetTpl).name, tpl:'v4', at:'Vừa xong', rows:13, status:'running', progress:9 };
-  S.exports.unshift(ex); render(); toast('Đang tạo bảng: 9 trường đã duyệt dùng lại, 4 trường gửi agent');
-  const tick = setInterval(() => { ex.progress++; if (ex.progress >= 13) { clearInterval(tick); ex.status = 'done'; toast('Bảng đã xong. Bấm để mở.'); } render(); }, 700);
+  const tpl = SHEET_TPLS.find(t => t.id === S.sheetTpl), rs = reviewedSegs();
+  const tables = tpl.tables.filter(l => S.pick[l] && rs.some(s => s.label === l));
+  const nb = bundleOrder(rs).length;
+  const ex = { id:'e' + (S.exports.length + 1), name:tpl.name, tpl:'v' + tpl.v, at:'Vừa xong', tables, files:FILES.map((f,i) => i).filter(i => S.reviewed[i]), status:'running', progress:1, nb };
+  S.exports.unshift(ex); render(); toast(`Đang tạo ${tables.length} bảng: ô đã duyệt dùng lại, ô thiếu gửi agent mỗi bộ một lượt`);
+  const tick = setInterval(() => { ex.progress++; if (ex.progress > nb) { clearInterval(tick); ex.status = 'done'; toast('Bảng đã xong. Bấm để mở.'); } render(); }, 900);
+}
+function confirmSplit() {
+  const map = Object.fromEntries(bundleOrder(S.draft).map((b,i) => [b, 'B' + String(i + 1).padStart(2, '0')]));
+  S.draft.forEach(s => s.bundle = map[s.bundle]);
+  S.segs = S.draft; S.draft = null; S.reviewed = FILES.map(() => true); S.route = 'case';
+  toast(`Đã xác nhận: ${S.segs.filter(s => s.label !== 'other').length} giấy tờ trong ${Object.keys(map).length} bộ`);
 }
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act]'); if (!t) return;
@@ -522,36 +734,68 @@ document.addEventListener('click', e => {
     case 'notes': S.dialog = 'notes'; break;
     case 'settings': S.dialog = 'settings'; if (t.dataset.tab) S.setTab = t.dataset.tab; break;
     case 'stTab': S.setTab = v; break;
-    case 'close': S.dialog = null; break;
+    case 'close': S.dialog = null; S.dlPick = null; break;
     case 'mcol': S.mobileCol = v; break;
     case 'chatcfg': S.dialog = 'chatcfg'; break;
     case 'saveChatCfg': { const r = document.querySelector('input[name=preset]:checked'); if (r) S.preset = r.value; const ta = document.getElementById('customPrompt'); if (ta) S.customPrompt = ta.value; S.dialog = null; toast(document.getElementById('shareTpl')?.checked ? 'Đã lưu và gửi thành mẫu dùng chung (bản nháp)' : 'Đã lưu cấu hình cuộc trò chuyện'); break; }
     case 'sheetcfg': S.dialog = 'sheetcfg'; break;
+    case 'cfgTab': S.cfgTab = v; break;
     case 'saveSheetCfg': { const r = document.querySelector('input[name=sheetTpl]:checked'); if (r) S.sheetTpl = r.value; S.dialog = null; break; }
     case 'export': startExport(); return;
-    case 'openx': S.openExport = v; S.route = 'excel'; break;
-    case 'back': S.route = 'case'; if (unsaved()) toast('Còn chỉnh sửa chưa lưu, chúng vẫn được giữ trong bản nháp'); break;
-    case 'stab': S.sheetTab = v; break;
-    case 'side': S.side = v; break;
-    case 'src': S.sel = +v; S.side = 'src'; break;
-    case 'undo': S.values[+v] = FIELDS[+v][2]; S.fromFile.delete(+v); break;
+    case 'openx': S.openExport = v; S.route = 'excel'; S.sel = null; break;
+    case 'back': if (S.route === 'excel' && unsaved()) toast('Còn chỉnh sửa chưa lưu, chúng vẫn được giữ trong bản nháp'); S.route = 'case'; S.draft = null; break;
+    case 'stab': S.table = v; S.sel = null; break;
+    case 'panel': S.panel = v || null; break;
+    case 'undo': { const [id, key] = v.split('.'); S.values[v] = aiCell(id, key).v; S.fromFile.delete(v); break; }
     case 'upload': S.dialog = 'upload'; break;
-    case 'doUpload': S.values[5] = '6.124.800.000'; S.values[10] = 'QSDĐ thửa 112, tờ bản đồ 07, P. Dịch Vọng Hậu'; S.fromFile.add(5); S.fromFile.add(10); S.dialog = null; S.side = 'edits'; toast('Đã đọc file: 2 ô khác giá trị AI, 1 dòng thêm tay bị bỏ qua'); break;
-    case 'dl': toast('Tải .xlsx: sheet Tổng hợp, Nguồn và sheet ẩn chứa mã trường'); return;
-    case 'save': { const n = edits().length; S.saved = S.values.slice(); toast(`Đã lưu ${n} chỉnh sửa và ghi nhận ${n} lỗi AI cho mẫu v4`); break; }
+    case 'doUpload': S.values['s3.ngay_lap'] = '26/03/2026'; S.values['s1.thoi_han_tt'] = '30 ngày kể từ ngày nhận đủ hàng'; S.fromFile.add('s3.ngay_lap'); S.fromFile.add('s1.thoi_han_tt'); S.dialog = null; S.panel = 'edits'; toast('Đã đọc file: 2 ô khác giá trị AI, 1 dòng thêm tay bị bỏ qua'); break;
+    case 'dl': S.dialog = 'dl'; break;
+    case 'doDl': { const ex = curEx(); toast(`Tải .xlsx: ${ex.tables.filter(l => S.dlPick[l]).map(l => TBL(l).title).join(', ')} + sheet ẩn mã ô`); S.dialog = null; S.dlPick = null; break; }
+    case 'save': { const n = edits().length; S.saved = {...S.values}; toast(`Đã lưu ${n} chỉnh sửa và ghi nhận ${n} lỗi AI cho mẫu theo bảng và trường`); break; }
     case 'issue': S.issued = 'sk-bepaylot-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10); break;
     case 'saveUsers': S.dialog = null; toast('Đã lưu quyền và hạn mức'); break;
+    case 'split': {
+      S.draft = clone(S.segs); S.route = 'split';
+      const un = unreviewed(); S.spFile = un.length ? un[0] : 0;
+      const low = S.draft.filter(s => s.f === S.spFile).sort((a,b) => a.conf - b.conf)[0];
+      S.spSel = { f:S.spFile, p:low ? low.a : 1 }; break;
+    }
+    case 'spfile': S.spFile = +v; S.spSel = { f:+v, p:1 }; break;
+    case 'thumb': { const [f, p] = v.split(':').map(Number); S.spSel = { f, p }; S.spFile = f; break; }
+    case 'cut': {
+      const [id, p] = v.split(':'), i = S.draft.findIndex(s => s.id === id), s = S.draft[i];
+      S.draft.splice(i + 1, 0, { id:'n' + Date.now(), f:s.f, a:+p, b:s.b, label:s.label, conf:1, bundle:s.bundle }); s.b = +p - 1; s.conf = 1; break;
+    }
+    case 'merge': {
+      const s = S.draft.find(x => x.id === v), prev = S.draft.find(x => x.f === s.f && x.b === s.a - 1);
+      prev.b = s.b; prev.conf = 1; S.draft = S.draft.filter(x => x !== s); break;
+    }
+    case 'rerun': toast(`AI đề xuất lại cho ${FILES[S.spFile].n}: 1 lần gọi, chỉ đọc tiêu đề và dấu điểm cắt`); return;
+    case 'confirmSplit': confirmSplit(); break;
     default: return;
   }
   render();
 });
 document.addEventListener('change', e => {
-  const c = e.target.dataset && e.target.dataset.cell;
-  if (c !== undefined) { S.values[+c] = e.target.value; S.fromFile.delete(+c); S.sel = +c; render(); }
+  const d = e.target.dataset || {};
+  if (d.cell !== undefined) { S.values[d.cell] = e.target.value; S.fromFile.delete(d.cell); S.sel = { kk:d.cell, label:d.label }; render(); }
+  else if (d.pick) { S.pick[d.pick] = e.target.checked; render(); }
+  else if (d.dl) { S.dlPick[d.dl] = e.target.checked; render(); }
+  else if (d.slabel) { const s = S.draft.find(x => x.id === d.slabel); s.label = e.target.value; s.conf = 1; render(); }
+  else if (d.smove) {
+    const s = S.draft.find(x => x.id === d.smove);
+    if (e.target.value === 'new') { const max = Math.max(...S.draft.map(x => +x.bundle.slice(1))); s.bundle = 'B' + String(max + 1).padStart(2, '0'); }
+    else s.bundle = e.target.value;
+    render();
+  }
 });
 document.addEventListener('focusin', e => {
   const c = e.target.dataset && e.target.dataset.cell;
-  if (c !== undefined && S.sel !== +c) { S.sel = +c; document.querySelectorAll('.sheet tr.sel').forEach(r => r.classList.remove('sel')); e.target.closest('tr').classList.add('sel'); }
+  if (c === undefined || (S.sel && S.sel.kk === c)) return;
+  S.sel = { kk:c, label:e.target.dataset.label };
+  const pos = e.target.selectionStart;
+  render();
+  const el = document.querySelector(`[data-cell="${c}"]`); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.cell !== undefined) e.target.blur(); });
 render();

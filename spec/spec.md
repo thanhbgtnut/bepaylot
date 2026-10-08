@@ -1,11 +1,13 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.16 · Ngày: 2026-10-07 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15
+> Phiên bản: 0.17 · Ngày: 2026-10-08 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
+>
+> Thay đổi trong 0.17 (U47–U49, prototype [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) cập nhật): **bảng theo loại giấy tờ** — mẫu bảng gồm nhiều bảng, mỗi bảng ứng với một nhãn (Hợp đồng, Hoá đơn, BB bàn giao…) và có trường riêng; trường là **cột**, mỗi giấy tờ là một **dòng**, cột đầu là **Bộ**; người dùng chọn bảng nào khi tạo/xuất (§6.9.6). Trên trang bảng và trong `.xlsx` không còn cột Tin cậy, Nguồn, Trạng thái và sheet Nguồn; nguồn, độ tin cậy và lịch sử chỉnh sửa chỉ nằm ở **panel phải, mặc định thu gọn** (§7.6). **Tách & gom bộ chứng từ** (§6.9.7, §7.9): một file scan nhiều giấy tờ được tách thành segment (Classification chế độ `titles` + gợi ý điểm cắt bằng code từ số trang), code gom segment thành **bộ** theo `bundles.opens_with` của loại case (Hợp đồng mở bộ mới, giấy tờ sau nối vào bộ đang mở); người dùng duyệt trên màn **Tách & gom** và bảng chỉ dùng kết quả đã duyệt. Field gắn với segment (`extracted_fields.segment_id`), `kb_save_fields` nhận `segment`. Migration `0021`, API §10.7–§10.8, lộ trình P17.
 >
 > Thay đổi trong 0.16 (U43–U46, giao diện chốt theo prototype [`spec/prototype/u43-u46.html`](prototype/u43-u46.html)): **trang phương án kiểu NotebookLM** (Nguồn · Trò chuyện · Studio, §7.2). Nút **Xuất Excel** ở Studio tạo **bảng tổng hợp** của case từ một mẫu và dùng lại field đã duyệt (§6.9.6); bảng mở thành **trang riêng** có nút quay lại phương án (§7.6). Ô người dùng sửa được so với giá trị AI; khi lưu thành field đã duyệt và bản ghi **AI sai** để thống kê theo trường; nhập lại được file `.xlsx` đã sửa (§6.9.6). **Vai trò** `admin` / `prompt_editor` / `user` và **mẫu prompt** có phiên bản; user thường không đặt được prompt (§8.4). **Chi phí** ghi cho mọi lần gọi model qua một key LLM dùng chung, giới hạn theo user, chỉ hiển thị ở Cài đặt → Key & chi phí (§7.8, §8.5). Migration `0020`, API §10.8, lộ trình P13–P16. Bảng cần P8 (§6.9) làm trước.
 >
@@ -90,7 +92,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6; **phần API key tự phục vụ bị thay bởi U46**: user thường dùng key do admin cấp | §10.6, §9.2 (migration `0015`), §11, frontend `/login` |
 | U29 | Viết **tài liệu vận hành** trong thư mục `spec` để bàn giao cho đội vận hành OPN: vận hành từng tính năng và các kiểm tra trạng thái dịch vụ | còn hiệu lực | [`spec/van-hanh.md`](van-hanh.md), `spec/van-hanh/healthcheck.sh`, `spec/van-hanh/kiem-tra.sql` |
 | U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0019`), §10.7 |
-| U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực | §4.2, §6.2, §6.9.4, §10.7, §11 |
+| U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực; **được bổ sung bởi U49**: segment do người dùng duyệt ở màn Tách & gom là đơn vị dòng của bảng; phân loại vẫn chỉ chạy khi được yêu cầu (hoặc `auto` với `titles`) | §4.2, §6.2, §6.9.4, §6.9.7, §10.7, §11 |
 | U32 | Rà lại spec, sửa các chỗ mâu thuẫn theo phương án tối ưu: giá trị hiện tại của field chỉ là bản đã xác nhận; evidence liên file không bị mồ côi; công duyệt giữ qua reparse; wiki và field không lệch âm thầm; bbox ô bảng ổn định với VLM; reparse ghi đúng hành vi; có service sở hữu mô hình dữ liệu | còn hiệu lực trừ ý "wiki và field không lệch âm thầm" (không còn wiki, U35); **làm rõ U20, U30** | §3.1, §4.7, §5.6, §5.10, §6.9, §8.2, §9.2 |
 | U33 | **Xoá các phần mâu thuẫn** còn sót trong spec và **ghi lại lưu ý** để code rõ ràng | còn hiệu lực | toàn bộ; §16 (Lưu ý khi code) |
 | U34 | bepaylot phải theo **đúng giải pháp vectorless** (PageIndex + LLM Wiki): sửa toàn bộ spec cho đúng | **được thay bởi U35** | — |
@@ -102,10 +104,13 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U41 | Flow load tree theo case rồi lấy trang để trả lời **không phụ thuộc vào prompt**: agent **tự lên plan** dựa trên các tool được cung cấp; flow người dùng đưa chỉ là ví dụ (few-shot), agent phải tổng quát hơn. Lấy tree theo case phải **đúng mã case**, không lấy của case khác; case vẫn do client chọn khi mở phiên như hiện tại | còn hiệu lực; làm rõ U40, giữ U21/§8.1 (phạm vi cứng theo `sessions.case_id`) | §0 (bản 0.15), §6.6, §8.1, §8.2 |
 | U42 | Hãy **load tree vào context**, vì tree đã theo case rồi (kết quả chạy thử: agent ít đi đường cây → node → trang, chủ yếu tìm từ khoá) | còn hiệu lực; bổ sung U40/U41: cây là dữ liệu của phiên, không phải flow | §0 (bản 0.15), §8.1, §8.2 |
 | U38 | Kiểm tra lại `turboocr_vlm`: **không gọi VLM theo từng layout nữa**, chỉ đi qua **2 bước**: (1) bóc tách bằng TurboOCR (text, box của từng trang); (2) gọi VLM **theo từng trang** để lấy markdown. Khi gọi VLM phải **gửi kèm text của TurboOCR** để verify kết quả markdown (coi như context của VLM), vì markdown trả ra có thể **sai hoặc thiếu** | còn hiệu lực; **thay U36 (1)**, thay phần "cắt ảnh theo vùng" của U17 | §0 (bản 0.14), §5.9, §11, §16 |
-| U43 | **Xuất Excel từ các file hồ sơ phương án, gom lại.** Làm **giống NotebookLM**: nút xuất Excel nằm trong phương án; khi mở, bảng hiển thị thành **một trang riêng** có nút **quay lại phương án**. Giao diện phải khớp UI hiện tại; giao diện đã chốt theo prototype | còn hiệu lực; làm rõ U23 | §6.9.6, §7.2, §7.6, §10.8, [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) |
-| U44 | **Nhận diện thông tin người dùng chỉnh sửa** trên Excel ở những chỗ AI quét ra sai | còn hiệu lực | §6.9.6, §7.6, §10.8 |
+| U43 | **Xuất Excel từ các file hồ sơ phương án, gom lại.** Làm **giống NotebookLM**: nút xuất Excel nằm trong phương án; khi mở, bảng hiển thị thành **một trang riêng** có nút **quay lại phương án**. Giao diện phải khớp UI hiện tại; giao diện đã chốt theo prototype | còn hiệu lực; làm rõ U23; **được làm rõ bởi U47, U48**: bảng theo loại giấy tờ (trường là cột, giấy tờ là dòng), chọn bảng khi xuất | §6.9.6, §7.2, §7.6, §10.8, [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) |
+| U44 | **Nhận diện thông tin người dùng chỉnh sửa** trên Excel ở những chỗ AI quét ra sai | còn hiệu lực; **được làm rõ bởi U47**: lịch sử chỉnh sửa nằm ở panel phải, mặc định thu gọn | §6.9.6, §7.6, §10.8 |
 | U45 | **Phân quyền:** một số user được đặt prompt, đa số user dùng prompt có sẵn | còn hiệu lực; bổ sung U20 | §7.7, §8.4, §10.5, §10.8 |
 | U46 | **Giới hạn tiền cho từng user**, kiểm soát bằng key cấp cho user. (Làm rõ: **một key LLM cho mọi model**, key quản lý ở **Cài đặt**; chi phí đã dùng **chỉ hiển thị ở phần setup key trong Cài đặt**, giống trang Usage của ChatGPT/Claude) | còn hiệu lực; thay phần API key tự phục vụ của U28 cho user thường | §7.8, §8.5, §10.6, §10.8, §11 |
+| U47 | Hiển thị dữ liệu theo dạng **trường là cột, dữ liệu là dòng**. Nguồn dữ liệu và lịch sử chỉnh sửa **ẩn, chỉ hiện khi người dùng bấm hiển thị**; thanh nguồn dữ liệu **mặc định ẩn, thu gọn**. Cột nguồn, độ tin cậy… trong Excel **bỏ đi**, chỉ giữ ở tab ẩn bên phải | còn hiệu lực; làm rõ U43, U44 (bỏ sheet Nguồn và các cột Tin cậy/Nguồn/Trạng thái của bản 0.16) | §6.9.6, §7.6, [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) |
+| U48 | Bóc tách dữ liệu từ **bộ chứng từ có nhiều loại** (ví dụ Hợp đồng, Hoá đơn, BB bàn giao scan liền nhau ⇒ tính là **1 bộ**). Các loại giấy tờ có trường khác nhau, nên **các bảng khác nhau phải chọn được khi xuất Excel**. (Làm rõ: **mỗi loại giấy tờ một bảng**, mỗi dòng là một giấy tờ, cột đầu là Bộ) | còn hiệu lực; làm rõ U43; dùng Classification của U30/U31 làm đơn vị dòng | §6.9.4, §6.9.6, §6.9.7, §7.2, §7.6 |
+| U49 | Người dùng upload **một file có nhiều loại giấy tờ** thì cần **tách (split) và gom (group) trang** lại. (Chốt theo gợi ý: **AI đề xuất + người duyệt** — code tìm điểm cắt, một lần gọi LLM mỗi file chỉ đọc tiêu đề để gán loại, code gom bộ theo quy tắc của loại case, người dùng sửa trên màn Tách & gom; bảng chỉ dùng kết quả đã duyệt) | còn hiệu lực; bổ sung U31 (phân loại vẫn không tự chạy trên mọi trang, vẫn không là bộ lọc search) | §6.9.4, §6.9.7, §7.9, §10.7 |
 
 ## 1. Yêu cầu chung
 
@@ -127,10 +132,12 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R15 | Dữ liệu graph/wiki cũ bị xoá | Migration `0014` xoá graph bản 0.4; `0016` xoá LLM Wiki (§9.2) |
 | R16 | Người dùng tự đăng ký / đăng nhập trên web, có OIDC, xác thực như WeKnora | `service/auth`: bcrypt + JWT access/refresh lưu vết trong `auth_tokens`, OIDC authorization code (backend đổi code, state ký + cookie nonce); middleware Bearer JWT → API key; trang `/login` hai cột; API key tự phục vụ (§10.6) |
 | R17 | Dữ liệu hồ sơ liên kết được theo cây Case → Document → Page → Element/Table, cộng Extracted Field và Classification có evidence | Bảng `page_tables`, `table_cells`, `extracted_fields`, `document_segments`, `evidence_spans` (migration `0019`); mọi evidence giải được ra `(document, page, line/element/ô, bbox)`; API trả cả cây (§6.9, §10.7) |
-| R18 | Xuất bảng Excel gom từ các file của phương án, kiểu NotebookLM | Trang phương án ba cột Nguồn · Trò chuyện · Studio; task `case:sheet` dựng bảng từ mẫu, dùng lại field đã duyệt; trang bảng riêng có nút quay lại, tải `.xlsx` (§6.9.6, §7.2, §7.6) |
+| R18 | Xuất bảng Excel gom từ các file của phương án, kiểu NotebookLM | Trang phương án ba cột Nguồn · Trò chuyện · Studio; task `case:sheet` dựng bảng từ mẫu, dùng lại field đã duyệt; trang bảng riêng có nút quay lại, tải `.xlsx`; từ U48 mỗi loại giấy tờ một bảng, chọn bảng khi tạo (§6.9.6, §7.2, §7.6) |
 | R19 | Biết chỗ người dùng sửa giá trị AI | Ô so với giá trị AI theo quy tắc so khớp §6.9.2; lưu thành field `source=user, confirmed` + `field_corrections`; nhập lại `.xlsx` nhận diện ô nhờ sheet ẩn `_bp` (§6.9.6) |
 | R20 | Chỉ một số user đặt được prompt | `users.role` (`admin` / `prompt_editor` / `user`); mẫu prompt có phiên bản; `system` từ user thường → `403` (§8.4) |
 | R21 | Chi phí theo user, một key LLM chung | `usage_events` ghi mọi lần gọi model ở hook của agent; đơn giá `usage.prices`; giới hạn tháng theo user; hiển thị ở Cài đặt (§7.8, §8.5) |
+| R22 | Bảng theo loại giấy tờ, trường là cột | Mẫu bảng gồm nhiều bảng theo nhãn; mỗi dòng là một segment đã duyệt (một giấy tờ), cột đầu là Bộ; chọn bảng khi tạo/xuất; nguồn, tin cậy, lịch sử chỉ ở panel phải thu gọn (§6.9.6, §7.6) |
+| R23 | Tách file nhiều giấy tờ và gom thành bộ | Segment do Classification `titles` đề xuất + điểm cắt theo số trang (code); bộ gom bằng code theo `bundles.opens_with`; người dùng duyệt ở màn Tách & gom, lưu thành segment `source=user` + `case_bundles` (§6.9.4, §6.9.7, §7.9) |
 
 ### 1.1 Tech stack
 
@@ -219,7 +226,7 @@ internal/
       cases/           case và loại case (§6.2); tên `cases` vì `case` là từ khoá Go
       document/        Module 1: điều phối parse (split → page → assemble)
       index/           Module 2: section, cây mục lục + tóm tắt (PageIndex), mục lục hồ sơ, FTS, metadata, search duyệt cây (§6.5–6.6)
-      docmodel/        Module 2: mô hình dữ liệu hồ sơ (§6.9) — Extracted Field, Classification (`document:classify`), evidence; bộ giải/kiểm `citation_id` dùng chung (interface `CitationResolver`)
+      docmodel/        Module 2: mô hình dữ liệu hồ sơ (§6.9) — Extracted Field, Classification (`document:classify`), tách & gom bộ chứng từ (§6.9.7), evidence; bộ giải/kiểm `citation_id` dùng chung (interface `CitationResolver`)
       templates/       mẫu prompt `chat`/`sheet` có phiên bản, quyền đặt prompt (§8.4)
       sheets/          bảng tổng hợp của case: task `case:sheet`, chỉnh sửa, nhập/xuất `.xlsx` (§6.9.6)
       usage/           ghi và tổng hợp chi phí, kiểm giới hạn (§8.5)
@@ -957,7 +964,8 @@ flowchart LR
 | **Mục lục hồ sơ** | case | thẻ các file + nhánh đầu của cây, **dựng bằng code** khi đọc, không lưu riêng, không gọi LLM (§6.6) |
 | **Chỉ mục full-text** trang gốc, section | file | gợi ý từ khoá, tìm trong file theo trang (§6.7) |
 | **Classification** (`document_segments`, tuỳ chọn) | dải trang của file | nhãn loại giấy tờ gợi ý, có confidence + evidence; chỉ có khi loại case bật tự động hoặc có người yêu cầu (§6.9.4) |
-| **Extracted Field** (`extracted_fields`) | file | giá trị đã bóc tách, có confidence + evidence; do agent hoặc người dùng ghi (§6.9.3) |
+| **Extracted Field** (`extracted_fields`) | file, hoặc một segment của file | giá trị đã bóc tách, có confidence + evidence; do agent hoặc người dùng ghi (§6.9.3) |
+| **Bộ chứng từ** (`case_bundles`, tuỳ chọn) | case | nhóm các segment đã duyệt thành bộ (Hợp đồng + Hoá đơn + BB bàn giao…), chỉ do người dùng xác nhận; là đơn vị cột Bộ của bảng (§6.9.7) |
 
 ### 6.2 Case (bộ hồ sơ theo một mã) — phạm vi cứng
 
@@ -997,8 +1005,11 @@ classification:                 # §6.9.4; tuỳ chọn. Không có labels thì 
     - { name: hoa_don,      title: Hoá đơn GTGT }
     - { name: hop_dong,     title: Hợp đồng }
     - { name: uy_nhiem_chi, title: Uỷ nhiệm chi, description: "lệnh chuyển tiền do ngân hàng xác nhận" }
+    - { name: bb_ban_giao,  title: Biên bản bàn giao }
     - { name: cccd,         title: Căn cước công dân }
   min_confidence: 0.6           # dưới ngưỡng thì đoạn mang nhãn unknown
+bundles:                        # §6.9.7; tuỳ chọn. Không có thì mọi segment cùng một bộ
+  opens_with: [hop_dong]        # segment mang nhãn này mở bộ mới; segment khác nối vào bộ đang mở
 ```
 
 ```yaml
@@ -1011,7 +1022,7 @@ parser: { engine: turboocr }
 
 - Case không ghi loại thì thuộc loại `default`: mã tự do, chỉ `trim`, không kiểm tra thêm.
 - Engine parse được chọn theo thứ tự: `engine` khi reparse → loại case → config KB → `parser.default_engine` (§5.9).
-- Loại case **không** chứa workflow, prompt, danh sách trường cần bóc tách hay danh sách rule. Những thứ đó là nội dung người dùng gửi cho agent (§8.1). Danh sách nhãn `classification.labels` là dữ liệu (tập giá trị cho phép), không phải workflow.
+- Loại case **không** chứa workflow, prompt, danh sách trường cần bóc tách hay danh sách rule. Những thứ đó là nội dung người dùng gửi cho agent (§8.1). Danh sách nhãn `classification.labels` là dữ liệu (tập giá trị cho phép), không phải workflow; `bundles.opens_with` cũng chỉ là tập nhãn, dùng cho đề xuất gom bộ bằng code (§6.9.7).
 - Đổi file YAML chỉ ảnh hưởng case và upload **mới**. Case cũ giữ `case_type`; mã đã lưu không bị chuẩn hoá lại.
 
 **Vòng đời:** `open` → `closed` → xoá.
@@ -1250,10 +1261,11 @@ Case                                   cases
       │    │    └── Line               page_lines (…, line_no, block_no): text, quad, bbox, confidence
       │    └── Table                   page_tables (…, block_no) — element type=table (§5.10)
       │         └── Cell               table_cells (…, block_no, row_no, col_no): text, bbox, confidence, line_nos
-      ├── Extracted Field              extracted_fields (document_id): key, value, confidence, status
+      ├── Extracted Field              extracted_fields (document_id, segment_id?): key, value, confidence, status
       │    └── evidence[]              evidence_spans (owner=field) → page + line/element/ô + bbox + quote
       └── Classification               document_segments (document_id): page_start..page_end, label, confidence
-           └── evidence[]              evidence_spans (owner=segment)
+           ├── evidence[]              evidence_spans (owner=segment)
+           └── Bộ chứng từ             case_bundles (case_id) ← document_segments.bundle_id (§6.9.7)
 ```
 
 | Nút | Khoá | Liên kết lên cha | Ghi chú |
@@ -1268,6 +1280,7 @@ Case                                   cases
 | Cell | `(document_id, page_no, block_no, row_no, col_no)` | FK `page_tables` | `line_nos[]` trỏ về line |
 | Extracted Field | `extracted_fields.id` | `document_id` (FK) + `case_id` | §6.9.3 |
 | Classification | `document_segments.id` | `document_id` (FK) + `case_id` | §6.9.4 |
+| Bộ chứng từ | `case_bundles.id` | `case_id` (không FK); segment trỏ lên qua `bundle_id` | §6.9.7; một bộ có thể gồm segment của nhiều file |
 | Evidence | `evidence_spans.id` | `(owner_type, owner_id)` | trỏ xuống page/line/element/ô, §6.9.2 |
 
 - Page, element, line, table, cell luôn là của `gen` hiện tại của document (`documents.gen`); khoá của chúng không có `gen`. Reparse toàn bộ ghi đè dữ liệu của file, và trong lúc đó file không search được (§9.2).
@@ -1312,6 +1325,7 @@ Không có bước pipeline tự bóc tách field (xem Q21).
 | Trường | Ý nghĩa |
 |---|---|
 | `key` | tên trường do người dùng/agent đặt, `snake_case` (ví dụ `so_hop_dong`, `so_tien`) |
+| `segment_id` | segment (một giấy tờ trong file, §6.9.4) mà field thuộc về; NULL là field của cả file. File gộp hai hoá đơn có hai bộ field `so_hoa_don` khác `segment_id` |
 | `ord` | thứ tự khi một trường có nhiều giá trị (mỗi hàng của danh sách là một field), mặc định 0 |
 | `value` | JSON: string, number, bool, date (`YYYY-MM-DD`), hoặc object/array nhỏ |
 | `value_type` | `string \| number \| money \| date \| bool \| json`; `value_text` là dạng chuỗi để tìm |
@@ -1321,7 +1335,8 @@ Không có bước pipeline tự bóc tách field (xem Q21).
 | `source`, `session_id`, `created_by` | truy vết ai/phiên nào ghi |
 
 **Vòng đời**
-- Ghi field mới cho cùng `(document_id, key, ord)` thì field `proposed` đang có chuyển `superseded`, và field mới trỏ về nó qua `supersedes`. Lịch sử của một trường là chuỗi `supersedes`. Việc ghi khoá các dòng của `(document_id, key, ord)` (`SELECT … FOR UPDATE`); DB có unique index riêng phần cho `proposed` và cho `confirmed`, nên mỗi trường có tối đa một field ở mỗi trạng thái đó.
+- Một **trường** là bộ `(document_id, segment_id, key, ord)` (`segment_id` NULL so như một giá trị). Ghi field mới cho cùng trường thì field `proposed` đang có chuyển `superseded`, và field mới trỏ về nó qua `supersedes`. Lịch sử của một trường là chuỗi `supersedes`. Việc ghi khoá các dòng của trường (`SELECT … FOR UPDATE`); DB có unique index riêng phần cho `proposed` và cho `confirmed`, nên mỗi trường có tối đa một field ở mỗi trạng thái đó.
+- `segment_id` phải là segment `active` của cùng document. Segment bị thay khi người dùng duyệt lại (§6.9.7) chuyển `stale` chứ không bị xoá, nên field của nó vẫn đọc được nhưng không vào bảng mới.
 - Người dùng `confirm` → `confirmed` (confidence = 1, ghi `reviewed_by`, `reviewed_at`); field `confirmed` cũ của cùng trường chuyển `superseded`. Agent ghi đè field `confirmed` thì field mới vẫn `proposed` và field cũ **giữ** `confirmed` cho tới khi người dùng chọn.
 - **Giá trị hiện tại của một trường chỉ là field `confirmed`.** Field `proposed` là đề xuất chưa duyệt: API và tool trả nó ở mục riêng, gắn cờ `unreviewed`, và không bao giờ coi nó là giá trị hiện tại (cùng lý do Q17: kết luận chưa kiểm không vào lớp dữ liệu dùng chung). Phiên agent sau đọc được đề xuất cũ nhưng biết đó là chưa duyệt.
 - Field có `value_matched=false` (giá trị suy ra: tổng, quy đổi) phải có `note` nêu cách tính; thiếu `note` thì `kb_save_fields` từ chối field đó.
@@ -1341,9 +1356,16 @@ Không có bước pipeline tự bóc tách field (xem Q21).
 
 Agent không có tool chạy phân loại.
 
+**Dấu điểm cắt (code, không gọi LLM, U49).** File scan liền nhiều giấy tờ thường có tín hiệu rẻ ở đầu mỗi giấy tờ. Khi `classify.page_marks` bật, code đánh dấu các trang:
+- số trang **về lại 1**: dòng ở header/footer khớp `Trang 1/n`, `1/n`, `- 1 -`, `Page 1 of n` (trang trước đó có số > 1 hoặc không có);
+- **trang trắng** (`is_blank`) nằm giữa hai trang có nội dung (tờ phân cách khi scan);
+- **kích thước hoặc hướng trang đổi** so với trang trước (A4 dọc → A5 ngang của hoá đơn).
+
+Dấu được gửi kèm đầu vào dạng `[p5] ✂ trang về 1 (Trang 1/2)`; LLM dùng nó như tiêu đề để quyết định chỗ bắt đầu segment. Dấu không tự tạo segment: nếu LLM không mở segment ở đó, màn Tách & gom (§7.9) vẫn hiện dấu kéo để người dùng cắt.
+
 | Chế độ | Đầu vào gửi LLM | Khi nào |
 |---|---|---|
-| `titles` (mặc định) | chỉ **tiêu đề**: tối đa `classify.titles_per_page` element `title`/`heading` mỗi trang, dạng `[p<trang>:L<dòng>] text`, cộng tiêu đề node của cây mục lục kèm khoảng trang (không có tóm tắt). Trang không có tiêu đề không được gửi | tự động (`auto: true`) hoặc gọi API |
+| `titles` (mặc định) | chỉ **tiêu đề**: tối đa `classify.titles_per_page` element `title`/`heading` mỗi trang, dạng `[p<trang>:L<dòng>] text`, cộng tiêu đề node của cây mục lục kèm khoảng trang (không có tóm tắt), cộng **dấu điểm cắt** do code tìm (dưới bảng). Trang 1 và trang có dấu nhưng không có element tiêu đề gửi dòng đầu tiên thay tiêu đề (scan thường không có layout tiêu đề); trang khác không có tiêu đề không được gửi | tự động (`auto: true`) hoặc gọi API |
 | `pages` | như `titles`, cộng tối đa `classify.lines_per_page` dòng đầu của **mọi** trang. File lớn hơn `classify.doc_token_budget` thì rơi về `titles` | chỉ khi gọi API với `mode=pages` |
 
 **Task `document:classify`** (pool `enrich`, không chặn search, 1 lần gọi LLM mỗi file)
@@ -1352,7 +1374,7 @@ Agent không có tool chạy phân loại.
 3. **Kiểm (code):** nhãn phải có trong tập; khoảng trang nằm trong file, không chồng nhau (chồng thì cắt theo thứ tự confidence); mỗi `at` phải là dòng có thật **trong đầu vào đã gửi** (ở `titles`: một dòng tiêu đề), quote lấy nguyên văn dòng gốc; segment không còn evidence hợp lệ thì bỏ. `confidence < min_confidence` thì nhãn thành `unknown` (giữ nhãn LLM đề xuất ở `proposed_label`).
 4. **Ghi (một transaction):** các segment `source=pipeline` của `gen` hiện tại được thay; segment `source=user` giữ nguyên. Mỗi segment ghi `mode`. Đặt `classify_status=done` (LLM lỗi hết retry thì `failed`, document vẫn bình thường).
 
-**Người dùng sửa.** `PUT /documents/:id/classification` thay toàn bộ segment bằng danh sách do người dùng đưa (`source=user`, confidence 1, evidence tuỳ chọn). Khi chạy lại `document:classify`, segment `source=user` được giữ và LLM chỉ phân loại các trang chưa có segment của người dùng.
+**Người dùng sửa.** `PUT /documents/:id/classification` (hoặc `PUT /cases/:id/split` cho cả case, §6.9.7) thay toàn bộ segment bằng danh sách do người dùng đưa (`source=user`, confidence 1, evidence tuỳ chọn). Segment có cùng dải trang và nhãn với một segment `source=user` đang có thì **giữ id** (chỉ đổi `bundle_id`); segment bị thay chuyển `stale`, không xoá, để field gắn với nó (§6.9.3) còn đọc được. Khi chạy lại `document:classify`, segment `source=user` được giữ và LLM chỉ phân loại các trang chưa có segment của người dùng.
 
 **Reparse.** `gen` mới: segment của `gen` cũ chuyển `stale`. Task chỉ chạy lại khi loại case bật `auto` (chế độ `titles`) hoặc `gen` cũ đã có segment `source=pipeline` (chạy lại đúng `mode` đã dùng); nếu không, document về `classify_status=none`. Segment `source=user` được giữ và cập nhật `gen` nếu các trang vẫn tồn tại; evidence của nó được đối chiếu lại (không khớp → segment giữ nhưng `needs_review=true`). Reparse theo trang: kiểm lại evidence trên các trang đó như §6.9.2.
 
@@ -1363,6 +1385,7 @@ Agent không có tool chạy phân loại.
 **Dùng ở đâu** — chỉ để hiển thị và gợi ý, không để lọc:
 - `kb_list_documents` và `kb_page_overview` trả segment (nhãn, trang, confidence) để agent tự quyết định đọc trang nào (vẫn qua `page_from`/`page_to`).
 - UI hiển thị dải nhãn trên trình xem file, bấm vào mở evidence.
+- **Bảng theo loại giấy tờ** (§6.9.6) và **bộ chứng từ** (§6.9.7) chỉ dùng segment `source=user`, tức kết quả người dùng đã duyệt ở màn Tách & gom. Segment `source=pipeline` chỉ là đề xuất hiện trên màn đó; nhãn do LLM đoán không bao giờ tự quyết dòng nào vào bảng nào.
 - **Không** có tham số lọc theo nhãn ở `kb_search` hay `POST /search`; nhãn không vào mục lục hồ sơ, cây hay thẻ tài liệu. Muốn lọc cứng theo loại giấy tờ thì dùng metadata do người dùng gán (§6.3), không dùng nhãn do LLM đoán.
 
 #### 6.9.5 Đọc cả cây
@@ -1392,41 +1415,65 @@ Agent không có tool chạy phân loại.
 }
 ```
 
-#### 6.9.6 Bảng tổng hợp của phương án (sheet, U43, U44)
+#### 6.9.6 Bảng tổng hợp của phương án (sheet, U43, U44, U47, U48)
 
-Bảng tổng hợp gom các trường của **cả case** (nhiều file) vào một bảng để đọc, sửa và tải về `.xlsx`. Bảng không phải nguồn dữ liệu riêng: mỗi dòng trỏ về một Extracted Field (§6.9.3), nên sửa trên bảng chính là duyệt field.
+Bảng tổng hợp gom các trường của **cả case** (nhiều file) để đọc, sửa và tải về `.xlsx`. Bảng không phải nguồn dữ liệu riêng: mỗi ô trỏ về một Extracted Field (§6.9.3), nên sửa trên bảng chính là duyệt field.
 
-**Mẫu bảng.** Bảng luôn dựng từ một mẫu `kind=sheet` (§8.4): danh sách trường `[{key, label, value_type}]` theo thứ tự dòng, cộng prompt bóc tách. User thường chỉ chọn mẫu đã phát hành; `prompt_editor` sửa trường và prompt (tạo phiên bản mới).
+**Hình dạng (U47, U48).** Một bảng tổng hợp gồm **nhiều bảng con, mỗi loại giấy tờ một bảng** (Hợp đồng, Hoá đơn, BB bàn giao…), vì mỗi loại có trường khác nhau. Trong mỗi bảng con:
+- **trường là cột**, theo thứ tự trong mẫu;
+- **mỗi dòng là một giấy tờ**, tức một segment đã duyệt có nhãn của bảng (§6.9.4); dòng xếp theo bộ rồi theo thứ tự trong cây hồ sơ;
+- cột đầu là **Bộ** (`B01`, `B02`…, §6.9.7), để nối các bảng con với nhau. Bảng con không có nhãn (mẫu cũ, hoặc loại case không phân loại) có một dòng cho mỗi file và cột đầu là tên file.
 
-**Tạo bảng** (`POST /cases/:id/sheets`, task `case:sheet`, pool `index`, queue `index_interactive`):
-1. Ghi `case_sheets` (`status=pending`, `template_id`, `template_version` đang phát hành, `created_by`).
-2. Trường nào case đã có field `confirmed` thì dùng lại, **không gọi LLM**. Các trường còn lại là trường thiếu.
-3. Có trường thiếu thì chạy agent một lượt, không có người chat: session ẩn gắn case, `user_id` là người tạo bảng (chi phí tính cho người đó, §8.5). Tin nhắn gồm body của mẫu và danh sách trường thiếu. Agent ghi bằng `kb_save_fields` như §8.2 (field `proposed`, có evidence). Số lần gọi model bị chặn bởi cơ chế ngân sách sẵn có của agent.
-4. Chụp bảng vào `case_sheets.rows`, mỗi dòng `{key, label, value_type, field_id, ai_field_id, ai_value_text, note}`. `ai_field_id` là field do agent ghi (nếu có); `field_id` là field hiện tại (`confirmed` nếu có, nếu không thì `proposed` mới nhất). Trường không tìm được để trống, kèm `note` agent trả về.
-5. Đặt `status=done`. Nếu lỗi thì `failed`, phần đã ghi vẫn giữ. Tiến độ (`filled/total`) đẩy qua SSE để Studio hiện "Đang bóc tách 9/13 trường".
+Bảng **không có** cột Tin cậy, Nguồn hay Trạng thái. Nguồn, độ tin cậy, trạng thái AI và lịch sử chỉnh sửa của ô chỉ hiện ở panel phải của trang bảng, khi người dùng mở (§7.6).
+
+**Mẫu bảng.** Bảng luôn dựng từ một mẫu `kind=sheet` (§8.4). Phiên bản mẫu gồm prompt bóc tách và `tables: [{label, title, fields: [{key, label, value_type}]}]`; `label` là một nhãn của `classification.labels` (rỗng = mỗi file một dòng). User thường chỉ chọn mẫu đã phát hành; `prompt_editor` sửa bảng con, trường và prompt (tạo phiên bản mới).
+
+**Điều kiện.** Bảng con có `label` cần các file của case đã được **duyệt tách & gom** (§6.9.7). Còn file chưa duyệt thì `POST /cases/:id/sheets` trả `409 split_not_reviewed` kèm danh sách file; Studio hiện nút mở màn Tách & gom (§7.9). File đang xử lý không chặn: bảng chụp các file đã duyệt, file sau cần tạo bảng mới.
+
+**Tạo bảng** (`POST /cases/:id/sheets`, body `{template_id, tables: [label…]}`, task `case:sheet`, pool `index`, queue `index_interactive`). Người dùng **chọn bảng con** nào cần tạo; mặc định là mọi bảng con có ít nhất một giấy tờ.
+1. Ghi `case_sheets` (`status=pending`, `template_id`, `template_version` đang phát hành, `tables` đã chọn, `created_by`).
+2. Lập danh sách ô: với mỗi bảng con đã chọn, mỗi segment `source=user`, `active` mang nhãn đó, mỗi trường của bảng con. Ô nào đã có field `confirmed` cho `(segment, key)` thì dùng lại, **không gọi LLM**. Các ô còn lại là ô thiếu.
+3. Có ô thiếu thì chạy agent **mỗi bộ một lượt** (ít context, tiến độ theo bộ), không có người chat: session ẩn gắn case, `user_id` là người tạo bảng (chi phí tính cho người đó, §8.5). Tin nhắn gồm body của mẫu và, với mỗi giấy tờ của bộ, ref segment (`d2.s3`), loại, file, khoảng trang và các trường thiếu. Agent ghi bằng `kb_save_fields` với `segment` (§8.2; field `proposed`, có evidence). Số lần gọi model mỗi lượt bị chặn bởi cơ chế ngân sách sẵn có của agent.
+4. Chụp bảng vào `case_sheets.rows`: mỗi dòng `{table, bundle, segment_id, document_id, pages, cells: {key: {field_id, ai_field_id, ai_value_text, note}}}`. `ai_field_id` là field do agent ghi (nếu có); `field_id` là field hiện tại (`confirmed` nếu có, nếu không thì `proposed` mới nhất). Ô không tìm được để trống, kèm `note` agent trả về.
+5. Đặt `status=done`. Nếu lỗi thì `failed`, phần đã ghi vẫn giữ. Tiến độ (`filled/total` ô, và bộ đang chạy) đẩy qua SSE để Studio hiện "Đang bóc tách bộ 2/3 · 31/48 ô".
 
 Một case có **nhiều bảng**: mỗi lần bấm tạo là một bảng mới trong danh sách "Đã tạo" của Studio, bảng cũ giữ nguyên dòng đã chụp. `case:delete` xoá bảng của case.
 
-**Ô người dùng sửa.** Mỗi dòng so giá trị hiện tại với `ai_value_text` theo quy tắc so khớp chung của §6.9.2: so không dấu, số so theo chữ số, nên `15.000.000.000` khớp `15000000000`. Khác nhau thì ô là **người dùng sửa**. Field có `value_matched=false` kèm `note` cách tính hiện nhãn "agent tính". Confidence dưới `sheets.low_confidence` hiện nhãn "cần xem".
+**Ô người dùng sửa.** Mỗi ô so giá trị hiện tại với `ai_value_text` theo quy tắc so khớp chung của §6.9.2: so không dấu, số so theo chữ số, nên `15.000.000.000` khớp `15000000000`. Khác nhau thì ô là **người dùng sửa** (tô xanh, có tam giác ở góc). Field có `value_matched=false` kèm `note` cách tính là "agent tính"; confidence dưới `sheets.low_confidence` là "cần xem". Hai trạng thái này chỉ hiện bằng màu ô trên trang và trong panel Nguồn, không thành cột.
 
-**Lưu** (`POST /sheets/:id/edits`, body `{edits: [{key, value, origin: page|xlsx, document_id?}]}`), một transaction cho mọi ô:
-- Tạo field `source=user, status=confirmed` (§6.9.3) trên document của field đang trỏ, `supersedes` field cũ. Evidence được chép từ field AI, vì người dùng sửa giá trị chứ không đổi nguồn. Dòng chưa có field nào (agent không tìm được) phải gửi kèm `document_id` (file người dùng chọn ở tab Nguồn của trang bảng); thiếu thì ô đó trả `422`.
-- Nếu giá trị khác giá trị AI thì ghi `field_corrections` (sheet, mẫu và phiên bản, `key`, field AI, field mới, giá trị AI, giá trị người dùng, `origin`, người sửa). Sửa lại đúng giá trị AI thì không ghi correction mới, và correction trước đó của cùng bảng và `key` được đánh `reverted`.
-- Cập nhật `case_sheets.rows[*].field_id`.
+**Lưu** (`POST /sheets/:id/edits`, body `{edits: [{table, segment_id, key, value, origin: page|xlsx}]}`; bảng con không nhãn gửi `document_id` thay `segment_id`), một transaction cho mọi ô:
+- Tạo field `source=user, status=confirmed` (§6.9.3) trên document và segment của dòng, `supersedes` field cũ. Evidence được chép từ field AI, vì người dùng sửa giá trị chứ không đổi nguồn. Ô chưa có field nào vẫn lưu được vì dòng đã biết segment; field đó không có evidence ("không có nguồn").
+- Nếu giá trị khác giá trị AI thì ghi `field_corrections` (sheet, mẫu và phiên bản, `label`, `key`, `segment_id`, field AI, field mới, giá trị AI, giá trị người dùng, `origin`, người sửa). Sửa lại đúng giá trị AI thì không ghi correction mới, và correction trước đó của cùng bảng, segment và `key` được đánh `reverted`.
+- Cập nhật `case_sheets.rows[*].cells[key].field_id`.
 
-**Tải `.xlsx`** (`GET /sheets/:id/xlsx`). File được dựng khi tải bằng `excelize`, không lưu S3, gồm:
-- sheet **Tổng hợp**: Trường, Giá trị, Tin cậy, Nguồn (`file · tr.`), Trạng thái; tô màu như trang bảng;
-- sheet **Nguồn**: `key`, file, trang, câu gốc;
-- sheet ẩn **`_bp`** (veryHidden, có khoá): `sheet_id`, và với mỗi dòng: ô, `key`, `field_id`, giá trị lúc tải.
+**Tải `.xlsx`** (`GET /sheets/:id/xlsx?tables=hop_dong,hoa_don`; mặc định mọi bảng con của bảng). File được dựng khi tải bằng `excelize`, không lưu S3, gồm:
+- **mỗi bảng con một sheet**, tên sheet là `title` của bảng con: dòng 1 là nhãn trường, cột A là Bộ, mỗi giấy tờ một dòng. Chỉ có dữ liệu: không có cột tin cậy, nguồn, trạng thái, không tô màu, không comment, không sheet Nguồn;
+- sheet ẩn **`_bp`** (veryHidden, có khoá): `sheet_id`, và với mỗi ô dữ liệu: sheet, ô, `label`, `segment_id`, `key`, `field_id`, giá trị lúc tải.
 
 **Nhập lại** (`POST /sheets/:id/import`, multipart) chỉ đọc file, không ghi gì:
 1. File không có `_bp`, hoặc `sheet_id` khác bảng này → `422`.
-2. Mỗi ô có `key` trong `_bp` được so (sau chuẩn hoá) với giá trị lúc tải. Bằng nhau thì bỏ qua; khác thì thành một chỉnh sửa `origin=xlsx`. Nếu field hiện tại đã đổi so với lúc tải (đã có người sửa trên web) thì ô là `conflict`, người dùng chọn giữ bản nào.
-3. Dòng hoặc ô không có `key` (thêm tay) được đưa vào `ignored` kèm lý do; server không đoán ánh xạ.
+2. Mỗi ô có trong `_bp` được so (sau chuẩn hoá) với giá trị lúc tải. Bằng nhau thì bỏ qua; khác thì thành một chỉnh sửa `origin=xlsx`. Nếu field hiện tại đã đổi so với lúc tải (đã có người sửa trên web) thì ô là `conflict`, người dùng chọn giữ bản nào.
+3. Dòng, cột hoặc sheet không có trong `_bp` (thêm tay, đổi tên sheet) được đưa vào `ignored` kèm lý do; server không đoán ánh xạ.
 
-Kết quả (`edits`, `conflicts`, `ignored`) đổ vào panel "Chỉnh sửa so với AI" của trang bảng. Chỉ khi người dùng bấm **Lưu** mới gọi `POST /sheets/:id/edits` như trên.
+Kết quả (`edits`, `conflicts`, `ignored`) đổ vào tab "Lịch sử chỉnh sửa" của panel phải trang bảng (panel tự mở sau khi nhập). Chỉ khi người dùng bấm **Lưu** mới gọi `POST /sheets/:id/edits` như trên.
 
-**Thống kê AI sai.** `GET /templates/:id/corrections` trả số liệu theo `key` và `template_version`: số bảng có trường đó, số lần bị sửa (không tính `reverted`), tỷ lệ, và vài ví dụ "AI → người sửa". Chỉ `prompt_editor` và `admin` xem được, dùng để sửa prompt của mẫu.
+**Thống kê AI sai.** `GET /templates/:id/corrections` trả số liệu theo `(label, key)` và `template_version`: số giấy tờ có trường đó, số lần bị sửa (không tính `reverted`), tỷ lệ, và vài ví dụ "AI → người sửa". Chỉ `prompt_editor` và `admin` xem được, dùng để sửa prompt của mẫu.
+
+#### 6.9.7 Bộ chứng từ: tách và gom trang (U48, U49)
+
+**Bài toán.** Chi nhánh scan liền một xấp giấy (Hợp đồng 4 trang, Hoá đơn 1 trang, BB bàn giao 2 trang, rồi Hợp đồng tiếp theo…) thành một file. Để bảng có mỗi giấy tờ một dòng và biết giấy tờ nào thuộc bộ nào, file phải được **tách** thành segment (§6.9.4) và các segment được **gom** thành bộ. Một bộ có thể gồm segment của nhiều file (Hợp đồng upload riêng, Hoá đơn + BB scan chung).
+
+**Cách làm: AI đề xuất, người duyệt.**
+1. **Tách (đề xuất).** `POST /cases/:id/classify` (mặc định `titles`, §6.9.4) cho các file chưa có segment: một lần gọi LLM mỗi file, chỉ đọc tiêu đề và dấu điểm cắt (trang về 1, trang trắng, đổi khổ giấy). File khó (scan không có tiêu đề rõ) người dùng chạy lại với `mode=pages`. Không có bước nào gửi ảnh trang cho LLM.
+2. **Gom (đề xuất, code, không gọi LLM).** Đi theo thứ tự cây hồ sơ (file rồi trang): segment mang nhãn trong `bundles.opens_with` của loại case mở **bộ mới**; segment khác nối vào bộ đang mở; segment trước bộ đầu tiên mở một bộ riêng. Segment `other` và `unknown` vẫn thuộc bộ đang mở nhưng không vào bảng nào. Loại case không có `bundles` thì mọi segment cùng một bộ.
+3. **Duyệt.** Màn Tách & gom (§7.9) hiện đề xuất: người dùng kéo điểm cắt, đổi nhãn, gộp hoặc tách segment, chuyển segment sang bộ khác hoặc bộ mới. Bấm **Xác nhận** gọi `PUT /cases/:id/split`.
+4. **Ghi** (một transaction): với mỗi file trong request, thay segment bằng segment `source=user` (giữ id nếu dải trang và nhãn không đổi, §6.9.4); thay `case_bundles` của case (`seq` theo thứ tự, mã `B01`, `B02`…; bộ còn segment giữ id); đặt `documents.split_reviewed_at/by`. Mọi trang của file phải nằm trong đúng một segment (trang không thuộc giấy tờ nào mang nhãn `other`), thiếu thì `422`.
+
+**Trạng thái của file** (tính khi đọc): `none` (chưa có segment), `proposed` (chỉ có segment `pipeline`), `reviewed` (có `split_reviewed_at` và không segment `active` nào `needs_review`). Thêm file vào case không đổi các file đã duyệt; file mới ở `none`/`proposed` cho tới khi được duyệt, và các segment của nó được đề xuất nối vào bộ cuối hoặc mở bộ mới như bước 2.
+
+**Reparse.** Segment `source=user` được giữ như §6.9.4; nếu trang đổi và evidence không còn khớp thì `needs_review=true`, file quay về `proposed` cho tới khi duyệt lại. Bộ không đổi.
+
+**Không là bộ lọc.** Bộ và segment chỉ dùng cho bảng và hiển thị. Search, cây, mục lục hồ sơ và tool agent không lọc theo bộ hay nhãn (§6.1, §16.3); `kb_list_documents` chỉ trả segment kèm ref và mã bộ để agent tham khảo.
 
 ---
 
@@ -1444,14 +1491,16 @@ Route `/cases/:caseId` của `frontend/` thay bố cục hai cột hiện tại 
 - **Cột trái, Nguồn** (`w-72`): các file của case; mỗi file mở ra cây mục lục (node, khoảng trang) như hiện nay.
   - Checkbox chọn nguồn cho chat, mặc định chọn tất cả. Bỏ chọn file nào thì gửi `document_ids` giới hạn trong case, không bao giờ ra ngoài case.
   - File đang xử lý hiện mờ kèm trạng thái; nút "+" tải thêm file vào case.
+  - Mỗi file có chip trạng thái tách (§6.9.7): `chưa tách`, `AI đề xuất · cần duyệt`, hoặc `n giấy tờ · đã duyệt`. File đã duyệt mở ra thêm danh sách giấy tờ (nhãn, khoảng trang, bộ) bên cạnh cây mục lục. Nút **Tách & gom trang** ở đầu cột mở màn §7.9.
 - **Cột giữa, Trò chuyện**:
   - Thẻ tổng quan của case: tiêu đề, số nguồn và số trang, tóm tắt ghép từ thẻ tài liệu, các câu hỏi gợi ý.
   - Hội thoại của phiên agent gắn case, dùng chung thành phần với `ChatPage` (bong bóng, nhóm công cụ, nhãn trích dẫn).
   - Trên ô nhập có chip **mẫu prompt đang dùng**; bấm vào mở hộp thoại Cấu hình cuộc trò chuyện (§7.7).
   - Trang mở phiên gần nhất của case. Trang `/chat` vẫn giữ để xem lịch sử nhiều phiên.
 - **Cột phải, Studio** (`w-80`):
-  - Thẻ **Xuất Excel**: tên mẫu bảng đang chọn; nút bút (hoặc tune với user thường) mở hộp thoại mẫu bảng (§7.7); nút "Tạo bảng từ N nguồn".
-  - Danh sách **Đã tạo**: tên bảng, số trường, phiên bản mẫu, thời gian. Bảng đang chạy có spinner và tiến độ; bảng có chỉnh sửa hiện nhãn "n sửa". Bấm vào mở trang bảng (§7.6).
+  - Thẻ **Xuất Excel**: tên mẫu bảng đang chọn; nút bút (hoặc tune với user thường) mở hộp thoại mẫu bảng (§7.7); danh sách **bảng con** của mẫu dạng checkbox, mỗi dòng có tên bảng, số giấy tờ đã duyệt mang nhãn đó và số trường (bảng con chưa có giấy tờ nào bị tắt); nút "Tạo n bảng từ m bộ".
+  - Còn file chưa duyệt tách & gom thì thẻ hiện cảnh báo "k file chưa duyệt tách" và nút **Tách & gom trang** (§7.9) thay cho nút tạo bảng.
+  - Danh sách **Đã tạo**: tên bảng, các bảng con, số giấy tờ, phiên bản mẫu, thời gian. Bảng đang chạy có spinner và tiến độ theo bộ; bảng có chỉnh sửa hiện nhãn "n sửa". Bấm vào mở trang bảng (§7.6).
 - **Màn hẹp**: ba cột chuyển thành ba tab Nguồn · Trò chuyện · Studio.
 
 Nhãn Classification và field của từng file vẫn xem ở trình xem tài liệu (`/documents/:id`). Field của cả case xem và sửa ở trang bảng.
@@ -1472,23 +1521,27 @@ Nhãn Classification và field của từng file vẫn xem ở trình xem tài l
 
 - SSE `GET /documents/:id/events` (§10.2) cập nhật trạng thái từng file; mục lục nối thêm nhánh của file vào cuối cây hồ sơ ngay khi `index:tree` xong, các nhánh khác không đổi.
 
-### 7.6 Trang bảng (U43, U44)
+### 7.6 Trang bảng (U43, U44, U47)
 
 Route riêng `/cases/:caseId/sheets/:sheetId`, chiếm cả panel nội dung.
 
 - **Header**:
   - nút **"← Phương án <mã>"** quay về trang phương án, giữ cột hoặc tab đang mở;
-  - tên bảng, mẫu và phiên bản, thời gian tạo, số trường và số nguồn;
-  - các nút **Tải lên bản đã sửa**, **Tải .xlsx**, **Lưu n chỉnh sửa** (tắt khi chưa có thay đổi).
-- **Lưới kiểu bảng tính**:
-  - các cột: số dòng; B Trường; C Giá trị (sửa trực tiếp, Enter để xác nhận); D Tin cậy; E Nguồn (nhãn trích dẫn `file · tr.n`); F Trạng thái (`AI đề xuất`, `cần xem`, `agent tính`, `người dùng sửa`);
-  - màu ô: xanh là người dùng sửa (có tam giác ở góc), vàng là tin cậy thấp, tím là agent tính;
-  - thanh sheet dưới cùng có hai sheet **Tổng hợp** và **Nguồn**, kèm chú giải màu.
-- **Panel phải**, hai tab:
-  - **Chỉnh sửa so với AI (n)**: mỗi chỉnh sửa gồm trường, ô, giá trị AI gạch ngang và giá trị mới, nguồn chỉnh sửa (sửa trên trang, từ file Excel tải lên, hoặc xung đột), nút Hoàn tác.
-  - **Nguồn ô Cn**: ảnh trang gốc tô vùng evidence, câu gốc, và cảnh báo khi giá trị AI không có nguyên văn trong câu gốc.
+  - tên bảng, mẫu và phiên bản, thời gian tạo, số bảng con, số giấy tờ và số bộ;
+  - các nút **Tải lên bản đã sửa**, **Tải .xlsx** (hộp thoại chọn bảng con cần tải, mặc định tất cả), **Lưu n chỉnh sửa** (tắt khi chưa có thay đổi), và nút bật/tắt panel phải (**Nguồn & lịch sử**).
+- **Lưới kiểu bảng tính** (U47: trường là cột, dữ liệu là dòng):
+  - mỗi bảng con là một **sheet** ở thanh dưới cùng (Hợp đồng · Hoá đơn · BB bàn giao), kèm số dòng;
+  - cột: số dòng; A **Bộ**; B, C, … là các trường của bảng con, tiêu đề cột là nhãn trường. Ô sửa trực tiếp, Enter để xác nhận. **Không có** cột Tin cậy, Nguồn, Trạng thái;
+  - dòng của cùng một bộ liền nhau, có vạch ngăn giữa hai bộ;
+  - màu ô: xanh là người dùng sửa (có tam giác ở góc), vàng là cần xem (tin cậy thấp), tím là agent tính; chú giải màu nằm ở thanh sheet;
+  - cột Bộ và cột trường đầu tiên được ghim khi cuộn ngang.
+- **Panel phải "Nguồn & lịch sử"** — **mặc định thu gọn** thành một dải icon hẹp; chỉ mở khi người dùng bấm (nút trên header, icon trên dải, hoặc phím tắt). Panel nhớ trạng thái mở/đóng theo người dùng. Hai tab:
+  - **Nguồn**: của ô đang chọn — trường, giấy tờ (bộ, file, khoảng trang), ảnh trang gốc tô vùng evidence, câu gốc, **độ tin cậy**, trạng thái (`AI đề xuất`, `cần xem`, `agent tính`, `người dùng sửa`, `không có nguồn`), cảnh báo khi giá trị AI không có nguyên văn trong câu gốc;
+  - **Lịch sử chỉnh sửa (n)**: mỗi chỉnh sửa gồm bảng con, bộ, trường, ô, giá trị AI gạch ngang và giá trị mới, nguồn chỉnh sửa (sửa trên trang, từ file Excel tải lên, hoặc xung đột), nút Hoàn tác.
+  - Chọn ô **không** tự mở panel; panel đang mở thì tab Nguồn đổi theo ô.
 - Rời trang khi còn chỉnh sửa chưa lưu: chỉnh sửa được giữ làm nháp ở client (theo `sheetId`) và có toast báo.
-- **Tải lên bản đã sửa**: hộp thoại kéo-thả file `.xlsx`. Kết quả nhập (§6.9.6) đổ vào panel chỉnh sửa; chưa ghi gì cho tới khi bấm Lưu.
+- **Tải lên bản đã sửa**: hộp thoại kéo-thả file `.xlsx`. Kết quả nhập (§6.9.6) đổ vào tab Lịch sử chỉnh sửa (panel tự mở); chưa ghi gì cho tới khi bấm Lưu.
+- Màn hẹp: panel mở thành sheet dưới đáy màn hình, vẫn mặc định đóng.
 
 ### 7.7 Cấu hình cuộc trò chuyện và mẫu bảng (U45)
 
@@ -1497,8 +1550,8 @@ Route riêng `/cases/:caseId/sheets/:sheetId`, chiếm cả panel nội dung.
   - Mục **Tuỳ chỉnh** (ô nhập prompt và lựa chọn "Lưu thành mẫu dùng chung") chỉ hiện cho `prompt_editor` và `admin`.
   - Với `user`, mục này bị khoá kèm câu giải thích; câu hỏi trong khung chat vẫn gửi tự do.
 - **Mẫu bảng Excel** (nút trên thẻ Xuất Excel):
-  - `user` chỉ chọn mẫu `kind=sheet` đã phát hành.
-  - `prompt_editor` và `admin` thấy thêm bảng trường (key, nhãn, kiểu; kéo đổi thứ tự; thêm trường) và prompt bóc tách. Sửa là lưu nháp một phiên bản mới; bản đang phát hành vẫn chạy cho tới khi phát hành bản mới.
+  - `user` chỉ chọn mẫu `kind=sheet` đã phát hành (tên, số bảng con, phiên bản).
+  - `prompt_editor` và `admin` thấy thêm các **bảng con** của mẫu, mỗi bảng con một tab theo nhãn (Hợp đồng, Hoá đơn, BB bàn giao, thêm bảng con chọn từ `classification.labels`), trong đó là bảng trường (key, nhãn cột, kiểu; kéo đổi thứ tự cột; thêm trường) và prompt bóc tách. Sửa là lưu nháp một phiên bản mới; bản đang phát hành vẫn chạy cho tới khi phát hành bản mới.
 
 ### 7.8 Cài đặt: key và chi phí (U46)
 
@@ -1512,6 +1565,21 @@ Hộp thoại **Cài đặt** thay hộp thoại "Tài khoản" hiện tại và
 - **Máy chủ**: như hiện nay.
 
 Chi phí **chỉ hiển thị ở đây**: không có widget ở sidebar, không có banner trong chat hay Studio. Khi vượt giới hạn, lỗi `402` hiện như mọi lỗi API khác (toast, hoặc notice trong lượt chat).
+
+### 7.9 Tách & gom trang (U49)
+
+Route `/cases/:caseId/split` (mở từ cột Nguồn hoặc thẻ Xuất Excel), chiếm cả panel nội dung, có nút **"← Phương án <mã>"** như trang bảng.
+
+- **Header**: số file, số giấy tờ, số bộ; nút **AI đề xuất lại** (chạy `POST /cases/:id/classify` cho file đang chọn; menu phụ "Đọc cả nội dung trang" = `mode=pages`, ghi rõ tốn hơn); nút **Xác nhận tách & gom** (gọi `PUT /cases/:id/split`).
+- **Cột trái**: các file của case kèm trạng thái `chưa tách` / `AI đề xuất` / `đã duyệt` (§6.9.7). Chọn file thì giữa cuộn tới các trang của file.
+- **Giữa — dải bộ**: các bộ theo thứ tự (`Bộ B01`, `Bộ B02`…). Trong mỗi bộ, mỗi giấy tờ là một hàng gồm:
+  - ô chọn **loại** (nhãn của loại case, `Khác`), độ tin cậy của đề xuất (nhãn `cần xem` khi dưới ngưỡng), tên file và khoảng trang;
+  - dải **ảnh thu nhỏ** các trang (`/documents/:id/pages/:n/image`), dấu điểm cắt do code tìm (§6.9.4) hiện là biểu tượng ✂ nhạt giữa hai trang;
+  - giữa hai trang bấm **✂ Tách tại đây**; ở đầu hàng có **Gộp với giấy tờ trên**; menu **Chuyển sang bộ…** (bộ có sẵn hoặc **Bộ mới**).
+  - Trang chưa thuộc giấy tờ nào nằm ở hàng "Chưa phân loại"; phải gán loại (hoặc `Khác`) trước khi xác nhận.
+- **Cột phải**: ảnh lớn của trang đang trỏ, các dòng tiêu đề và dấu điểm cắt của trang (để người dùng hiểu vì sao AI cắt ở đó).
+- Thay đổi chỉ nằm ở client cho tới khi bấm Xác nhận. Xác nhận xong quay về nơi mở màn này; thẻ Xuất Excel cập nhật số giấy tờ của từng bảng con.
+- Màn này không gọi LLM, trừ khi bấm AI đề xuất lại.
 
 ---
 
@@ -1545,7 +1613,7 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 |---|---|---|
 | `kb_case_toc` | `metadata?`, `expand?` (ID ngắn, ví dụ `d3`) | cây của case (§6.6 bước 2; bản không lọc đã có sẵn trong `<case_tree>` của prompt, U42): mỗi file một dòng (thẻ tài liệu, số trang, metadata) kèm **nguyên cây** khi tổng vừa `search.tree_token_budget`, vượt thì nhánh cấp đầu; `expand` trả phần bị lược; `document_ids` ánh xạ `d<n>` → `document_id`. Là điểm vào của luồng hỏi đáp |
 | `kb_search` | `query, document_ids?, metadata?, page_from?, page_to?, top_k?` | **chỉ full-text** (mode `keyword`, U40): dòng chứa đúng từ cần tìm có `citation_id`, trang, `node` (ID node sâu nhất chứa trang trên cây của file) và `section`; chỉ trong case của session |
-| `kb_list_documents` | `metadata?, status?, limit?` | các file của case (lọc thêm theo metadata), kèm trạng thái, số trang và segment phân loại (nhãn, trang, confidence; §6.9.4) |
+| `kb_list_documents` | `metadata?, status?, limit?` | các file của case (lọc thêm theo metadata), kèm trạng thái, số trang và segment phân loại (ref `d<n>.s<k>`, nhãn, trang, confidence, `source`, mã bộ nếu đã duyệt; §6.9.4, §6.9.7) |
 | `kb_metadata_values` | `key` | các giá trị metadata khác nhau + số file, chỉ đếm trong case |
 | `kb_find_in_document` | `document_id, query, page_from?, page_to?` | các trang và line khớp (§6.8) |
 | `kb_page_overview` | `document_id, page_from?, page_to?` (mặc định mọi trang) | từng trang: tiêu đề layout, đoạn đầu, số dòng, số bảng, nhánh cây chứa trang, nhãn segment chứa trang |
@@ -1553,8 +1621,8 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 | `kb_document_tree` | `document_id, node_id?` | cây mục lục của file kiểu PageIndex (§6.5): **cả cây** (hoặc cả cây con của `node_id`) kèm tóm tắt và khoảng trang của từng node, khi vừa `search.tree_token_budget`; vượt thì cắt từ cấp sâu nhất, node bị lược ghi `(+k mục, expand nX)` để gọi lại với `node_id` |
 | `kb_locate` | `citation_id` hoặc `(document_id, text)` | trang + bbox (citation dòng, element hoặc ô bảng, §5.6) |
 | `kb_read_table` | `document_id, page, block_no` | bảng dạng lưới: mỗi ô có `citation_id` dạng `…:t<k>:r<i>c<j>`, text, confidence; kèm bảng nối trang (`continues_from`) |
-| `kb_save_fields` | `document_id, fields: [{key, ord?, value, value_type?, confidence, evidence: [citation_id…], note?}]` (`note` bắt buộc khi giá trị không có trong quote) | với mỗi field: `id`, `status=proposed`, `value_matched`, evidence đã giải (quote, bbox); field không có evidence hợp lệ bị từ chối kèm lý do (§6.9.3) |
-| `kb_get_fields` | `document_id?, key?, include_history?` | `current`: giá trị hiện tại (chỉ field `confirmed`); `unreviewed`: đề xuất `proposed` chưa duyệt; mỗi field kèm evidence và trạng thái |
+| `kb_save_fields` | `document_id` hoặc `segment` (ref `d<n>.s<k>`, field gắn với giấy tờ đó), `fields: [{key, ord?, value, value_type?, confidence, evidence: [citation_id…], note?}]` (`note` bắt buộc khi giá trị không có trong quote) | với mỗi field: `id`, `status=proposed`, `value_matched`, evidence đã giải (quote, bbox); field không có evidence hợp lệ bị từ chối kèm lý do (§6.9.3) |
+| `kb_get_fields` | `document_id?, segment?, key?, include_history?` | `current`: giá trị hiện tại (chỉ field `confirmed`); `unreviewed`: đề xuất `proposed` chưa duyệt; mỗi field kèm evidence và trạng thái |
 
 - Tên tool giữ tiền tố `kb_` để không đổi hợp đồng với client và skill hiện có; phạm vi thực tế là case.
 - Các tool là **built-in** (luôn bind, không deferred) khi session có case.
@@ -1594,7 +1662,8 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 | Hỏi đáp, chọn mẫu, tạo/sửa/tải bảng | ✓ | ✓ | ✓ |
 | Xem nội dung prompt của mẫu | ✓ | ✓ | — |
 | Prompt tuỳ chỉnh cho phiên (`system`) | ✓ | ✓ | — (`403`) |
-| Tạo, sửa, phát hành mẫu; sửa trường của mẫu bảng | ✓ | ✓ | — |
+| Tạo, sửa, phát hành mẫu; sửa bảng con và trường của mẫu bảng | ✓ | ✓ | — |
+| Duyệt tách & gom trang (§7.9) | ✓ | ✓ | ✓ |
 | Xem thống kê AI sai theo trường | ✓ | ✓ | — |
 | Gán vai trò, cấp key, đặt giới hạn, đổi key LLM | ✓ | — | — |
 
@@ -1603,7 +1672,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 **Áp mẫu vào agent.**
 - Phiên có `template_id` thì mỗi lượt lấy body của phiên bản đang phát hành, đưa vào section `<session_instructions>` (cùng chỗ với `system_override` hiện nay), không đưa vào system prompt cố định.
 - Bất biến §8.2 và §16.2 vẫn giữ: server không có workflow hay danh sách trường mặc định. Nội dung nghiệp vụ chỉ đến từ mẫu do người có quyền soạn, hoặc từ tin nhắn.
-- Với mẫu bảng, body và danh sách trường thiếu thành tin nhắn của lượt agent trong `case:sheet` (§6.9.6).
+- Với mẫu bảng, body và danh sách ô thiếu (theo giấy tờ: ref segment, loại, trang, trường) thành tin nhắn của lượt agent trong `case:sheet`, mỗi bộ một lượt (§6.9.6).
 
 **Chặn prompt tuỳ chỉnh.** User `role=user` gửi `system` ở `POST /sessions`, `PATCH /sessions/:id`, `POST /messages` hoặc `POST /ag-ui/run` (kể cả trong `forwardedProps`) thì nhận `403 permission_error`. Handler kiểm việc này cho cả request dùng JWT lẫn API key.
 
@@ -1662,7 +1731,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 
 ### 9.2 DDL
 
-Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ. Mẫu prompt, bảng tổng hợp, vai trò và chi phí ở `0020_sheets_roles_usage.sql` (U43–U46, cần `0019`).
+Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ. Mẫu prompt, bảng tổng hợp, vai trò và chi phí ở `0020_sheets_roles_usage.sql` (U43–U46, cần `0019`); bộ chứng từ, field theo segment và bảng theo loại giấy tờ ở `0021_bundles.sql` (U47–U49).
 
 ```sql
 -- 0006_extensions.sql
@@ -2074,7 +2143,7 @@ CREATE TABLE prompt_template_versions (                   -- bất biến: khôn
   template_id uuid NOT NULL REFERENCES prompt_templates(id) ON DELETE CASCADE,
   version int NOT NULL,
   body text NOT NULL,
-  fields jsonb NOT NULL DEFAULT '[]',                     -- kind=sheet: [{key,label,value_type}] theo thứ tự
+  fields jsonb NOT NULL DEFAULT '[]',                     -- kind=sheet (0.16): [{key,label,value_type}]; từ 0021 dùng tables
   created_by uuid NOT NULL REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (template_id, version)
@@ -2128,6 +2197,38 @@ CREATE TABLE usage_events (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX usage_events_user_idx ON usage_events (user_id, created_at);
+
+-- 0021_bundles.sql (U47–U49, §6.9.3, §6.9.6, §6.9.7; cần 0020)
+CREATE TABLE case_bundles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL,                                  -- không FK, như documents (U21)
+  seq int NOT NULL,
+  code text NOT NULL,                                     -- B01, B02… theo seq
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (case_id, seq)
+);
+ALTER TABLE document_segments ADD COLUMN bundle_id uuid REFERENCES case_bundles(id) ON DELETE SET NULL;  -- chỉ segment source=user
+ALTER TABLE documents
+  ADD COLUMN split_reviewed_at timestamptz,               -- §6.9.7: người dùng đã xác nhận tách & gom
+  ADD COLUMN split_reviewed_by uuid;
+
+ALTER TABLE extracted_fields ADD COLUMN segment_id uuid REFERENCES document_segments(id) ON DELETE SET NULL;
+DROP INDEX extracted_fields_one_proposed, extracted_fields_one_confirmed, extracted_fields_doc_key_idx;
+CREATE INDEX extracted_fields_doc_key_idx ON extracted_fields (document_id, segment_id, key, ord, created_at DESC);
+CREATE UNIQUE INDEX extracted_fields_one_proposed ON extracted_fields (document_id, COALESCE(segment_id, '00000000-0000-0000-0000-000000000000'::uuid), key, ord) WHERE status = 'proposed';
+CREATE UNIQUE INDEX extracted_fields_one_confirmed ON extracted_fields (document_id, COALESCE(segment_id, '00000000-0000-0000-0000-000000000000'::uuid), key, ord) WHERE status = 'confirmed';
+
+ALTER TABLE prompt_template_versions ADD COLUMN tables jsonb NOT NULL DEFAULT '[]';  -- [{label,title,fields:[{key,label,value_type}]}]
+UPDATE prompt_template_versions SET tables = jsonb_build_array(jsonb_build_object('label','','title','Tổng hợp','fields',fields))
+  WHERE fields <> '[]';                                   -- mẫu cũ thành một bảng con không nhãn (mỗi file một dòng)
+ALTER TABLE case_sheets ADD COLUMN tables text[] NOT NULL DEFAULT '{}';  -- label của các bảng con đã chọn
+-- case_sheets.rows từ 0021: [{table,bundle,segment_id,document_id,pages,cells:{key:{field_id,ai_field_id,ai_value_text,note}}}]; bảng cũ giữ dạng cũ, API đọc cả hai
+ALTER TABLE field_corrections
+  ADD COLUMN label text NOT NULL DEFAULT '',
+  ADD COLUMN segment_id uuid;                             -- không FK: thống kê giữ cả khi segment bị thay
+DROP INDEX field_corrections_tpl_idx;
+CREATE INDEX field_corrections_tpl_idx ON field_corrections (template_id, template_version, label, key);
 
 ```
 
@@ -2279,6 +2380,8 @@ Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, h
 | PUT | `/documents/:id/classification` | `{segments: [{page_start, page_end, label, evidence?: [citation_id]}]}`: người dùng thay toàn bộ segment (`source=user`); nhãn ngoài tập → `422` |
 | POST | `/documents/:id/classify` | chạy `document:classify` theo yêu cầu, body `{mode?: titles \| pages}` (mặc định `titles`), giữ segment của người dùng → `202`; loại case không có `labels` → `422` |
 | POST | `/cases/:id/classify` | như trên cho mọi file đã index của case (`{mode?, document_ids?}`) → `202` |
+| GET | `/cases/:id/split` | màn Tách & gom (§6.9.7, §7.9): mỗi file kèm trạng thái tách, segment (`source`, nhãn, trang, confidence, `needs_review`), dấu điểm cắt theo trang; các bộ: đã duyệt, hoặc đề xuất do code gom khi chưa duyệt |
+| PUT | `/cases/:id/split` | `{bundles: [{id?, segments: [{document_id, page_start, page_end, label}]}]}`: một transaction ghi segment `source=user` của các file có trong request, thay `case_bundles`, đặt `split_reviewed_at`; trang thiếu hoặc chồng, nhãn ngoài tập → `422` |
 | GET | `/documents/:id/fields` | `current` (chỉ field `confirmed`) và `unreviewed` (field `proposed`) của các trường; `?key=`, `?status=`, `?history=1` (cả chuỗi `supersedes`) |
 | GET | `/cases/:id/fields` | `current` và `unreviewed` của mọi file trong case; `?key=` (ví dụ so `so_tien` giữa các file) |
 | POST | `/documents/:id/fields` | người dùng tạo field `{key, ord?, value, value_type?, evidence?: [citation_id], note?}` (`source=user`) |
@@ -2292,17 +2395,17 @@ Mục tiêu (U28): người dùng tự đăng ký và đăng nhập trên web, h
 
 | Method | Path | Quyền | Mô tả |
 |---|---|---|---|
-| GET | `/templates` | mọi user | `?kind=chat\|sheet&case_type=`: các mẫu đã phát hành (tên, mô tả, người soạn, phiên bản); `body` và `fields` chỉ trả cho `prompt_editor`/`admin` |
-| POST | `/templates` | prompt_editor | `{kind, slug, name, description?, case_type?, body, fields?}` → mẫu `draft`, phiên bản 1 |
-| POST | `/templates/:id/versions` | prompt_editor | `{body, fields?}` → phiên bản mới (nháp) |
+| GET | `/templates` | mọi user | `?kind=chat\|sheet&case_type=`: các mẫu đã phát hành (tên, mô tả, người soạn, phiên bản, với `sheet`: tên và nhãn các bảng con); `body` và trường của bảng con chỉ trả cho `prompt_editor`/`admin` |
+| POST | `/templates` | prompt_editor | `{kind, slug, name, description?, case_type?, body, tables?}` → mẫu `draft`, phiên bản 1 |
+| POST | `/templates/:id/versions` | prompt_editor | `{body, tables?}` → phiên bản mới (nháp); `tables: [{label, title, fields: [{key, label, value_type}]}]`, `label` ngoài `classification.labels` của `case_type` → `422` |
 | POST | `/templates/:id/publish` | prompt_editor | `{version}` → `current_version`, `status=published` |
-| GET | `/templates/:id/corrections` | prompt_editor | tỷ lệ AI sai theo trường và phiên bản (§6.9.6) |
-| POST | `/cases/:id/sheets` | quyền KB | `{template_id}` → `202 {sheet}`, chạy task `case:sheet` |
+| GET | `/templates/:id/corrections` | prompt_editor | tỷ lệ AI sai theo bảng con, trường và phiên bản (§6.9.6) |
+| POST | `/cases/:id/sheets` | quyền KB | `{template_id, tables?: [label…]}` → `202 {sheet}`, chạy task `case:sheet`; còn file chưa duyệt tách → `409 split_not_reviewed` (§6.9.6) |
 | GET | `/cases/:id/sheets` | quyền KB | danh sách bảng (mục "Đã tạo" của Studio) |
-| GET | `/sheets/:id` | quyền KB | trạng thái, tiến độ, các dòng: giá trị AI, giá trị hiện tại, confidence, evidence (`citation_id`), cờ `edited` |
-| POST | `/sheets/:id/edits` | quyền KB | `{edits: [{key, value, origin, document_id?}]}` → field `source=user` + correction (§6.9.6) |
+| GET | `/sheets/:id` | quyền KB | trạng thái, tiến độ, các bảng con (nhãn, tiêu đề, cột); mỗi dòng: bộ, segment, file, trang; mỗi ô: giá trị AI, giá trị hiện tại, confidence, trạng thái, evidence (`citation_id`), cờ `edited` (UI chỉ hiện giá trị trong lưới, phần còn lại ở panel, §7.6) |
+| POST | `/sheets/:id/edits` | quyền KB | `{edits: [{table, segment_id \| document_id, key, value, origin}]}` → field `source=user` + correction (§6.9.6) |
 | POST | `/sheets/:id/import` | quyền KB | multipart `.xlsx` → `{edits, conflicts, ignored}`, không ghi gì |
-| GET | `/sheets/:id/xlsx` | quyền KB | tải file `.xlsx` (Tổng hợp, Nguồn, `_bp` ẩn) |
+| GET | `/sheets/:id/xlsx` | quyền KB | `?tables=` (mặc định tất cả): tải `.xlsx`, mỗi bảng con một sheet chỉ có dữ liệu, cộng `_bp` ẩn |
 | GET | `/me/usage` | mọi user | `{month: {spent, limit, resets_at}, today: {spent}, by_kind, updated_at}` |
 | GET | `/admin/usage` | admin | như `/me/usage`, cho toàn hệ thống |
 | GET / PATCH | `/admin/users[/:id]` | admin | danh sách user kèm chi phí tháng này / `{role?, monthly_limit?, is_active?}` |
@@ -2465,6 +2568,7 @@ classify:                           # document:classify (§6.9.4); nhãn nằm t
   titles_per_page: 3                # mode=titles: số element title/heading tối đa mỗi trang
   lines_per_page: 8                 # chỉ dùng ở mode=pages (gọi API)
   doc_token_budget: 16000           # mode=pages: lớn hơn thì rơi về titles
+  page_marks: true                  # gửi kèm dấu điểm cắt do code tìm (trang về 1, trang trắng, đổi khổ; §6.9.4, U49)
 
 fields:                             # Extracted Field (§6.9.3)
   max_per_call: 50                  # số field tối đa mỗi lần kb_save_fields
@@ -2519,6 +2623,9 @@ fields:                             # Extracted Field (§6.9.3)
 | N41 | **Quyền prompt.** User `role=user` gửi `system` ở cả 4 route → `403`; `GET /templates` không trả `body` cho user thường; phiên có `template_id` thì prompt chứa body của phiên bản đang phát hành trong `<session_instructions>`; phát hành v5 không đổi `template_version` của bảng đã tạo bằng v4 | integration test |
 | N42 | **Chi phí.** Mỗi lần gọi model (chat, VLM, thẻ tài liệu, `case:sheet`) tạo đúng một `usage_events` với đúng user; `GET /me/usage` khớp tổng; vượt `monthly_limit` → `402` trước khi gọi provider (provider giả đếm 0 lần gọi) | integration test |
 | N43 | **Giao diện.** Trang phương án có 3 cột (3 tab ở màn hẹp); mở bảng thì sang `/cases/:id/sheets/:sheetId`, nút quay lại về đúng phương án; chi phí chỉ có ở Cài đặt → Key & chi phí; khớp prototype `spec/prototype/u43-u46.html` | chạy trình duyệt (Playwright) |
+| N44 | **Bảng theo loại giấy tờ.** Case có 3 bộ (3 hợp đồng, 5 hoá đơn, 3 BB đã duyệt), chọn 2 bảng con Hợp đồng + Hoá đơn: bảng có đúng 2 bảng con, 3 và 5 dòng, cột đầu là Bộ, cột là trường của mẫu; `.xlsx` có đúng 2 sheet dữ liệu + `_bp`, không có cột tin cậy/nguồn/trạng thái và không có sheet Nguồn. Hai hoá đơn trong cùng một file có field riêng theo `segment_id`. Mẫu 0.16 (`fields`) chạy như một bảng con không nhãn | integration test (fake runner) + excelize đọc lại |
+| N45 | **Tách & gom.** File 14 trang (HĐ 1–4, HĐơn 5, HĐơn 6, BB 7–8, HĐ 9–12, HĐơn 13, BB 14) có footer "Trang 1/n": `classify` `titles` gọi LLM đúng 1 lần, đầu vào có dấu ✂ ở trang 1, 5, 6, 7, 9, 13, 14; đề xuất gom ra 2 bộ theo `opens_with: [hop_dong]`. `POST /cases/:id/sheets` trước khi duyệt → `409`; `PUT /cases/:id/split` thiếu trang → `422`; duyệt lại không đổi dải trang thì giữ id segment và field. Segment `pipeline` không bao giờ thành dòng của bảng | integration test (fake LLM) |
+| N46 | **Panel nguồn thu gọn.** Mở trang bảng: panel phải đóng (dải icon), lưới chỉ có Bộ + cột trường; chọn ô không mở panel; bấm "Nguồn & lịch sử" thì hiện nguồn, tin cậy của ô đang chọn; nhập `.xlsx` thì panel mở ở tab Lịch sử chỉnh sửa | chạy trình duyệt (Playwright) |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2545,6 +2652,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P14** | Chi phí (U46): `usage_events`, hook ở agent, `usage.prices`, kiểm giới hạn, key do admin cấp, `/admin/llm`; Cài đặt → Key & chi phí | N42 | ✅ xong (08/10/2026) |
 | **P15** | Trang phương án kiểu NotebookLM và xuất bảng (U43): `case_sheets`, task `case:sheet`, `excelize`, Studio, trang bảng. Cần **P8** | N38, N43 | ✅ xong (08/10/2026) |
 | **P16** | Chỉnh sửa và nhập lại (U44): `/sheets/:id/edits`, `/sheets/:id/import`, `field_corrections`, thống kê AI sai theo trường | N39, N40 | ✅ xong (08/10/2026) |
+| **P17** | Bảng theo loại giấy tờ, tách & gom bộ chứng từ (U47–U49): migration `0021`; dấu điểm cắt trong `document:classify`; đề xuất gom bộ (code) + `GET/PUT /cases/:id/split`; `segment` ở `kb_save_fields`/`kb_get_fields`; mẫu bảng `tables`; `case:sheet` theo bộ, `rows` theo giấy tờ; `.xlsx` mỗi bảng con một sheet, bỏ cột tin cậy/nguồn và sheet Nguồn; trang bảng có sheet theo bảng con và panel Nguồn & lịch sử thu gọn; màn Tách & gom. Cần P15, P16 | N44, N45, N46 | ✅ xong (08/10/2026); một phần của §6.9.4 chưa làm, xem §15.2 |
 
 ---
 
@@ -2573,6 +2681,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Q24 | Khi user vượt giới hạn tháng thì chặn hẳn hay chỉ hiển thị? | Chặn trước lần gọi model kế tiếp (`402`), theo chữ "giới hạn tiền" của U46; giao diện chỉ hiển thị ở Cài đặt, không có banner (§7.8, §8.5). Nếu chỉ cần theo dõi thì để `monthly_limit` NULL |
 | Q25 | Trang `/chat` riêng còn cần không, khi chat đã nằm trong trang phương án? | Giữ, để xem lịch sử nhiều phiên; trang phương án mở phiên gần nhất của case (§7.2) |
 | Q26 | Đơn giá model cập nhật thế nào; chi phí cũ có tính lại không? | Admin sửa `usage.prices` trong config; chi phí đã ghi không tính lại |
+| Q27 | Tách file scan nhiều giấy tờ bằng cách nào: AI đề xuất + người duyệt, tờ phân cách QR khi scan, hay người dùng tự tách? | **Đã chốt** (U49): AI đề xuất + người duyệt — dấu điểm cắt bằng code, `classify` `titles` (1 lần gọi LLM mỗi file), gom bộ bằng code theo `bundles.opens_with`, người dùng xác nhận ở màn Tách & gom (§6.9.7). Tờ phân cách QR có thể thêm sau như một loại dấu điểm cắt chắc chắn, không đổi mô hình dữ liệu |
 
 ---
 
@@ -2601,7 +2710,8 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Vai trò, mẫu prompt có phiên bản, chặn `system` của user thường (U45, §8.4) | `repository/postgres/templates.go`, `handler/templates.go`, `agent/agent.go` (`<session_instructions>`) |
 | Chi phí theo user (U46, §8.5): hook đo token ở `llm` (`meter.go`, kiểm giới hạn trước mỗi lần gọi), dịch vụ `service/usage`, gán chi phí parse cho người upload, key LLM dùng chung đổi được từ Cài đặt | `internal/llm/meter.go`, `internal/application/service/usage`, `container/sheets.go` |
 | Field + evidence, tool `kb_save_fields`/`kb_get_fields` (phần §6.9.3 cần cho bảng) | `internal/application/service/docmodel`, `internal/tools/fields.go`, `repository/postgres/fields.go` |
-| Bảng tổng hợp (U43, U44, §6.9.6): task `case:sheet`, chỉnh sửa, `field_corrections`, xuất/nhập `.xlsx` (excelize) | `internal/application/service/sheets`, `handler/sheets.go` |
+| Bảng tổng hợp (U43, U44, §6.9.6): task `case:sheet`, chỉnh sửa, `field_corrections`, xuất/nhập `.xlsx` (excelize); từ U47/U48 mỗi loại giấy tờ một bảng con, dòng theo giấy tờ, mỗi bộ một lượt agent, `.xlsx` mỗi bảng con một sheet chỉ có dữ liệu | `internal/application/service/sheets`, `handler/sheets.go` |
+| Tách & gom bộ chứng từ (U48, U49, §6.9.4, §6.9.7): migration `0021`, `document_segments`, `case_bundles`, dấu điểm cắt bằng code, task `document:classify` (1 lần gọi LLM mỗi file qua `Completer`), đề xuất gom bộ bằng code, `POST /cases/:id/classify`, `GET/PUT /cases/:id/split`; field theo segment (`segment` ở `kb_save_fields`) | `internal/application/service/docmodel/split.go`, `repository/postgres/segments.go`, `handler/split.go`, `frontend/src/pages/cases/SplitPage.tsx` |
 | Trang phương án kiểu NotebookLM, trang bảng, Cài đặt (Key & chi phí, Người dùng), hộp thoại cấu hình chat và mẫu bảng (§7.2, §7.6–§7.8) | `frontend/src/pages/cases/{CasePage,CaseChat,Studio,dialogs}.tsx`, `frontend/src/pages/sheets/SheetPage.tsx`, `frontend/src/components/SettingsDialog.tsx` |
 | Web app nhúng vào binary server (`embed.FS`, route không thuộc API trả `index.html`); Dockerfile có stage `ui` (Node) build `frontend/` | `internal/webui`, `frontend/vite.config.ts` (outDir), `deploy/Dockerfile`, `.dockerignore`, `make ui` / `make build-server` / `make docker` |
 
@@ -2611,6 +2721,11 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 |---|---|
 | Cột Nguồn có checkbox chọn file cho chat (§7.2) | Chưa làm: agent luôn đọc mọi file của case; cột Nguồn chỉ để duyệt cây và mở trang |
 | Mỗi lần gọi model một dòng `usage_events` có `api_key_id` (§8.5) | Có một dòng mỗi lần gọi, nhưng `api_key_id` chưa điền (middleware chưa đưa key id vào context); chi phí vẫn tính đúng user |
+| Loại case bật `classification.auto` thì phân loại chạy sau `index:tree` (§6.9.4) | Chưa có: chỉ chạy khi gọi `POST /cases/:id/classify` (nút "AI đề xuất lại" ở màn Tách & gom) |
+| Segment `pipeline` có evidence (dòng tiêu đề `at`, §6.9.4) | Không lưu evidence của segment; chỉ dải trang, nhãn, confidence. Màn Tách & gom hiện ảnh trang và dấu điểm cắt thay cho evidence |
+| API phân loại theo file (`GET/PUT /documents/:id/classification`, `POST /documents/:id/classify`, §10.7) | Chỉ có API theo case: `POST /cases/:id/classify` (nhận `document_ids`), `GET/PUT /cases/:id/split` |
+| `kb_list_documents`, `kb_page_overview` trả segment (§8.2) | Chưa trả; agent nhận ref `d<n>.s<k>` của giấy tờ trong tin nhắn của `case:sheet`, và `kb_save_fields` nhận `segment` |
+| `document:classify` ở pool `enrich` (§4.1) | Chạy trên pool `index`, queue `index_interactive`, như `case:sheet`; chi phí ghi `kind=parse`, tính cho người bấm |
 | `case_sheets` theo pool `enrich` (§4.4 bản 0.16 nháp) | Chạy trên pool `index`, queue `index_interactive` (không có pool `enrich` trong code) |
 | Cache kết quả search trên Redis (§6.6) | Cache TTL trong bộ nhớ của từng instance |
 | Hiển thị hồ sơ theo cây (§7) | Trang `/cases` hiện có hai cột (mục lục → cây, node và ảnh trang). Bố cục ba cột kiểu NotebookLM, Studio và trang bảng (§7.2, §7.6) thuộc P15 |
@@ -2626,6 +2741,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 
 ### 15.3 Chưa kiểm được
 
+- **Bản 0.17 (U47–U49, 08/10/2026):** kiểm logic bằng dummy: `TestBundleSheetFlow` (file 14 trang hai bộ: dấu điểm cắt ở đúng 6 trang, LLM phân loại giả gọi đúng 1 lần, đề xuất gom 2 bộ theo `opens_with`, tạo bảng trước khi duyệt → lỗi `split_not_reviewed`, thiếu trang → `ErrBadSplit`, agent giả mỗi bộ một lượt ghi field theo `segment`, hai hoá đơn cùng file có field riêng, ô thiếu có `note`, correction theo bảng và trường, `.xlsx` hai sheet dữ liệu + `_bp` không có cột tin cậy/nguồn, nhập lại nhận đúng segment và bỏ qua dòng thêm tay, duyệt lại giữ id segment); `TestSheetFlow` chuyển sang mẫu 0.16 (một bảng con không nhãn); `make test-db` qua toàn bộ. Chạy thật trên trình duyệt (Playwright) với server `role=all` có UI nhúng, TurboOCR giả trả trang rỗng (dùng text layer của PDF 13 trang), **kết quả LLM phân loại và kết quả agent được giả lập bằng cách ghi thẳng segment `pipeline` và field kèm evidence vào DB** (không gọi Groq hay LM Studio): màn Tách & gom (cắt trang 13, đổi loại, xác nhận), cột Nguồn hiện giấy tờ theo bộ, Studio chọn 2/3 bảng con, trang bảng (panel đóng mặc định, chọn ô không mở panel, mở panel thấy nguồn và độ tin cậy, sửa ô, lịch sử chỉnh sửa, lưu), tải `.xlsx` 2 sheet. Chưa chạy `document:classify` và lượt agent của `case:sheet` với model thật.
 - **Bản 0.16 (U43–U46, 08/10/2026):** kiểm logic bằng dummy trước: `TestSheetFlow` (field + evidence qua `docmodel`, runner giả thay agent, dùng lại field đã duyệt, sửa định dạng không tính là sửa, `field_corrections`, nhập `.xlsx` nhận đúng ô sửa và dòng thêm tay, file của bảng khác bị từ chối), `TestUsageLimit` (giá, giới hạn, parse không bị chặn), `TestMeteredModel` (model giả: ghi token cho Generate/Stream, chặn trước khi gọi provider), `TestValueKey`; `make test-db` qua toàn bộ. Sau đó chạy thật: server `role=all` có UI nhúng, TurboOCR giả trả trang rỗng (dùng text layer), agent qua LM Studio `qwythos-9b`: bảng 5 trường điền 4 có evidence (trường thứ 5 không có trong file), sửa/lưu, tải `.xlsx` (có `_bp` veryHidden), nhập lại, quyền `403`, giới hạn `402`, chi phí `sheet` và `parse` gán đúng user. Key Groq trong `.env` bị Groq từ chối (`GET /models` → 401) nên chưa chạy với Groq. Image `--target api` build và chạy được (UI ở `/`, không chứa `.env`); image `worker` chưa build lại. Chưa kiểm giao diện trên trình duyệt.
 
 - **TurboOCR thật:** endpoint nội bộ không truy cập được từ máy phát triển; pipeline đã chạy với một server `/ocr/raw` giả.
@@ -2679,6 +2795,7 @@ Mục này gom các quy tắc dễ làm sai khi code, rải ở nhiều mục ph
 ### 16.3 Không loại trừ
 
 - Không có tham số lọc theo nhãn phân loại ở bất kỳ tool/API search nào; nhãn không vào mục lục hồ sơ, cây hay thẻ tài liệu. Lọc cứng theo loại giấy tờ chỉ bằng metadata do người dùng gán (§6.1, §6.9.4).
+- Bộ chứng từ cũng không là bộ lọc search. Dòng của bảng theo loại giấy tờ chỉ đến từ segment `source=user` đã duyệt ở màn Tách & gom; segment `pipeline` không bao giờ tự thành dòng (§6.9.6, §6.9.7).
 - Mọi file đã index của case đều có trong mục lục hồ sơ; phần bị lược vì ngân sách vẫn mở được bằng `expand` (§6.6).
 - Mọi hit phải qua bước 5 đối chiếu `quote` với dòng hiện tại (§6.6).
 
