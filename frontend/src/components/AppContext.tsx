@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 
 import { settings } from "../api/client";
 import { createKB, listCases, listEngines, listKBs } from "../api/endpoints";
-import type { Case, EngineInfo, KnowledgeBase } from "../api/types";
+import type { Case, ClassLabel, EngineInfo, KnowledgeBase } from "../api/types";
 import { SettingsDialog, type SettingsTab } from "./SettingsDialog";
 import { useToast } from "./toast";
-import { Modal } from "./ui";
+import { Icon, Modal } from "./ui";
 
 interface AppState {
   kbs: KnowledgeBase[];
@@ -151,15 +151,22 @@ function CreateKBDialog({
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [engine, setEngine] = useState("");
+  const [docTypes, setDocTypes] = useState<ClassLabel[]>([]);
   const [busy, setBusy] = useState(false);
+  const setType = (i: number, patch: Partial<ClassLabel>) => setDocTypes((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
   useEffect(() => {
     listEngines().then(setEngines, () => {});
   }, []);
   const submit = async () => {
     if (!name.trim()) return onError(new Error("Nhập tên knowledge base"));
+    const types = docTypes
+      .map((t) => ({ name: t.name.trim(), title: t.title.trim(), description: t.description?.trim() || undefined }))
+      .filter((t) => t.name || t.title);
+    if (types.some((t) => !/^[a-z0-9_][a-z0-9_-]*$/.test(t.name) || !t.title))
+      return onError(new Error("Mỗi loại giấy tờ cần mã (chữ thường, số, _ hoặc -) và tên"));
     setBusy(true);
     try {
-      onCreated(await createKB({ name: name.trim(), description: desc.trim(), config: { parser_engine: engine } }));
+      onCreated(await createKB({ name: name.trim(), description: desc.trim(), config: { parser_engine: engine, doc_types: types } }));
     } catch (e) {
       onError(e);
     } finally {
@@ -203,6 +210,23 @@ function CreateKBDialog({
           ))}
         </select>
       </label>
+      <div className="field">
+        <span>Loại giấy tờ</span>
+        <span className="font-normal">Mỗi trang của file được phân loại theo ảnh vào các loại này; trang liền nhau cùng loại gom thành một giấy tờ trên cây hồ sơ.</span>
+        {docTypes.map((t, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input className="input w-32" value={t.name} onChange={(e) => setType(i, { name: e.target.value })} placeholder="Mã, vd hop_dong" />
+            <input className="input w-36" value={t.title} onChange={(e) => setType(i, { title: e.target.value })} placeholder="Tên, vd Hợp đồng" />
+            <input className="input min-w-0 flex-1" value={t.description ?? ""} onChange={(e) => setType(i, { description: e.target.value })} placeholder="Mô tả (tuỳ chọn)" />
+            <button className="btn-icon" title="Xoá loại" onClick={() => setDocTypes((xs) => xs.filter((_, k) => k !== i))}>
+              <Icon name="close" size={18} />
+            </button>
+          </div>
+        ))}
+        <button className="btn btn-text self-start" onClick={() => setDocTypes((xs) => [...xs, { name: "", title: "" }])}>
+          <Icon name="add" size={18} /> Thêm loại giấy tờ
+        </button>
+      </div>
     </Modal>
   );
 }

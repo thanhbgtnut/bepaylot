@@ -7629,6 +7629,13 @@ const docTemplate = `{
         "types.KBConfig": {
             "type": "object",
             "properties": {
+                "doc_types": {
+                    "description": "DocTypes are the document types of the KB (code, title, description).\nPages of its files are classified into them from their image and they\nreplace the classification labels of the case type (§6.9.4).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.ClassLabel"
+                    }
+                },
                 "parser_engine": {
                     "type": "string"
                 }
@@ -8271,6 +8278,10 @@ const docTemplate = `{
         "types.TreeNode": {
             "type": "object",
             "properties": {
+                "doc_type": {
+                    "description": "DocType is the document type of an origin=doctype node: the pages of\none document inside the file (§6.5).",
+                    "type": "string"
+                },
                 "document_id": {
                     "type": "string"
                 },
@@ -8287,7 +8298,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "origin": {
-                    "description": "root | bookmark | heading | llm | page",
+                    "description": "root | doctype | bookmark | heading | llm | page",
                     "type": "string"
                 },
                 "page_end": {

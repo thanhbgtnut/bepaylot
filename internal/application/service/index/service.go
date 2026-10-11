@@ -47,10 +47,15 @@ type Service struct {
 	treeLLM   interfaces.Completer
 	searchLLM interfaces.Completer
 	cases     interfaces.CaseService
+	split     interfaces.SplitConfirmer
 	cfg       *config.Config
 	log       *slog.Logger
 	cache     *ttlCache
 }
+
+// SetSplit wires the service that confirms the split proposed from the page
+// types of a file (§6.9.7); without it proposals wait for the user.
+func (s *Service) SetSplit(c interfaces.SplitConfirmer) { s.split = c }
 
 // New builds the service.
 func New(d Deps) *Service {
@@ -67,6 +72,7 @@ func New(d Deps) *Service {
 var (
 	_ interfaces.SectionReader = (*Service)(nil)
 	_ interfaces.Searcher      = (*Service)(nil)
+	_ interfaces.TreeRebuilder = (*Service)(nil)
 )
 
 // Handlers returns the task handlers owned by Module 2.
@@ -124,31 +130,15 @@ func (s *Service) build(ctx context.Context, d types.Document) error {
 
 // tree builds the document tree in code from the layout of the parsed
 // pages (TurboOCR title/heading blocks, §6.5): groups of each page, then the
-// pages joined in order. The only LLM call is the document card. The file
-// is then appended to its case tree; other files of the case are not
-// touched. The document is searchable once the tree is stored.
+// pages joined in order under the documents of the file by type. The only
+// LLM call is the document card. The file is then appended to its case tree;
+// other files of the case are not touched. The document is searchable once
+// the tree is stored.
 func (s *Service) tree(ctx context.Context, d types.Document) error {
-	secs, err := s.st.Index.Sections(ctx, d.ID, d.Gen)
+	root, secs, pages, err := s.buildTree(ctx, d)
 	if err != nil {
 		return err
 	}
-	pages, err := s.docs.LoadPages(ctx, d.ID, d.Gen, 0, 0)
-	if err != nil {
-		return err
-	}
-	sort.Slice(pages, func(i, j int) bool { return pages[i].PageNo < pages[j].PageNo })
-	cfg := s.cfg.Index.Tree
-	pageCount := d.PageCount
-	firstLines := map[int]string{}
-	results := map[int]*pageResult{}
-	for _, p := range pages {
-		pageCount = max(pageCount, p.PageNo)
-		firstLines[p.PageNo] = firstLine(p.Markdown)
-		results[p.PageNo] = draftResult(PageGroups(p, cfg.MinNodeTokens), cfg.SummaryWords)
-	}
-	root := BuildTree(pageCount, bookmarksOf(d.PDFInfo), results, firstLines, cfg.SummaryWords)
-	assignByPage(root, secs)
-	finish(root)
 	card := s.card(ctx, d, root, pages, s.treeLLM != nil && s.cfg.Index.TreeLLMEnabled())
 	root.title, root.summary = card.Title, card.Summary
 
@@ -160,7 +150,91 @@ func (s *Service) tree(ctx context.Context, d types.Document) error {
 	if err := s.st.Index.AppendToCaseTree(ctx, d.CaseID, d.ID); err != nil {
 		return err
 	}
+	s.confirmSplit(ctx, d)
 	return s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil)
+}
+
+// confirmSplit makes the split proposed from the page types of the file the
+// split of its case, without anyone reviewing it (§6.9.7). A failure is
+// logged: the proposals stay and the user can confirm them.
+func (s *Service) confirmSplit(ctx context.Context, d types.Document) {
+	if s.split == nil {
+		return
+	}
+	segs, err := s.st.Segments.ByDocument(ctx, d.ID)
+	if err != nil {
+		s.log.Warn("auto split: segments", "doc", d.ID, "err", err)
+		return
+	}
+	for _, g := range segs {
+		if g.Source == types.SegmentPipeline && g.Mode == "image" {
+			if err := s.split.AutoConfirm(ctx, d.CaseID); err != nil {
+				s.log.Warn("auto split failed", "doc", d.ID, "err", err)
+			}
+			return
+		}
+	}
+}
+
+// RebuildTree implements interfaces.TreeRebuilder: the tree of an indexed
+// file is built again from its stored pages and current segments (after its
+// split is reviewed or proposed again). The document card is kept and no
+// model is called; a file without a tree is left alone.
+func (s *Service) RebuildTree(ctx context.Context, doc uuid.UUID) error {
+	d, err := s.docs.GetDocument(ctx, doc)
+	if err != nil {
+		return err
+	}
+	old, err := s.st.Index.Tree(ctx, d.ID, d.Gen)
+	if err != nil || len(old) == 0 {
+		return err
+	}
+	root, secs, _, err := s.buildTree(ctx, d)
+	if err != nil {
+		return err
+	}
+	for _, n := range old {
+		if n.ParentID == nil {
+			root.title, root.summary = n.Title, n.Summary
+		}
+	}
+	nodes := flatten(root, d.ID, d.Gen, secs)
+	FillTreeTokens(nodes)
+	return s.st.Index.ReplaceTree(ctx, d.ID, d.Gen, nodes)
+}
+
+// buildTree builds the tree of a document in memory, sections assigned.
+func (s *Service) buildTree(ctx context.Context, d types.Document) (*node, []types.Section, []*types.ParsedPage, error) {
+	secs, err := s.st.Index.Sections(ctx, d.ID, d.Gen)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	pages, err := s.docs.LoadPages(ctx, d.ID, d.Gen, 0, 0)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].PageNo < pages[j].PageNo })
+	cfg := s.cfg.Index.Tree
+	pageCount := d.PageCount
+	firstLines := map[int]string{}
+	results := map[int]*pageResult{}
+	blank, opens := map[int]bool{}, map[int]bool{}
+	for _, p := range pages {
+		pageCount = max(pageCount, p.PageNo)
+		firstLines[p.PageNo] = firstLine(p.Markdown)
+		results[p.PageNo] = draftResult(PageGroups(p, cfg.MinNodeTokens), cfg.SummaryWords)
+		blank[p.PageNo] = p.IsBlank
+		for _, n := range results[p.PageNo].nodes {
+			opens[p.PageNo] = opens[p.PageNo] || n.level == 1
+		}
+	}
+	spans, err := s.spansOf(ctx, d, pageCount, blank, opens)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	root := BuildTree(pageCount, bookmarksOf(d.PDFInfo), results, firstLines, cfg.SummaryWords, spans)
+	assignByPage(root, secs)
+	return finish(root), secs, pages, nil
 }
 
 // card builds the document card from children summaries and metadata.

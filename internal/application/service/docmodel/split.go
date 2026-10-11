@@ -33,10 +33,12 @@ var (
 
 // SplitDeps are the collaborators of the split service.
 type SplitDeps struct {
-	Store  *postgres.Store
-	Queue  queue.Enqueuer
-	Cases  interfaces.CaseService
-	LLM    interfaces.Completer
+	Store *postgres.Store
+	Queue queue.Enqueuer
+	Cases interfaces.CaseService
+	LLM   interfaces.Completer
+	// Tree rebuilds the tree of a file when its segments change (§6.5).
+	Tree   interfaces.TreeRebuilder
 	Config *config.Config
 	Log    *slog.Logger
 }
@@ -50,6 +52,7 @@ type Split struct {
 	q     queue.Enqueuer
 	cases interfaces.CaseService
 	llm   interfaces.Completer
+	tree  interfaces.TreeRebuilder
 	cfg   *config.Config
 	log   *slog.Logger
 }
@@ -60,7 +63,7 @@ func NewSplit(d SplitDeps) *Split {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Split{st: d.Store, q: d.Queue, cases: d.Cases, llm: d.LLM, cfg: d.Config, log: log}
+	return &Split{st: d.Store, q: d.Queue, cases: d.Cases, llm: d.LLM, tree: d.Tree, cfg: d.Config, log: log}
 }
 
 // Handlers returns the task handlers.
@@ -75,7 +78,7 @@ func (s *Split) Classify(ctx context.Context, user types.User, caseID uuid.UUID,
 	if err != nil {
 		return 0, err
 	}
-	if len(s.cases.CaseType(c.CaseType).Classification.Labels) == 0 {
+	if len(s.cases.Classification(ctx, c).Labels) == 0 {
 		return 0, ErrNoLabels
 	}
 	if mode != "pages" {
@@ -208,7 +211,7 @@ func (s *Split) handleClassify(ctx context.Context, raw []byte) error {
 	if err != nil {
 		return fail(fmt.Errorf("%w: %v", queue.ErrSkipRetry, err))
 	}
-	rule := s.cases.CaseType(c.CaseType).Classification
+	rule := s.cases.Classification(ctx, c)
 	if len(rule.Labels) == 0 {
 		return s.st.Segments.SetClassifyStatus(ctx, doc.ID, types.ClassifySkipped)
 	}
@@ -217,7 +220,7 @@ func (s *Split) handleClassify(ctx context.Context, raw []byte) error {
 		return fail(err)
 	}
 	if strings.TrimSpace(input) == "" { // titles mode, no title anywhere: nothing to send
-		return fail(s.st.Segments.SaveProposals(ctx, c.ID, doc.ID, doc.Gen, nil, p.Mode, ""))
+		return fail(s.saveProposals(ctx, c.ID, doc, nil, p.Mode))
 	}
 	var labels strings.Builder
 	for _, l := range rule.Labels {
@@ -257,7 +260,16 @@ func (s *Split) handleClassify(ctx context.Context, raw []byte) error {
 		}
 		segs = append(segs, g)
 	}
-	return fail(s.st.Segments.SaveProposals(ctx, c.ID, doc.ID, doc.Gen, dropOverlaps(segs), p.Mode, ""))
+	return fail(s.saveProposals(ctx, c.ID, doc, dropOverlaps(segs), p.Mode))
+}
+
+// saveProposals stores the proposals of document:classify and rebuilds the
+// tree of the file, whose top nodes are its segments (§6.5).
+func (s *Split) saveProposals(ctx context.Context, caseID uuid.UUID, doc types.Document, segs []types.Segment, mode string) error {
+	if err := s.st.Segments.SaveProposals(ctx, caseID, doc.ID, doc.Gen, segs, mode, ""); err != nil {
+		return err
+	}
+	return s.tree.RebuildTree(ctx, doc.ID)
 }
 
 // classifyInput is what the LLM sees (§6.9.4): titles (title/heading
@@ -418,9 +430,12 @@ func (s *Split) View(ctx context.Context, owner, caseID uuid.UUID) (SplitView, e
 		return SplitView{}, err
 	}
 	ct := s.cases.CaseType(c.CaseType)
-	v := SplitView{Labels: ct.Classification.Labels, OpensWith: ct.Bundles.OpensWith, Files: []SplitFile{}, Bundles: []string{}, Reviewed: true}
+	v := SplitView{Labels: s.cases.Classification(ctx, c).Labels, OpensWith: ct.Bundles.OpensWith, Files: []SplitFile{}, Bundles: []string{}, Reviewed: true}
 	if v.Labels == nil {
 		v.Labels = []types.ClassLabel{}
+	}
+	if v.OpensWith == nil {
+		v.OpensWith = []string{}
 	}
 	docs, err := s.st.Segments.SplitDocs(ctx, caseID)
 	if err != nil {
@@ -569,7 +584,7 @@ func (s *Split) Save(ctx context.Context, user types.User, caseID uuid.UUID, in 
 	if err != nil {
 		return err
 	}
-	rule := s.cases.CaseType(c.CaseType).Classification
+	rule := s.cases.Classification(ctx, c)
 	if len(rule.Labels) == 0 {
 		return ErrNoLabels
 	}
@@ -625,7 +640,70 @@ func (s *Split) Save(ctx context.Context, user types.User, caseID uuid.UUID, in 
 		}
 		ids = append(ids, id)
 	}
-	return s.st.Segments.SaveSplit(ctx, caseID, user.ID, ids, bundles)
+	if err := s.st.Segments.SaveSplit(ctx, caseID, user.ID, ids, bundles); err != nil {
+		return err
+	}
+	// The reviewed documents become the top nodes of each file's tree (§6.5).
+	for _, id := range ids {
+		if err := s.tree.RebuildTree(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AutoConfirm implements interfaces.SplitConfirmer: the split of the case as
+// the split screen would show it (the reviewed files as they are, the others
+// with the segments proposed from their pages and the bundles proposed by
+// code) is saved as the reviewed split, as if the user had confirmed it
+// unchanged. A file without any proposal is left out; pages the proposal
+// could not type become other. The user can still change it on the split
+// screen.
+func (s *Split) AutoConfirm(ctx context.Context, caseID uuid.UUID) error {
+	c, err := s.cases.GetCase(ctx, caseID)
+	if err != nil {
+		return err
+	}
+	v, err := s.View(ctx, c.CreatedBy, caseID)
+	if err != nil {
+		return err
+	}
+	type seg = map[string]any
+	byBundle := map[string][]seg{}
+	for _, f := range v.Files {
+		typed := false
+		for _, g := range f.Segments {
+			typed = typed || g.ID != uuid.Nil
+		}
+		if !typed {
+			continue
+		}
+		for _, g := range f.Segments {
+			label := g.Label
+			if label == types.LabelUnknown {
+				label = types.LabelOther
+			}
+			byBundle[g.BundleCode] = append(byBundle[g.BundleCode], seg{"document_id": g.DocumentID, "page_start": g.PageStart, "page_end": g.PageEnd, "label": label})
+		}
+	}
+	if len(byBundle) == 0 {
+		return nil
+	}
+	var bundles []map[string]any
+	for _, code := range v.Bundles {
+		if len(byBundle[code]) > 0 {
+			bundles = append(bundles, map[string]any{"segments": byBundle[code]})
+		}
+	}
+	raw, err := json.Marshal(map[string]any{"bundles": bundles})
+	if err != nil {
+		return err
+	}
+	var in SplitInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return err
+	}
+	return s.Save(ctx, types.User{ID: c.CreatedBy}, caseID, in)
 }
 
 // Unreviewed returns the indexed files of a case whose split is not reviewed

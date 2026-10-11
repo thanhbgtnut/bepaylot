@@ -1,11 +1,19 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.17 · Ngày: 2026-10-08 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15
+> Phiên bản: 0.18 · Ngày: 2026-10-11 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15; U50–U51 (phân loại trang theo ảnh bằng Decision API, loại giấy tờ khai báo ở KB, node giấy tờ trên cây hồ sơ) đã triển khai (P18, 11/10/2026), xem §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
+>
+> Thay đổi trong 0.18 (U50, U51): **phân loại từng trang theo ảnh, giấy tờ thành node của cây**
+> - **Loại giấy tờ khai báo ở KB** (`config.doc_types`: mã, tên, mô tả), nhập khi tạo KB. KB có `doc_types` thì chúng thay `classification.labels` của loại case (§6.9.4, §10.1).
+> - **Mỗi trang được phân loại theo ảnh** ngay khi có ảnh trang (PDF đã render hoặc ảnh người dùng upload), trong task `page:ocr`, bằng **Decision API** (`POST /v1/systemone`, câu hỏi kiểu `choice`, tiêu chí là các loại của KB). Kết quả (loại, độ tin cậy) lưu trên `document_pages` (§4.2, §6.9.4, migration `0022_page_doc_types.sql`).
+> - **Break và group bằng code:** các trang liền nhau cùng loại gom thành một segment, đổi loại thì cắt; trang dưới ngưỡng tin cậy nối vào giấy tờ trước nó. Kết quả **tự được xác nhận** sau khi index (segment `source=user`, bộ do code gom), không cần bấm nút; màn Tách & gom chỉ để sửa (§6.9.4, §6.9.7). Phân loại chạy **đồng thời với OCR**; `classify.decision.serial` cho máy chỉ nạp được một model mỗi lúc.
+> - **Cây của file có node giấy tờ:** mỗi segment là một node cấp 1 (`origin=doctype`, có `doc_type`), heading của các trang đó nằm dưới và không tràn sang giấy tờ sau. Cây hồ sơ in `[d1.n1] Hợp đồng [loại: hop_dong] (tr. 1–5)`. Người dùng duyệt lại thì cây của file được dựng lại bằng code, không gọi model (§6.5).
+> - **Đọc theo giấy tờ:** `kb_read_pages(node_id)` với node giấy tờ nạp đúng các trang của giấy tờ đó; mọi kết quả `kb_read_pages` mở đầu bằng giấy tờ (loại, node, khoảng trang) mà các trang thuộc về (§8.2).
+> - Cấu hình `classify.decision.*` (§11). Decision API là dịch vụ phân loại riêng, không phải chat model, nên có client riêng và chưa ghi `usage_events` (§16.2).
 >
 > Thay đổi trong 0.17 (U47–U49, prototype [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) cập nhật): **bảng theo loại giấy tờ** — mẫu bảng gồm nhiều bảng, mỗi bảng ứng với một nhãn (Hợp đồng, Hoá đơn, BB bàn giao…) và có trường riêng; trường là **cột**, mỗi giấy tờ là một **dòng**, cột đầu là **Bộ**; người dùng chọn bảng nào khi tạo/xuất (§6.9.6). Trên trang bảng và trong `.xlsx` không còn cột Tin cậy, Nguồn, Trạng thái và sheet Nguồn; nguồn, độ tin cậy và lịch sử chỉnh sửa chỉ nằm ở **panel phải, mặc định thu gọn** (§7.6). **Tách & gom bộ chứng từ** (§6.9.7, §7.9): một file scan nhiều giấy tờ được tách thành segment (Classification chế độ `titles` + gợi ý điểm cắt bằng code từ số trang), code gom segment thành **bộ** theo `bundles.opens_with` của loại case (Hợp đồng mở bộ mới, giấy tờ sau nối vào bộ đang mở); người dùng duyệt trên màn **Tách & gom** và bảng chỉ dùng kết quả đã duyệt. Field gắn với segment (`extracted_fields.segment_id`), `kb_save_fields` nhận `segment`. Migration `0021`, API §10.7–§10.8, lộ trình P17.
 >
@@ -92,7 +100,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U28 | Tạo **trang đăng nhập / đăng ký giống WeKnora**, hỗ trợ **OIDC**, để không phải lần nào cũng tạo user bằng `make seed`; **cơ chế xác thực giống WeKnora** | còn hiệu lực; thay câu "Auth giữ nguyên (`x-api-key`…)" của §10 bản 0.6; **phần API key tự phục vụ bị thay bởi U46**: user thường dùng key do admin cấp | §10.6, §9.2 (migration `0015`), §11, frontend `/login` |
 | U29 | Viết **tài liệu vận hành** trong thư mục `spec` để bàn giao cho đội vận hành OPN: vận hành từng tính năng và các kiểm tra trạng thái dịch vụ | còn hiệu lực | [`spec/van-hanh.md`](van-hanh.md), `spec/van-hanh/healthcheck.sh`, `spec/van-hanh/kiem-tra.sql` |
 | U30 | Tài liệu phải **liên kết được theo cấu trúc**: `Case → Document → {File metadata; Page → {Element (bbox, text, confidence, type); Table}; Extracted Field (value, confidence, evidence[]); Classification}` | còn hiệu lực; **thay** nguyên tắc "không phân loại lúc index" của bản 0.5 (§6.1): Classification có, nhưng theo dải trang, có confidence + evidence, sửa được và không bao giờ dùng để loại trừ khi search. **Được làm rõ bởi U31**: phân loại không chạy mặc định sau index | §5.10, §6.9, §9.2 (migration `0019`), §10.7 |
-| U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực; **được bổ sung bởi U49**: segment do người dùng duyệt ở màn Tách & gom là đơn vị dòng của bảng; phân loại vẫn chỉ chạy khi được yêu cầu (hoặc `auto` với `titles`) | §4.2, §6.2, §6.9.4, §6.9.7, §10.7, §11 |
+| U31 | Phân loại là **tuỳ chọn**, không nên luôn chạy. Nếu chạy sẵn (tự động) thì **chỉ lấy tiêu đề**, vì đưa từng trang đi phân loại tốn token mà độ chính xác không cao | còn hiệu lực; **được bổ sung bởi U49**: segment do người dùng duyệt ở màn Tách & gom là đơn vị dòng của bảng; phân loại bằng LLM vẫn chỉ chạy khi được yêu cầu (hoặc `auto` với `titles`); **được thay một phần bởi U50**: KB có `doc_types` thì mọi trang được phân loại theo ảnh bằng Decision API (không tốn token LLM) | §4.2, §6.2, §6.9.4, §6.9.7, §10.7, §11 |
 | U32 | Rà lại spec, sửa các chỗ mâu thuẫn theo phương án tối ưu: giá trị hiện tại của field chỉ là bản đã xác nhận; evidence liên file không bị mồ côi; công duyệt giữ qua reparse; wiki và field không lệch âm thầm; bbox ô bảng ổn định với VLM; reparse ghi đúng hành vi; có service sở hữu mô hình dữ liệu | còn hiệu lực trừ ý "wiki và field không lệch âm thầm" (không còn wiki, U35); **làm rõ U20, U30** | §3.1, §4.7, §5.6, §5.10, §6.9, §8.2, §9.2 |
 | U33 | **Xoá các phần mâu thuẫn** còn sót trong spec và **ghi lại lưu ý** để code rõ ràng | còn hiệu lực | toàn bộ; §16 (Lưu ý khi code) |
 | U34 | bepaylot phải theo **đúng giải pháp vectorless** (PageIndex + LLM Wiki): sửa toàn bộ spec cho đúng | **được thay bởi U35** | — |
@@ -110,7 +118,9 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U46 | **Giới hạn tiền cho từng user**, kiểm soát bằng key cấp cho user. (Làm rõ: **một key LLM cho mọi model**, key quản lý ở **Cài đặt**; chi phí đã dùng **chỉ hiển thị ở phần setup key trong Cài đặt**, giống trang Usage của ChatGPT/Claude) | còn hiệu lực; thay phần API key tự phục vụ của U28 cho user thường | §7.8, §8.5, §10.6, §10.8, §11 |
 | U47 | Hiển thị dữ liệu theo dạng **trường là cột, dữ liệu là dòng**. Nguồn dữ liệu và lịch sử chỉnh sửa **ẩn, chỉ hiện khi người dùng bấm hiển thị**; thanh nguồn dữ liệu **mặc định ẩn, thu gọn**. Cột nguồn, độ tin cậy… trong Excel **bỏ đi**, chỉ giữ ở tab ẩn bên phải | còn hiệu lực; làm rõ U43, U44 (bỏ sheet Nguồn và các cột Tin cậy/Nguồn/Trạng thái của bản 0.16) | §6.9.6, §7.6, [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) |
 | U48 | Bóc tách dữ liệu từ **bộ chứng từ có nhiều loại** (ví dụ Hợp đồng, Hoá đơn, BB bàn giao scan liền nhau ⇒ tính là **1 bộ**). Các loại giấy tờ có trường khác nhau, nên **các bảng khác nhau phải chọn được khi xuất Excel**. (Làm rõ: **mỗi loại giấy tờ một bảng**, mỗi dòng là một giấy tờ, cột đầu là Bộ) | còn hiệu lực; làm rõ U43; dùng Classification của U30/U31 làm đơn vị dòng | §6.9.4, §6.9.6, §6.9.7, §7.2, §7.6 |
-| U49 | Người dùng upload **một file có nhiều loại giấy tờ** thì cần **tách (split) và gom (group) trang** lại. (Chốt theo gợi ý: **AI đề xuất + người duyệt** — code tìm điểm cắt, một lần gọi LLM mỗi file chỉ đọc tiêu đề để gán loại, code gom bộ theo quy tắc của loại case, người dùng sửa trên màn Tách & gom; bảng chỉ dùng kết quả đã duyệt) | còn hiệu lực; bổ sung U31 (phân loại vẫn không tự chạy trên mọi trang, vẫn không là bộ lọc search) | §6.9.4, §6.9.7, §7.9, §10.7 |
+| U49 | Người dùng upload **một file có nhiều loại giấy tờ** thì cần **tách (split) và gom (group) trang** lại. (Chốt theo gợi ý: **AI đề xuất + người duyệt** — code tìm điểm cắt, một lần gọi LLM mỗi file chỉ đọc tiêu đề để gán loại, code gom bộ theo quy tắc của loại case, người dùng sửa trên màn Tách & gom; bảng chỉ dùng kết quả đã duyệt) | còn hiệu lực; bổ sung U31 (phân loại vẫn không tự chạy trên mọi trang, vẫn không là bộ lọc search); **được thay một phần bởi U50**: khi KB có `doc_types`, tách & gom chạy và được xác nhận **tự động** từ phân loại ảnh từng trang; màn Tách & gom chỉ còn để sửa | §6.9.4, §6.9.7, §7.9, §10.7 |
+| U50 | Sau khi chuyển PDF sang ảnh (hoặc người dùng upload ảnh) thì **phân loại tài liệu theo định nghĩa cài đặt của knowledge base**: khi tạo KB được cài **loại tài liệu và code của loại**. Có loại rồi thì gọi **Decision API (chuẩn typesafe)** theo mẫu `spec/classification/test_image.py`. Mục đích: **break các trang cùng một loại và group chúng lại**, để **cây mục lục của file thể hiện cụ thể loại tài liệu nào ở trang nào** | còn hiệu lực; thay một phần U31 (phân loại tự chạy trên mọi trang khi KB có `doc_types`) và U49 (làm rõ thêm: OCR và phân loại chạy **đồng thời** sau khi có ảnh; **tách & gom tự động**, không phải bấm nút mới thực hiện; máy không đủ tài nguyên thì **không nạp hai model cùng lúc**), làm rõ U48; nhãn giờ **có** trên cây và mục lục hồ sơ (thay câu "nhãn không vào cây" của §6.9.4 bản 0.17) | §4.2, §6.5, §6.9.4, §9.2 (migration `0022`), §10.1, §11 |
+| U51 | Sửa code **đọc cây thư mục của file hồ sơ case**: khi đọc thông tin phải **hiểu tài liệu nào đang được lấy**, và **lấy các trang của loại tài liệu đó** để suy luận | còn hiệu lực; bổ sung U40–U42 (vẫn không có flow trong prompt: cây và output của tool mang thông tin giấy tờ) | §6.5, §8.2 |
 
 ## 1. Yêu cầu chung
 
@@ -138,6 +148,8 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R21 | Chi phí theo user, một key LLM chung | `usage_events` ghi mọi lần gọi model ở hook của agent; đơn giá `usage.prices`; giới hạn tháng theo user; hiển thị ở Cài đặt (§7.8, §8.5) |
 | R22 | Bảng theo loại giấy tờ, trường là cột | Mẫu bảng gồm nhiều bảng theo nhãn; mỗi dòng là một segment đã duyệt (một giấy tờ), cột đầu là Bộ; chọn bảng khi tạo/xuất; nguồn, tin cậy, lịch sử chỉ ở panel phải thu gọn (§6.9.6, §7.6) |
 | R23 | Tách file nhiều giấy tờ và gom thành bộ | Segment do Classification `titles` đề xuất + điểm cắt theo số trang (code); bộ gom bằng code theo `bundles.opens_with`; người dùng duyệt ở màn Tách & gom, lưu thành segment `source=user` + `case_bundles` (§6.9.4, §6.9.7, §7.9) |
+| R24 | Phân loại trang theo loại giấy tờ của KB, break và group theo loại | `knowledge_bases.config.doc_types`; trong `page:ocr` gọi Decision API với ảnh trang, lưu `document_pages.doc_type`; `index:tree` gom trang liền nhau cùng loại thành segment `source=pipeline, mode=image` (§6.9.4) |
+| R25 | Cây hồ sơ chỉ rõ loại giấy tờ nào ở trang nào; đọc theo giấy tờ | Segment là node cấp 1 của cây file (`origin=doctype`, `doc_type`), in `[loại: <mã>]` trên cây; `kb_read_pages` theo node giấy tờ và nêu giấy tờ của các trang trả về (§6.5, §8.2) |
 
 ### 1.1 Tech stack
 
@@ -243,6 +255,7 @@ internal/
     assemble/          layout + lines → page model → markdown
   storage/             ObjectStore trên S3 (aws-sdk-go-v2): upload/download stream, presign
   queue/               asynq client, topology queue/pool, helper enqueue
+  decision/            client Decision API: phân loại ảnh trang theo doc_types của KB (U50, §6.9.4)
   agent/ llm/ tools/ skills/ mcp/ retrieval/    (giữ nguyên code hiện có)
   logging/
 deploy/
@@ -250,7 +263,7 @@ deploy/
   Dockerfile           kèm libpdfium (version cố định) + binary pdfium-worker
 docs/                  swagger (swaggo)
 skills/
-spec/                  tài liệu mẫu (parser/ocr_curl.txt, output_example.json); `prototype/` giao diện HTML tĩnh đã chốt (U43–U46)
+spec/                  tài liệu mẫu (parser/ocr_curl.txt, output_example.json; classification/ mẫu gọi Decision API); `prototype/` giao diện HTML tĩnh đã chốt (U43–U46)
 ```
 
 ### 3.2 Ánh xạ từ code hiện tại
@@ -315,13 +328,14 @@ sequenceDiagram
   S->>Q: Advance(doc): enqueue các page:render batch đầu tiên
   Q->>RD: mở PDF 1 lần → mỗi trang: render JPEG + text layer → S3 → page rendered
   RD->>Q: enqueue page:ocr cho từng trang đã render; Advance(doc)
+  Q->>P: KB có doc_types: song song với OCR, ảnh trang → Decision API → lưu doc_type của trang (§6.9.4, lỗi thì bỏ qua)
   Q->>P: stream ảnh S3 → TurboOCR → hợp nhất text layer → assemble trang → lưu page/blocks/lines
   P->>Q: Advance(doc): bù cửa sổ render/ocr
   P->>P: UPDATE documents SET pages_done=pages_done+1 RETURNING
   P->>Q: nếu done+failed = page_count → document:assemble (TaskID=assemble:{doc}:{gen})
   Q->>A: ghép markdown toàn văn + offset, status=indexing
   A->>Q: index:build
-  Q->>I: section + FTS → index:tree (dựng cây từ layout, thẻ tài liệu bằng LLM, nối vào cây hồ sơ)
+  Q->>I: section + FTS → index:tree (gom trang cùng loại thành segment, dựng cây từ layout dưới các node giấy tờ, thẻ tài liệu bằng LLM, nối vào cây hồ sơ)
   I->>I: status=completed (search được)
   I->>Q: document:classify mode=titles (chỉ khi loại case bật classification.auto, §6.9.4)
 ```
@@ -948,7 +962,7 @@ flowchart LR
 
 **Nguyên tắc bắt buộc**
 - **Nguồn gốc là sự thật.** Câu trả lời chỉ dựa trên nội dung trang đã nạp. Mọi hit và mọi trích dẫn trỏ về **dòng gốc** (`citation_id`) và được đối chiếu lại với text hiện tại (§6.6 bước 5).
-- **Không loại trừ.** Mọi file đã index của case đều có mặt trong mục lục hồ sơ. Classification (§6.9.4) chỉ là gợi ý: không có bộ lọc theo nhãn, nhãn không vào mục lục hồ sơ hay cây. Lọc cứng theo loại giấy tờ chỉ bằng metadata do người dùng gán (§6.3).
+- **Không loại trừ.** Mọi file đã index của case đều có mặt trong mục lục hồ sơ. Classification (§6.9.4) chỉ là gợi ý: không có bộ lọc theo nhãn, nhãn chỉ hiện trên cây như node giấy tờ để đọc (U50, §6.5), không loại file hay trang nào. Lọc cứng theo loại giấy tờ chỉ bằng metadata do người dùng gán (§6.3).
 - **Không kết luận nghiệp vụ** ở tầng index/search. Kiểm tra tuân thủ là việc của agent theo yêu cầu người dùng (§8.3).
 - **Phạm vi là case** (§6.2): mục lục hồ sơ, cây, trang và mọi bước search đều nằm trong một case.
 - Các tín hiệu **rẻ, xác định** (case và metadata qua SQL; full-text qua Postgres FTS + trigram) dùng để thu hẹp phạm vi hoặc làm gợi ý bên cạnh node cây. Chúng không thay thế suy luận của LLM trên cây.
@@ -1022,7 +1036,7 @@ parser: { engine: turboocr }
 
 - Case không ghi loại thì thuộc loại `default`: mã tự do, chỉ `trim`, không kiểm tra thêm.
 - Engine parse được chọn theo thứ tự: `engine` khi reparse → loại case → config KB → `parser.default_engine` (§5.9).
-- Loại case **không** chứa workflow, prompt, danh sách trường cần bóc tách hay danh sách rule. Những thứ đó là nội dung người dùng gửi cho agent (§8.1). Danh sách nhãn `classification.labels` là dữ liệu (tập giá trị cho phép), không phải workflow; `bundles.opens_with` cũng chỉ là tập nhãn, dùng cho đề xuất gom bộ bằng code (§6.9.7).
+- Loại case **không** chứa workflow, prompt, danh sách trường cần bóc tách hay danh sách rule. Những thứ đó là nội dung người dùng gửi cho agent (§8.1). Danh sách nhãn `classification.labels` (KB có `config.doc_types` thì dùng `doc_types` thay, U50) là dữ liệu (tập giá trị cho phép), không phải workflow; `bundles.opens_with` cũng chỉ là tập nhãn, dùng cho đề xuất gom bộ bằng code (§6.9.7).
 - Đổi file YAML chỉ ảnh hưởng case và upload **mới**. Case cũ giữ `case_type`; mã đã lưu không bị chuẩn hoá lại.
 
 **Vòng đời:** `open` → `closed` → xoá.
@@ -1108,12 +1122,14 @@ Cây được dựng **bằng code từ layout TurboOCR, theo từng trang** (U3
 
 1. **Gộp theo layout (code, không gọi LLM).** Trên mỗi trang, block `title`/`heading` (≤ 25 từ) mở một nhóm, các block sau nó là thân nhóm; nội dung trước heading đầu tiên là **nhóm dẫn** (tiếp nối trang trước). Bỏ furniture, header/footer, số trang. Hai heading liền nhau cùng cấp là một heading xuống dòng (trừ khi heading trước là nhãn kết thúc bằng `:` hoặc heading sau tự đánh số "I.", "1.", "1.1", "a)"). Heading có nội dung dưới nó < `index.tree.min_node_tokens` (mặc định 40) và còn heading khác sau nó trên trang (nhãn form, chú thích bị nhận nhầm là tiêu đề) được **gộp vào nhóm trước**. Kết quả là **bản nháp** node của trang: mỗi nhóm có heading là một node, cấp heading suy từ kiểu block và số `#`.
 2. **Node của trang (code).** Mỗi nhóm có heading là một node: tiêu đề là heading (≤ 120 ký tự), cấp suy từ kiểu block (`title` = 1) và số `#`, tóm tắt là ≤ `index.tree.summary_words` (mặc định 60) từ đầu của thân nhóm (trích nguyên văn, giữ nguyên tên, số hiệu, ngày, số tiền). Nhóm dẫn là phần tiếp nối của node đang mở. Không gọi LLM.
-3. **Ghép cây (code).** Đi theo thứ tự trang: node mở cho tới khi có node cùng cấp hoặc cấp cao hơn; nhóm dẫn nối vào node đang mở (mở rộng `page_end`, cộng token, nối tóm tắt; node trải nhiều trang giữ tóm tắt ≤ 2 × `summary_words`). **Bookmark/outline của PDF** (§5.8), nếu có, là các cấp trên cùng; node theo trang nằm dưới bookmark sâu nhất đang mở, và node trùng tên bookmark bắt đầu trên cùng trang được gộp vào bookmark đó. Node chưa có tóm tắt (bookmark không có nội dung riêng) lấy danh sách tiêu đề con. Section (§6.4) được gắn vào node sâu nhất chứa trang đầu của nó.
+3. **Ghép cây (code).** Đi theo thứ tự trang: node mở cho tới khi có node cùng cấp hoặc cấp cao hơn; nhóm dẫn nối vào node đang mở (mở rộng `page_end`, cộng token, nối tóm tắt; node trải nhiều trang giữ tóm tắt ≤ 2 × `summary_words`). **Bookmark/outline của PDF** (§5.8), nếu có, là các cấp trên cùng; node theo trang nằm dưới bookmark sâu nhất đang mở, và node trùng tên bookmark bắt đầu trên cùng trang được gộp vào bookmark đó. Node chưa có tóm tắt (bookmark không có nội dung riêng) lấy danh sách tiêu đề con. Section (§6.4) được gắn vào node sâu nhất chứa trang đầu của nó. **Node giấy tờ (U50):** khi file có segment (§6.9.4), mỗi segment là một node **cấp 1** (`origin=doctype`, `doc_type` = mã loại, tiêu đề = tên loại, khoảng trang = dải trang của segment); các segment phủ kín file (trang không thuộc segment nào thành node `unknown` "Chưa rõ"). Node giấy tờ mới **đóng mọi node đang mở**, nên heading không tràn sang giấy tờ sau; bookmark và node theo trang nằm dưới node giấy tờ của trang đó (cấp +1). File không có segment thì cây như trước, không có cấp giấy tờ.
 4. **Ràng buộc**: `page_start ≤ page_end`, nằm trong file; node con nằm trong khoảng trang của node cha. Hai node liền nhau có thể chung một trang (node trước kết thúc, node sau bắt đầu giữa trang).
 5. Số lần gọi LLM khi index một file = 1 (thẻ tài liệu). `index.tree.llm: false` thì thẻ cũng trích nguyên văn (tiêu đề PDF/title đầu tiên/tên file, vài dòng đầu của trang đầu).
-6. **Thẻ tài liệu** (document card, node gốc): `title`, `summary` ≤ 120 từ (mô tả nội dung theo khoảng trang nếu file gộp nhiều giấy tờ), `page_count` và metadata. Thẻ không có `doc_type`: loại giấy tờ là Classification theo dải trang, chạy ở task riêng sau cây (§6.9.4), và không đưa vào thẻ hay mục lục hồ sơ. Thẻ là dòng của file trong mục lục hồ sơ (§6.6).
+6. **Thẻ tài liệu** (document card, node gốc): `title`, `summary` ≤ 120 từ (mô tả nội dung theo khoảng trang nếu file gộp nhiều giấy tờ), `page_count` và metadata. Thẻ không có `doc_type`: loại giấy tờ là Classification theo dải trang (§6.9.4), thể hiện bằng các node giấy tờ cấp 1 dưới thẻ (bước 3), không phải bằng thẻ. Thẻ là dòng của file trong mục lục hồ sơ (§6.6).
 7. Ghi `token_count` cho từng node (nội dung) và `tree_tokens` cho cây dạng mục lục (tiêu đề + tóm tắt của mọi node), để search và tool biết có nạp **nguyên cây** vào context được không (§6.6 bước 2, §8.2).
 8. **Nối vào cây hồ sơ** (bảng `case_tree`). Khi cây của file được lưu lần đầu, file được **nối thêm làm nhánh cuối** của cây hồ sơ (`seq` tăng dần). Không dựng lại gì khác: cây và ref `d<n>` của các file đã có giữ nguyên. Reparse ghi cây mới của file nhưng nhánh giữ vị trí; xoá file thì nhánh mất theo (`ON DELETE CASCADE`), các nhánh khác không đổi. Mục lục hồ sơ, search (§6.6), `kb_list_documents` và Module 3 đọc các file theo thứ tự này; file chưa có cây (đang xử lý) đứng sau, theo thời điểm upload. **Ref `d<n>`** của file là vị trí nhánh trong cây hồ sơ (file thứ n được thêm, chỉ tính file chưa xoá): cố định khi lọc metadata hay thêm file, và chỉ tra được trong case của phiên.
+
+9. **Dựng lại khi segment đổi (U50).** Khi người dùng lưu màn Tách & gom (`PUT /cases/:id/split`) hoặc `document:classify` ghi đề xuất mới, cây của **file đó** được dựng lại bằng code từ các trang đã lưu và segment hiện tại (segment `source=user` thắng đề xuất chồng lên nó): giữ nguyên thẻ tài liệu, **không gọi model**, không đụng tới file khác và vị trí nhánh `d<n>`. ID node `n<k>` của file đó có thể đổi.
 
 **Dạng cây đưa cho LLM** (dùng chung cho search bước 2, `kb_document_tree` và nhánh cây trong mục lục hồ sơ):
 
@@ -1124,6 +1140,14 @@ Cây được dựng **bằng code từ layout TurboOCR, theo từng trang** (U3
   [n4] A. Tài sản ngắn hạn (tr. 7) — …
   [n5] B. Tài sản dài hạn (tr. 8) — …   (+6 mục, expand n5)
 </tree>
+```
+
+File có node giấy tờ (U50) in loại ngay sau tiêu đề; đây cũng là dạng trong `<case_tree>` và nhánh cấp đầu của mục lục hồ sơ:
+
+```
+[d1.n1] Hợp đồng [loại: hop_dong] (tr. 1–5) — HỢP ĐỒNG MUA BÁN; Điều 1; Điều 2
+  [d1.n3] HỢP ĐỒNG MUA BÁN (tr. 1–5) — Số 012/2026/HDMB…
+[d1.n2] Hoá đơn [loại: hoa_don] (tr. 6) — HOÁ ĐƠN GIÁ TRỊ GIA TĂNG số 0001234…
 ```
 
 - Mặc định in **cả cây**. Chỉ khi `tree_tokens` vượt ngân sách của lần gọi thì cắt từ cấp sâu nhất lên: node bị lược con in `(+k mục, expand nX)`, để LLM mở tiếp.
@@ -1348,9 +1372,16 @@ Không có bước pipeline tự bóc tách field (xem Q21).
 
 **Đơn vị là dải trang (segment), không phải cả file.** Một file gộp CCCD (tr. 1) + hợp đồng (tr. 2–9) + uỷ nhiệm chi (tr. 10) có ba segment. Trang không có segment nào là chưa phân loại.
 
-**Nhãn.** Tập nhãn lấy từ `classification.labels` của loại case (§6.2), cộng hai nhãn có sẵn: `unknown` (không đủ tin cậy) và `other` (không thuộc nhãn nào). Loại case không có `labels` thì không bao giờ phân loại (`documents.classify_status=skipped`).
+**Nhãn.** Tập nhãn là **`config.doc_types` của KB** (U50: mỗi loại có `name` là mã, `title`, `description`; đặt khi tạo KB, sửa bằng `PATCH /kbs/:id`); KB không khai báo thì lấy từ `classification.labels` của loại case (§6.2). Mã theo `^[a-z0-9_][a-z0-9_-]{0,63}$`, không trùng, không là `other`/`unknown`. Cộng hai nhãn có sẵn: `unknown` (không đủ tin cậy) và `other` (không thuộc nhãn nào). Loại case không có `labels` thì không bao giờ phân loại (`documents.classify_status=skipped`).
 
-**Tuỳ chọn, mặc định không chạy (U31).** Đọc nội dung từng trang để phân loại tốn token mà độ chính xác không cao, nên pipeline không tự phân loại. Loại case có `labels` thì document ở `classify_status=none` (chưa ai yêu cầu). Task `document:classify` chỉ chạy khi:
+**Phân loại từng trang theo ảnh (Decision API, U50).** Chạy khi KB có `doc_types` **và** có `classify.decision.base_url`; không có một trong hai thì bỏ qua, pipeline như cũ.
+1. **Mỗi trang một lần gọi, ngay khi có ảnh trang** (PDF đã render, hoặc file ảnh upload), **chạy đồng thời với OCR** của trang đó trong task `page:ocr`: chỉ cần ảnh, không chờ và không phụ thuộc kết quả OCR; loại được lưu trước khi trang kết thúc, kể cả khi OCR lỗi. Tự động, không cần bấm nút. **Chế độ tuần tự** (`classify.decision.serial: true`): dùng khi model phân loại và model OCR cùng nằm trên một server local không đủ tài nguyên nạp hai model (LM Studio). Khi đó trong một process không bao giờ có lần gọi Decision API nào chạy cùng lúc với OCR của bất kỳ trang nào: mỗi trang phân loại trước rồi mới OCR, và một cổng chung cho các trang đang xử lý chạy theo lượt (các trang đang chờ được phân loại cùng nhau, rồi OCR cùng nhau), nên server chỉ đổi model một lần mỗi lượt thay vì mỗi trang. Request theo mẫu `spec/classification/test_image.py`: `POST <base_url>/v1/systemone` với `model`, `state: "Ảnh chứng từ:"`, `images: [data URL base64 của ảnh trang]` (ảnh cạnh dài > `classify.decision.max_side` được thu nhỏ trước), `questions.document_type = {type: "choice", instructions, criteria}`; `criteria` là `{mã: "tên — mô tả"}` của các `doc_types`, **luôn cộng thêm `other`** ("Khác — trang trắng, hoặc giấy tờ không thuộc các loại trên"): không có nó model buộc phải chọn một loại và chọn sai với độ tin cậy cao (đo thật: biên bản họp → giấy chứng nhận 0.77, lá thư → uỷ nhiệm chi 0.85; có `other` thì cả hai ra `other` ≥ 0.88). Trả lời `answers.document_type.{choice, confidence, probabilities}`.
+2. **Lưu trên trang:** `document_pages.doc_type`, `doc_type_confidence`. `choice` không thuộc `criteria`, HTTP lỗi hay timeout thì ghi log, trang để trống (chưa phân loại) và **không làm hỏng trang**. **Lưu kết quả để dùng lại:** câu trả lời thành công được lưu ở bảng `model_cache` theo hash của (model, instructions, danh sách loại, ảnh trang); cùng trang đó (reparse, upload lại đúng file) lấy từ bảng, không gọi lại model. Lần gọi VLM của `turboocr_vlm` (§5.9) cũng được lưu theo hash của (model, prompt, ảnh), trừ kết quả bị cắt ở `max_tokens`. Trang đã có loại thì `page:ocr` chạy lại (retry OCR) **không gọi lại** Decision API. `GET /documents/:id/pages` trả `doc_type`, `doc_type_confidence` của từng trang, nên UI hiện loại ngay khi trang còn đang OCR.
+3. **Break và group (code, trong `index:tree`, khi file chưa có segment của `gen` hiện tại):** đi theo thứ tự trang; các trang liền nhau **cùng loại** là một segment, **đổi loại thì mở segment mới**. **Trang trắng** (`is_blank`) luôn là `other`, bất kể model trả gì. Trang model xếp `other` mà **có nội dung nhưng không có tiêu đề giấy tờ của riêng nó** (không có node cấp 1 trên trang), đứng ngay sau một giấy tờ có loại, là **trang tiếp theo của giấy tờ đó** (trang 2 của giấy chứng nhận, hợp đồng); trang `other` có tiêu đề riêng (biên bản họp) thì mở segment `other`. Hệ quả đã biết: một tờ rời không có tiêu đề (lá thư) nằm ngay sau một giấy tờ có loại sẽ bị nối vào giấy tờ đó; sửa ở màn Tách & gom. Trang có độ tin cậy < `min_confidence` (của loại case, rồi `classify.min_confidence`) hoặc chưa phân loại **nối vào segment trước nó** (trang sau trang đầu của một giấy tờ thường không giống loại nào); nếu ở đầu file thì thành segment `unknown` (giữ loại model đoán ở `proposed_label`). Confidence của segment là trung bình các trang đủ tin cậy. Không trang nào được phân loại thì không có segment.
+4. **Ghi và tự xác nhận (U50: tách & gom tự động, không cần bấm nút):** segment được ghi `source=pipeline`, `mode=image`, `model` = `classify.decision.model`, `classify_status=done`; ngay sau khi cây của file được lưu, `index:tree` **tự xác nhận** cách tách & gom của case đúng như màn Tách & gom sẽ hiện nếu người dùng bấm "Xác nhận" mà không sửa gì: file đã duyệt giữ nguyên, file mới lấy segment đề xuất và bộ do code gom (§6.9.7), trang chưa rõ loại thành `other`; kết quả lưu thành segment `source=user` + `case_bundles`, file tính là đã duyệt (`split_reviewed_by` = người tạo case), nên bảng (§6.9.6) dùng được ngay. File không có đề xuất nào (Decision API lỗi mọi trang) được để nguyên, chưa duyệt. Tự xác nhận lỗi thì chỉ ghi log, đề xuất còn đó. Màn Tách & gom (§7.9) chỉ còn để **sửa** khi máy tách sai. Hai giấy tờ cùng loại nằm liền nhau (hai hợp đồng liên tiếp) ra **một** segment; người dùng cắt ở màn Tách & gom, có dấu điểm cắt (dưới) gợi ý.
+5. Segment là node cấp 1 của cây file (§6.5 bước 3).
+
+**Phân loại bằng LLM: tuỳ chọn, mặc định không chạy (U31).** Đọc nội dung từng trang để phân loại tốn token mà độ chính xác không cao, nên pipeline không tự phân loại. Loại case có `labels` thì document ở `classify_status=none` (chưa ai yêu cầu). Task `document:classify` chỉ chạy khi:
 - loại case bật `classification.auto: true`: chạy sau `index:tree`, **luôn ở chế độ `titles`**;
 - người dùng hoặc client yêu cầu: `POST /documents/:id/classify` hoặc `POST /cases/:id/classify` (mọi file của case), với `mode` = `titles` (mặc định) hoặc `pages` (§10.7).
 
@@ -1386,7 +1417,8 @@ Dấu được gửi kèm đầu vào dạng `[p5] ✂ trang về 1 (Trang 1/2)`
 - `kb_list_documents` và `kb_page_overview` trả segment (nhãn, trang, confidence) để agent tự quyết định đọc trang nào (vẫn qua `page_from`/`page_to`).
 - UI hiển thị dải nhãn trên trình xem file, bấm vào mở evidence.
 - **Bảng theo loại giấy tờ** (§6.9.6) và **bộ chứng từ** (§6.9.7) chỉ dùng segment `source=user`, tức kết quả người dùng đã duyệt ở màn Tách & gom. Segment `source=pipeline` chỉ là đề xuất hiện trên màn đó; nhãn do LLM đoán không bao giờ tự quyết dòng nào vào bảng nào.
-- **Không** có tham số lọc theo nhãn ở `kb_search` hay `POST /search`; nhãn không vào mục lục hồ sơ, cây hay thẻ tài liệu. Muốn lọc cứng theo loại giấy tờ thì dùng metadata do người dùng gán (§6.3), không dùng nhãn do LLM đoán.
+- **Cây hồ sơ (U50):** segment là node giấy tờ của cây file, nên nhãn và khoảng trang có trên `<case_tree>`, `kb_case_toc`, `kb_document_tree` và Module 3; `kb_read_pages` đọc theo node đó (§6.5, §8.2).
+- **Không** có tham số lọc theo nhãn ở `kb_search` hay `POST /search`; nhãn không vào thẻ tài liệu. Muốn lọc cứng theo loại giấy tờ thì dùng metadata do người dùng gán (§6.3), không dùng nhãn do LLM đoán.
 
 #### 6.9.5 Đọc cả cây
 
@@ -1511,6 +1543,7 @@ Nhãn Classification và field của từng file vẫn xem ở trình xem tài l
 - **Tìm trong hồ sơ**: ô tìm kiếm chạy `POST /search` với `case_ids=[case]`, mặc định `mode=keyword` (không tốn LLM); người dùng bật `reasoning` khi cần.
 - **Tìm trong file**: `POST /documents/:id/search` (§6.8), kết quả nhóm theo trang.
 - **Trình xem file**: người duyệt xác nhận, sửa hoặc bác bỏ field ngay trên trang; bấm một evidence thì tô sáng vị trí (§10.7).
+- **Dải ảnh nhỏ bên trái của trình xem file ngắt theo giấy tờ (U50):** trước trang đầu của mỗi giấy tờ có một dòng tiêu đề (tên loại và khoảng trang, lấy từ node `doctype` của cây file), các trang cùng giấy tờ nằm liền dưới nó. File đang xử lý (chưa có cây) thì ngắt tạm theo `doc_type` của từng trang; file không có loại giấy tờ thì dải ảnh như cũ.
 
 ### 7.4 Tương tác với agent
 
@@ -1611,13 +1644,13 @@ Một phiên agent (session) làm việc với **đúng một case**. Đây là 
 
 | Tool | Tham số chính | Trả về |
 |---|---|---|
-| `kb_case_toc` | `metadata?`, `expand?` (ID ngắn, ví dụ `d3`) | cây của case (§6.6 bước 2; bản không lọc đã có sẵn trong `<case_tree>` của prompt, U42): mỗi file một dòng (thẻ tài liệu, số trang, metadata) kèm **nguyên cây** khi tổng vừa `search.tree_token_budget`, vượt thì nhánh cấp đầu; `expand` trả phần bị lược; `document_ids` ánh xạ `d<n>` → `document_id`. Là điểm vào của luồng hỏi đáp |
+| `kb_case_toc` | `metadata?`, `expand?` (ID ngắn, ví dụ `d3`) | cây của case (§6.6 bước 2; bản không lọc đã có sẵn trong `<case_tree>` của prompt, U42): mỗi file một dòng (thẻ tài liệu, số trang, metadata) kèm **nguyên cây** khi tổng vừa `search.tree_token_budget`, vượt thì nhánh cấp đầu; `expand` trả phần bị lược; `document_ids` ánh xạ `d<n>` → `document_id`. File gồm nhiều giấy tờ có mỗi giấy tờ một node `[d<n>.n<k>] tên loại [loại: <mã>] (tr. a–b)` (U50). Là điểm vào của luồng hỏi đáp |
 | `kb_search` | `query, document_ids?, metadata?, page_from?, page_to?, top_k?` | **chỉ full-text** (mode `keyword`, U40): dòng chứa đúng từ cần tìm có `citation_id`, trang, `node` (ID node sâu nhất chứa trang trên cây của file) và `section`; chỉ trong case của session |
 | `kb_list_documents` | `metadata?, status?, limit?` | các file của case (lọc thêm theo metadata), kèm trạng thái, số trang và segment phân loại (ref `d<n>.s<k>`, nhãn, trang, confidence, `source`, mã bộ nếu đã duyệt; §6.9.4, §6.9.7) |
 | `kb_metadata_values` | `key` | các giá trị metadata khác nhau + số file, chỉ đếm trong case |
 | `kb_find_in_document` | `document_id, query, page_from?, page_to?` | các trang và line khớp (§6.8) |
 | `kb_page_overview` | `document_id, page_from?, page_to?` (mặc định mọi trang) | từng trang: tiêu đề layout, đoạn đầu, số dòng, số bảng, nhánh cây chứa trang, nhãn segment chứa trang |
-| `kb_read_pages` | `document_id`, `node_id?` (`n<k>` hoặc `d<n>.n<k>`) hoặc `page_from, page_to?` (tối đa 10 trang/lần) | các trang dạng dòng `[L<n>]`, có marker trang. Với `node_id`: đúng khoảng trang của node; node dài hơn 10 trang thì trả 10 trang đầu kèm danh sách node con (ID, tiêu đề, trang) |
+| `kb_read_pages` | `document_id`, `node_id?` (`n<k>` hoặc `d<n>.n<k>`) hoặc `page_from, page_to?` (tối đa 10 trang/lần) | các trang dạng dòng `[L<n>]`, có marker trang. Với `node_id`: đúng khoảng trang của node; node dài hơn 10 trang thì trả 10 trang đầu kèm danh sách node con (ID, tiêu đề, trang). `node_id` là node giấy tờ thì đó là các trang của giấy tờ đó. Kết quả luôn mở đầu bằng dòng `Documents on these pages: n1 Hợp đồng [loại: hop_dong] (tr. 1–5); …` nêu giấy tờ mà các trang thuộc về (U51; file không có node giấy tờ thì không có dòng này) |
 | `kb_document_tree` | `document_id, node_id?` | cây mục lục của file kiểu PageIndex (§6.5): **cả cây** (hoặc cả cây con của `node_id`) kèm tóm tắt và khoảng trang của từng node, khi vừa `search.tree_token_budget`; vượt thì cắt từ cấp sâu nhất, node bị lược ghi `(+k mục, expand nX)` để gọi lại với `node_id` |
 | `kb_locate` | `citation_id` hoặc `(document_id, text)` | trang + bbox (citation dòng, element hoặc ô bảng, §5.6) |
 | `kb_read_table` | `document_id, page, block_no` | bảng dạng lưới: mỗi ô có `citation_id` dạng `…:t<k>:r<i>c<j>`, text, confidence; kèm bảng nối trang (`continues_from`) |
@@ -1731,7 +1764,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 
 ### 9.2 DDL
 
-Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ. Mẫu prompt, bảng tổng hợp, vai trò và chi phí ở `0020_sheets_roles_usage.sql` (U43–U46, cần `0019`); bộ chứng từ, field theo segment và bảng theo loại giấy tờ ở `0021_bundles.sql` (U47–U49).
+Migration mới đặt trong `migrations/postgres`, tiếp nối `0005`. Case được thêm ở `0013_cases.sql`, đăng nhập ở `0015_auth.sql`, gỡ LLM Wiki ở `0016_drop_wiki.sql`, JSON trang (raw engine, text layer) chuyển từ S3 vào `document_pages` ở `0017_page_json.sql`, cây hồ sơ ở `0018_case_tree.sql`, loại giấy tờ của trang và của node cây ở `0022_page_doc_types.sql` (U50, cuối khối DDL), mô hình dữ liệu hồ sơ ở `0019_document_model.sql` (cuối khối DDL, chưa có trong code); bảng `documents` dưới đây đã ghi cột `case_id` cho dễ đọc. Bảng và cột đã bị xoá (graph bản 0.4, LLM Wiki bản 0.5–0.10) không ghi lại ở đây. Dưới đây là DDL rút gọn: đã bỏ bớt cột audit `created_at`/`updated_at`, còn các cột chính thì giữ đủ. Mẫu prompt, bảng tổng hợp, vai trò và chi phí ở `0020_sheets_roles_usage.sql` (U43–U46, cần `0019`); bộ chứng từ, field theo segment và bảng theo loại giấy tờ ở `0021_bundles.sql` (U47–U49).
 
 ```sql
 -- 0006_extensions.sql
@@ -1900,7 +1933,7 @@ CREATE TABLE doc_tree_nodes (
   ord int NOT NULL,
   level int NOT NULL,
   title text NOT NULL,
-  origin text NOT NULL,                       -- heading|toc|llm|page
+  origin text NOT NULL,                       -- root|doctype|bookmark|layout (doctype: node giấy tờ, §6.5 bước 3)
   page_start int NOT NULL, page_end int NOT NULL,
   summary text,
   section_ids uuid[] NOT NULL DEFAULT '{}',   -- chỉ lá
@@ -2230,6 +2263,21 @@ ALTER TABLE field_corrections
 DROP INDEX field_corrections_tpl_idx;
 CREATE INDEX field_corrections_tpl_idx ON field_corrections (template_id, template_version, label, key);
 
+
+-- 0022_page_doc_types.sql (U50, U51; §6.5, §6.9.4)
+ALTER TABLE document_pages
+  ADD COLUMN doc_type text NOT NULL DEFAULT '',              -- mã trong doc_types của KB; '' = chưa phân loại
+  ADD COLUMN doc_type_confidence real NOT NULL DEFAULT 0;
+ALTER TABLE doc_tree_nodes ADD COLUMN doc_type text NOT NULL DEFAULT '';  -- origin=doctype: mã loại của node
+-- document_segments.mode có thêm giá trị 'image' (segment gom từ loại của từng trang)
+
+-- 0023_model_cache.sql (§5.9, §6.9.4): câu trả lời của các lần gọi model chậm trên ảnh trang, theo hash của request
+CREATE TABLE model_cache (
+  key text PRIMARY KEY,                       -- sha256 của kind, model, prompt/danh sách loại và ảnh
+  kind text NOT NULL,                         -- decision | vlm
+  value jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 ```
 
 Ghi chú:
@@ -2250,7 +2298,7 @@ Mọi route `/v1/*` cần xác thực (§10.6): `Authorization: Bearer <access t
 
 | Method | Path | Mô tả |
 |---|---|---|
-| POST | `/kbs` | tạo KB (`name`, `config`) |
+| POST | `/kbs` | tạo KB (`name`, `config`); `config.doc_types: [{name, title, description?}]` là các loại giấy tờ của KB (U50, §6.9.4), mã sai hoặc trùng → `400` |
 | GET | `/kbs` | danh sách KB |
 | GET / PATCH / DELETE | `/kbs/:id` | chi tiết, cập nhật config, xoá (async) |
 | GET | `/case-types` | các loại case đã nạp (`name, title, code.pattern`, metadata schema, engine parse, nhãn phân loại) |
@@ -2562,13 +2610,20 @@ usage:                              # chi phí (U46, §8.5)
     "qwen/qwen3.8-27b": { input: 0, output: 0 }   # ví dụ: điền giá thật của provider
 sheets:                             # bảng tổng hợp (U43, §6.9.6)
   low_confidence: 0.75              # dưới mức này ô hiện "cần xem"
-classify:                           # document:classify (§6.9.4); nhãn nằm trong loại case
+classify:                           # §6.9.4; nhãn: doc_types của KB, không có thì labels của loại case
   model: ""                         # rỗng = llm.default_model
   min_confidence: 0.6               # loại case ghi đè bằng classification.min_confidence
   titles_per_page: 3                # mode=titles: số element title/heading tối đa mỗi trang
   lines_per_page: 8                 # chỉ dùng ở mode=pages (gọi API)
   doc_token_budget: 16000           # mode=pages: lớn hơn thì rơi về titles
   page_marks: true                  # gửi kèm dấu điểm cắt do code tìm (trang về 1, trang trắng, đổi khổ; §6.9.4, U49)
+  decision:                         # Decision API phân loại ảnh từng trang (U50), chạy trong page:ocr khi KB có doc_types
+    base_url: ${DECISION_API_URL}   # vd http://127.0.0.1:1234; rỗng = không phân loại trang
+    model: ${DECISION_API_MODEL}    # vd cloudflare_clef-flash
+    instructions: ""                # rỗng = "Đây là loại chứng từ nào?"
+    timeout: 120s                   # mỗi lần gọi
+    max_side: 1288                  # ảnh trang có cạnh dài lớn hơn thì thu nhỏ trước khi gửi
+    serial: ${DECISION_API_SERIAL}  # true = phân loại và OCR không bao giờ chạy cùng lúc (một server local, mỗi lúc một model); mặc định false = chạy đồng thời
 
 fields:                             # Extracted Field (§6.9.3)
   max_per_call: 50                  # số field tối đa mỗi lần kb_save_fields
@@ -2626,6 +2681,7 @@ fields:                             # Extracted Field (§6.9.3)
 | N44 | **Bảng theo loại giấy tờ.** Case có 3 bộ (3 hợp đồng, 5 hoá đơn, 3 BB đã duyệt), chọn 2 bảng con Hợp đồng + Hoá đơn: bảng có đúng 2 bảng con, 3 và 5 dòng, cột đầu là Bộ, cột là trường của mẫu; `.xlsx` có đúng 2 sheet dữ liệu + `_bp`, không có cột tin cậy/nguồn/trạng thái và không có sheet Nguồn. Hai hoá đơn trong cùng một file có field riêng theo `segment_id`. Mẫu 0.16 (`fields`) chạy như một bảng con không nhãn | integration test (fake runner) + excelize đọc lại |
 | N45 | **Tách & gom.** File 14 trang (HĐ 1–4, HĐơn 5, HĐơn 6, BB 7–8, HĐ 9–12, HĐơn 13, BB 14) có footer "Trang 1/n": `classify` `titles` gọi LLM đúng 1 lần, đầu vào có dấu ✂ ở trang 1, 5, 6, 7, 9, 13, 14; đề xuất gom ra 2 bộ theo `opens_with: [hop_dong]`. `POST /cases/:id/sheets` trước khi duyệt → `409`; `PUT /cases/:id/split` thiếu trang → `422`; duyệt lại không đổi dải trang thì giữ id segment và field. Segment `pipeline` không bao giờ thành dòng của bảng | integration test (fake LLM) |
 | N46 | **Panel nguồn thu gọn.** Mở trang bảng: panel phải đóng (dải icon), lưới chỉ có Bộ + cột trường; chọn ô không mở panel; bấm "Nguồn & lịch sử" thì hiện nguồn, tin cậy của ô đang chọn; nhập `.xlsx` thì panel mở ở tab Lịch sử chỉnh sửa | chạy trình duyệt (Playwright) |
+| N47 | **Phân loại trang theo ảnh, node giấy tờ.** KB có `doc_types` (hop_dong, hoa_don), Decision API giả trả tr. 1 = hop_dong, tr. 2 lỗi, tr. 3 = hoa_don: segment đề xuất là hop_dong tr. 1–2 và hoa_don tr. 3 (`source=pipeline`, `mode=image`); cây file có hai node cấp 1 `origin=doctype`; mục lục hồ sơ chứa `Hợp đồng [loại: hop_dong] (tr. 1–2)` và `Hoá đơn [loại: hoa_don] (tr. 3)`. Lưu split "cả file là hop_dong": cây còn một node giấy tờ tr. 1–3, thẻ tài liệu giữ nguyên, không gọi model. KB không có `doc_types`: Decision API không được gọi, cây không có node giấy tờ |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2653,6 +2709,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P15** | Trang phương án kiểu NotebookLM và xuất bảng (U43): `case_sheets`, task `case:sheet`, `excelize`, Studio, trang bảng. Cần **P8** | N38, N43 | ✅ xong (08/10/2026) |
 | **P16** | Chỉnh sửa và nhập lại (U44): `/sheets/:id/edits`, `/sheets/:id/import`, `field_corrections`, thống kê AI sai theo trường | N39, N40 | ✅ xong (08/10/2026) |
 | **P17** | Bảng theo loại giấy tờ, tách & gom bộ chứng từ (U47–U49): migration `0021`; dấu điểm cắt trong `document:classify`; đề xuất gom bộ (code) + `GET/PUT /cases/:id/split`; `segment` ở `kb_save_fields`/`kb_get_fields`; mẫu bảng `tables`; `case:sheet` theo bộ, `rows` theo giấy tờ; `.xlsx` mỗi bảng con một sheet, bỏ cột tin cậy/nguồn và sheet Nguồn; trang bảng có sheet theo bảng con và panel Nguồn & lịch sử thu gọn; màn Tách & gom. Cần P15, P16 | N44, N45, N46 | ✅ xong (08/10/2026); một phần của §6.9.4 chưa làm, xem §15.2 |
+| **P18** | Phân loại trang theo ảnh và node giấy tờ (U50, U51): `KBConfig.doc_types` + hộp thoại tạo KB; client `internal/decision`; bước phân loại trong `page:ocr`; migration `0022`; `SegmentsFromPages` + node `doctype` trong `BuildTree`; `RebuildTree` khi lưu split / classify; `[loại: …]` trên cây; `kb_read_pages` nêu giấy tờ | test N47 (dummy: Decision API giả, Postgres test) pass; gọi thử Decision API thật qua client bằng một ảnh trang | **xong** (11/10/2026) |
 
 ---
 
@@ -2712,6 +2769,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Field + evidence, tool `kb_save_fields`/`kb_get_fields` (phần §6.9.3 cần cho bảng) | `internal/application/service/docmodel`, `internal/tools/fields.go`, `repository/postgres/fields.go` |
 | Bảng tổng hợp (U43, U44, §6.9.6): task `case:sheet`, chỉnh sửa, `field_corrections`, xuất/nhập `.xlsx` (excelize); từ U47/U48 mỗi loại giấy tờ một bảng con, dòng theo giấy tờ, mỗi bộ một lượt agent, `.xlsx` mỗi bảng con một sheet chỉ có dữ liệu | `internal/application/service/sheets`, `handler/sheets.go` |
 | Tách & gom bộ chứng từ (U48, U49, §6.9.4, §6.9.7): migration `0021`, `document_segments`, `case_bundles`, dấu điểm cắt bằng code, task `document:classify` (1 lần gọi LLM mỗi file qua `Completer`), đề xuất gom bộ bằng code, `POST /cases/:id/classify`, `GET/PUT /cases/:id/split`; field theo segment (`segment` ở `kb_save_fields`) | `internal/application/service/docmodel/split.go`, `repository/postgres/segments.go`, `handler/split.go`, `frontend/src/pages/cases/SplitPage.tsx` |
+| Phân loại trang theo ảnh và node giấy tờ (U50, U51, §6.5, §6.9.4): `KBConfig.doc_types` (kiểm mã khi tạo/sửa KB, hộp thoại tạo KB), client Decision API, bước phân loại trong `page:ocr`, migration `0022`, gom trang thành segment `mode=image`, node `doctype` của cây + dựng lại khi lưu split/classify, `[loại: …]` trên cây và mục lục hồ sơ, `kb_read_pages` nêu giấy tờ | `internal/decision`, `internal/application/service/document/pipeline.go` (`classifyPage`), `internal/application/service/index/doctypes.go`, `tree.go` (`BuildTree`), `service.go` (`RebuildTree`), `internal/application/service/cases` (`Classification`), `internal/tools/knowledge.go`, `frontend/src/components/AppContext.tsx` |
 | Trang phương án kiểu NotebookLM, trang bảng, Cài đặt (Key & chi phí, Người dùng), hộp thoại cấu hình chat và mẫu bảng (§7.2, §7.6–§7.8) | `frontend/src/pages/cases/{CasePage,CaseChat,Studio,dialogs}.tsx`, `frontend/src/pages/sheets/SheetPage.tsx`, `frontend/src/components/SettingsDialog.tsx` |
 | Web app nhúng vào binary server (`embed.FS`, route không thuộc API trả `index.html`); Dockerfile có stage `ui` (Node) build `frontend/` | `internal/webui`, `frontend/vite.config.ts` (outDir), `deploy/Dockerfile`, `.dockerignore`, `make ui` / `make build-server` / `make docker` |
 
@@ -2727,6 +2785,9 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | `kb_list_documents`, `kb_page_overview` trả segment (§8.2) | Chưa trả; agent nhận ref `d<n>.s<k>` của giấy tờ trong tin nhắn của `case:sheet`, và `kb_save_fields` nhận `segment` |
 | `document:classify` ở pool `enrich` (§4.1) | Chạy trên pool `index`, queue `index_interactive`, như `case:sheet`; chi phí ghi `kind=parse`, tính cho người bấm |
 | `case_sheets` theo pool `enrich` (§4.4 bản 0.16 nháp) | Chạy trên pool `index`, queue `index_interactive` (không có pool `enrich` trong code) |
+| Nút "AI đề xuất lại" dùng cùng nguồn phân loại với pipeline | `POST /cases/:id/classify` vẫn chạy LLM `titles`/`pages` (§6.9.4) và thay đề xuất `mode=image`; chưa có API chạy lại Decision API cho file đã index (reparse thì chạy lại) |
+| Bảng theo loại giấy tờ dùng nhãn của KB (§6.9.6) | Mẫu bảng vẫn kiểm `label` theo `classification.labels` của loại case; loại chỉ khai báo ở `doc_types` của KB chưa đặt được làm `label` của bảng |
+| Mọi lần gọi model ghi `usage_events` (§8.5) | Lần gọi Decision API chưa ghi `usage_events` |
 | Cache kết quả search trên Redis (§6.6) | Cache TTL trong bộ nhớ của từng instance |
 | Hiển thị hồ sơ theo cây (§7) | Trang `/cases` hiện có hai cột (mục lục → cây, node và ảnh trang). Bố cục ba cột kiểu NotebookLM, Studio và trang bảng (§7.2, §7.6) thuộc P15 |
 | Upload: `case_code` gửi trước file | Các field của form (`case_code`, `case_id`, `case_type`, `metadata`, `callback_url`) gửi trước hay sau file đều được: file stream lên S3 trước, case được giải ở cuối request rồi mới tạo dòng `documents` |
@@ -2787,14 +2848,15 @@ Mục này gom các quy tắc dễ làm sai khi code, rải ở nhiều mục ph
 - PageIndex: cây vừa `search.tree_token_budget` thì luôn nạp **nguyên khối** (search bước 2, `kb_document_tree`); chỉ cắt theo cấp khi vượt ngân sách. Không đưa cây từng cấp một khi đã vừa ngân sách (§6.5).
 - Mục lục hồ sơ dựng bằng code khi đọc, không lưu, không gọi LLM (§6.6).
 - Search: không có trường `reason` trong JSON của LLM; mỗi request tối đa `search.max_llm_calls` (§6.6).
-- Phân loại: **mặc định không chạy**. Chỉ chạy khi loại case bật `classification.auto` (chế độ `titles`, chỉ gửi dòng tiêu đề) hoặc khi gọi API; chế độ `pages` chỉ qua API. File không có tiêu đề nào → không gọi LLM (§6.9.4).
+- **Phân loại theo ảnh (U50):** chỉ khi KB có `doc_types` và có `classify.decision.base_url`; mỗi trang đúng một lần gọi Decision API (đồng thời với OCR, retry OCR không gọi lại; kết quả lưu ở `model_cache` nên reparse hay upload lại đúng file cũng không gọi lại), không gọi LLM. Lỗi của nó không bao giờ làm hỏng trang hay file. Decision API không phải chat model nên có client riêng (`internal/decision`), là ngoại lệ duy nhất của quy tắc "mọi lần gọi model đi qua agent".
+- Phân loại bằng LLM: **mặc định không chạy**. Chỉ chạy khi loại case bật `classification.auto` (chế độ `titles`, chỉ gửi dòng tiêu đề) hoặc khi gọi API; chế độ `pages` chỉ qua API. File không có tiêu đề nào → không gọi LLM (§6.9.4).
 - **VLM của parser (§5.9):** chỉ hai bước: TurboOCR, rồi **một lần gọi VLM mỗi trang** với text OCR trong prompt. Không gọi VLM theo vùng layout, không ghép ảnh vùng. Markdown chỉ được dùng ở chỗ OCR xác nhận (căn từ); dòng OCR bị bỏ sót được chèn lại; `seal` gắn nhãn từ layout. Mọi lần gọi đi qua `agent.Extract` (không session, không lịch sử, không tool); không viết client HTTP riêng tới model trong `parser`.
 - Không có bước pipeline tự bóc tách field (Q21). Không có workflow nghiệp vụ, danh sách trường hay rule trong system prompt, config hoặc mô tả tool; mô tả tool chỉ nêu cách dùng tool (luồng duyệt cây) (§8.2). Danh sách trường chỉ đến từ tin nhắn hoặc từ mẫu do người có quyền soạn (U45, §8.4). Bảng (`case:sheet`) chỉ chạy khi người dùng bấm tạo và chỉ gửi agent các trường chưa `confirmed` (§6.9.6).
 - **Chi phí (U46):** mọi lần gọi model ghi đúng một `usage_events` ở hook của agent và kiểm giới hạn **trước** khi gọi. Không gọi provider ở ngoài agent, để không có chi phí nào bị bỏ sót (§8.5).
 
 ### 16.3 Không loại trừ
 
-- Không có tham số lọc theo nhãn phân loại ở bất kỳ tool/API search nào; nhãn không vào mục lục hồ sơ, cây hay thẻ tài liệu. Lọc cứng theo loại giấy tờ chỉ bằng metadata do người dùng gán (§6.1, §6.9.4).
+- Không có tham số lọc theo nhãn phân loại ở bất kỳ tool/API search nào; nhãn không vào thẻ tài liệu; trên cây và mục lục hồ sơ nó chỉ là node giấy tờ để đọc (U50, §6.5), không loại file hay trang nào khỏi kết quả. Lọc cứng theo loại giấy tờ chỉ bằng metadata do người dùng gán (§6.1, §6.9.4).
 - Bộ chứng từ cũng không là bộ lọc search. Dòng của bảng theo loại giấy tờ chỉ đến từ segment `source=user` đã duyệt ở màn Tách & gom; segment `pipeline` không bao giờ tự thành dòng (§6.9.6, §6.9.7).
 - Mọi file đã index của case đều có trong mục lục hồ sơ; phần bị lược vì ngân sách vẫn mở được bằng `expand` (§6.6).
 - Mọi hit phải qua bước 5 đối chiếu `quote` với dòng hiện tại (§6.6).

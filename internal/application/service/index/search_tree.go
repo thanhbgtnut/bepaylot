@@ -178,7 +178,7 @@ func writeBranches(sb *strings.Builder, v *docView) {
 	}
 	parts := make([]string, len(kids))
 	for i, n := range kids {
-		parts[i] = fmt.Sprintf("[%s.%s] %s (tr. %s)", v.ref, n.ShortID, textutil.Truncate(n.Title, 80), pageRange(n.PageStart, n.PageEnd))
+		parts[i] = fmt.Sprintf("[%s.%s] %s (tr. %s)", v.ref, n.ShortID, nodeTitle(n, 80), pageRange(n.PageStart, n.PageEnd))
 		if len(v.tree.children[n.ID]) > 0 {
 			parts[i] += " +"
 		}

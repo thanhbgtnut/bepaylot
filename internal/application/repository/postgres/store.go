@@ -42,6 +42,8 @@ type Store struct {
 	Templates *TemplatesRepo
 	Sheets    *SheetsRepo
 	Usage     *UsageRepo
+
+	ModelCache *ModelCacheRepo
 }
 
 // Open creates the pool and, when cfg.DB.AutoMigrate is set, runs migrations.
@@ -94,11 +96,12 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		Cases:     &CasesRepo{pool},
 		Callbacks: &CallbacksRepo{pool},
 
-		Fields:    &FieldsRepo{pool},
-		Segments:  &SegmentsRepo{pool},
-		Templates: &TemplatesRepo{pool},
-		Sheets:    &SheetsRepo{pool},
-		Usage:     &UsageRepo{pool},
+		Fields:     &FieldsRepo{pool},
+		Segments:   &SegmentsRepo{pool},
+		ModelCache: &ModelCacheRepo{pool},
+		Templates:  &TemplatesRepo{pool},
+		Sheets:     &SheetsRepo{pool},
+		Usage:      &UsageRepo{pool},
 	}, nil
 }
 

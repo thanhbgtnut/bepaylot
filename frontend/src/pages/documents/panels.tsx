@@ -217,7 +217,7 @@ export function TreePanel({ doc, current, onPick }: { doc: Document; current?: n
           className={"mx-2 flex w-[calc(100%-16px)] items-center gap-2 rounded-full py-1.5 pr-3 text-left text-sm " + (on ? "bg-accent-soft text-on-accent-soft" : "hover:bg-fg/8")}
           style={{ paddingLeft: 12 + n.level * 14 }}
         >
-          <span className={"min-w-0 flex-1 truncate " + (n.level === 0 ? "font-medium" : "")}>{n.title || (n.level === 0 ? doc.file_name : n.short_id)}</span>
+          <span className={"min-w-0 flex-1 truncate " + (n.level === 0 || n.doc_type ? "font-medium" : "")}>{n.title || (n.level === 0 ? doc.file_name : n.short_id)}</span>
           <span className="text-xs whitespace-nowrap text-muted">
             {n.page_start === n.page_end ? `tr.${n.page_start}` : `tr.${n.page_start}–${n.page_end}`}
           </span>

@@ -47,6 +47,29 @@ type CaseService interface {
 	ResolveCase(ctx context.Context, owner, kb uuid.UUID, ref CaseRef) (c types.Case, created bool, err error)
 	// CaseType returns the named type, or the default type.
 	CaseType(name string) types.CaseType
+	// Classification returns the document types of a case (§6.9.4): the
+	// doc_types of its KB when it has any, otherwise the labels of its case
+	// type.
+	Classification(ctx context.Context, c types.Case) types.ClassificationRule
+}
+
+// PageClassifier reads the document type of one page from its image
+// (Decision API, §6.9.4).
+type PageClassifier interface {
+	// ClassifyPage returns one of labels with its confidence.
+	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (label string, confidence float64, err error)
+}
+
+// SplitConfirmer stores the split the pipeline proposed for a case as its
+// reviewed split, so nobody has to press a button (§6.9.7).
+type SplitConfirmer interface {
+	AutoConfirm(ctx context.Context, caseID uuid.UUID) error
+}
+
+// TreeRebuilder rebuilds the tree of one file from its stored pages and
+// current segments, without calling a model (§6.5).
+type TreeRebuilder interface {
+	RebuildTree(ctx context.Context, doc uuid.UUID) error
 }
 
 // SectionReader is Module 2 (Index)'s read contract for sections and trees.

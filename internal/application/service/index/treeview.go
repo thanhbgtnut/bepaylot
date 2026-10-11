@@ -128,7 +128,8 @@ func (t *treeView) descendants(id uuid.UUID) int {
 }
 
 // render writes the subtree of top, one node per line
-// "[<prefix>n<k>] title (tr. a–b) — summary", indented by depth. Collapsed
+// "[<prefix>n<k>] title (tr. a–b) — summary", indented by depth; a document
+// of the file (origin doctype) shows its type after the title. Collapsed
 // nodes end with "(+k mục, expand <prefix>n<k>)". It reports whether
 // anything was cut.
 func (t *treeView) render(sb *strings.Builder, top uuid.UUID, prefix string, budget int) bool {
@@ -140,7 +141,7 @@ func (t *treeView) render(sb *strings.Builder, top uuid.UUID, prefix string, bud
 			if !shown[n.ID] {
 				continue
 			}
-			fmt.Fprintf(sb, "%s[%s%s] %s (tr. %s)", strings.Repeat("  ", depth), prefix, n.ShortID, n.Title, pageRange(n.PageStart, n.PageEnd))
+			fmt.Fprintf(sb, "%s[%s%s] %s (tr. %s)", strings.Repeat("  ", depth), prefix, n.ShortID, nodeTitle(n, 0), pageRange(n.PageStart, n.PageEnd))
 			if s := strings.TrimSpace(n.Summary); s != "" {
 				sb.WriteString(" — " + textutil.Truncate(textutil.CollapseSpace(s), 300))
 			}
@@ -154,6 +155,20 @@ func (t *treeView) render(sb *strings.Builder, top uuid.UUID, prefix string, bud
 	}
 	walk(top, 0)
 	return cut
+}
+
+// nodeTitle is the title of a node as the LLM reads it, cut to max runes
+// (0 = whole): a document of the file carries its type, "Hợp đồng [loại:
+// hop_dong]".
+func nodeTitle(n types.TreeNode, max int) string {
+	title := n.Title
+	if max > 0 {
+		title = textutil.Truncate(title, max)
+	}
+	if n.DocType != "" {
+		title += " [loại: " + n.DocType + "]"
+	}
+	return title
 }
 
 // pageRange formats "a–b", or "a" for one page.

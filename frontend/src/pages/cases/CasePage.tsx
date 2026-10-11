@@ -373,7 +373,8 @@ function NodeList({
             className={rowCls(n.short_id === nodeId)}
             style={{ paddingLeft: 12 + depth * 16 }}
           >
-            <span className="min-w-0 flex-1 truncate">{n.title || n.short_id}</span>
+            {n.doc_type && <Icon name="description" size={16} />}
+            <span className={"min-w-0 flex-1 truncate " + (n.doc_type ? "font-medium" : "")}>{n.title || n.short_id}</span>
             <span className="text-xs whitespace-nowrap text-muted">{pages(n.page_start, n.page_end)}</span>
           </button>
           <NodeList parent={n.id} kids={kids} depth={depth + 1} docId={docId} nodeId={nodeId} onSelect={onSelect} />

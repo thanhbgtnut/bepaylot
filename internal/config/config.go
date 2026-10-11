@@ -76,6 +76,23 @@ type Classify struct {
 	// PageMarks sends the cut hints found by code (page number back to 1,
 	// blank page, page size change) with the titles (U49).
 	PageMarks bool `yaml:"page_marks"`
+	// Decision is the Decision API that reads the document type of a page
+	// from its image (U50).
+	Decision Decision `yaml:"decision"`
+}
+
+// Decision configures the Decision API (POST <base_url>/v1/systemone).
+type Decision struct {
+	BaseURL      string        `yaml:"base_url"` // "" = pages are not classified
+	Model        string        `yaml:"model"`
+	Instructions string        `yaml:"instructions"`
+	Timeout      time.Duration `yaml:"timeout"`
+	MaxSide      int           `yaml:"max_side"` // downscale page images above this long side
+	// Serial never calls the Decision API while a page is in OCR, and the
+	// other way round: for one local model server that cannot hold the
+	// classification model and the OCR model at once. Off = both run
+	// together on a page.
+	Serial bool `yaml:"serial"`
 }
 
 // ToolsCfg configures the built-in tool set.
@@ -406,6 +423,11 @@ func (c *Config) applyDefaults() {
 	if c.Classify.DocTokenBudget <= 0 {
 		c.Classify.DocTokenBudget = 16000
 	}
+	setString(&c.Classify.Decision.Instructions, "Đây là loại chứng từ nào?")
+	if c.Classify.Decision.Timeout <= 0 {
+		c.Classify.Decision.Timeout = 2 * time.Minute
+	}
+	setInt(&c.Classify.Decision.MaxSide, 1288)
 	if c.Sheets.LowConfidence <= 0 {
 		c.Sheets.LowConfidence = 0.75
 	}

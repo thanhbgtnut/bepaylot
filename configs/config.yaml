@@ -296,7 +296,7 @@ usage:
 # Case sheets (U43, §6.9.6).
 sheets:
   low_confidence: 0.75              # cells below it are marked "cần xem"
-classify:                           # document:classify (§6.9.4); labels live in the case type
+classify:                           # §6.9.4; document types: doc_types of the KB, else the labels of the case type
   provider: ""                      # "" = llm.default_provider
   model: ""                         # "" = llm.default_model
   min_confidence: 0.6               # a case type's classification.min_confidence overrides it
@@ -304,3 +304,16 @@ classify:                           # document:classify (§6.9.4); labels live i
   lines_per_page: 8                 # mode=pages only
   doc_token_budget: 16000           # mode=pages: larger files fall back to titles
   page_marks: true                  # send cut hints (page number back to 1, blank page, size change; U49)
+  # Decision API (U50): reads the document type of every page from its image
+  # (POST <base_url>/v1/systemone, question type "choice", criteria = doc_types
+  # of the KB). Runs in page:ocr for KBs that have doc_types.
+  decision:
+    base_url: ${DECISION_API_URL}   # e.g. http://127.0.0.1:1234; empty = pages are not classified
+    model: ${DECISION_API_MODEL}    # e.g. cloudflare_clef-flash
+    instructions: ""                # "" = "Đây là loại chứng từ nào?"
+    timeout: 120s
+    max_side: 1288                  # page images above this long side are downscaled before sending
+    # false (default) = a page is classified while it is in OCR. true = never
+    # both at once: pages are classified in turns, then read in turns, so a
+    # local server (LM Studio) keeps one model loaded at a time.
+    serial: ${DECISION_API_SERIAL}

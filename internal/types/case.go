@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,6 +108,31 @@ func (r ClassificationRule) Title(name string) string {
 		return "Chưa rõ"
 	}
 	return name
+}
+
+// ValidateLabels checks label names: lowercase letters, digits, _ and -, not
+// a built-in label, no duplicate.
+func ValidateLabels(labels []ClassLabel) error {
+	seen := map[string]bool{}
+	for _, l := range labels {
+		if !labelNameRe.MatchString(l.Name) || l.Name == LabelOther || l.Name == LabelUnknown || seen[l.Name] {
+			return fmt.Errorf("invalid or duplicate name %q", l.Name)
+		}
+		seen[l.Name] = true
+	}
+	return nil
+}
+
+var labelNameRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]{0,63}$`)
+
+// PageDocType is the document type the Decision API gave one page (§6.9.4).
+type PageDocType struct {
+	PageNo     int
+	Label      string // "" = not classified
+	Confidence float64
+	// Blank and Opens come from the parsed page: a page without content,
+	// and a page that starts with a document title.
+	Blank, Opens bool
 }
 
 // Built-in labels (§6.9.4).

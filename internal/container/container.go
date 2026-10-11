@@ -26,6 +26,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/application/service/usage"
 	"github.com/thanhenti/bepaylot/internal/config"
+	"github.com/thanhenti/bepaylot/internal/decision"
 	"github.com/thanhenti/bepaylot/internal/handler"
 	"github.com/thanhenti/bepaylot/internal/llm"
 	"github.com/thanhenti/bepaylot/internal/llm/fakeprovider"
@@ -191,7 +192,9 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		if model == "" {
 			model = cfg.LLM.DefaultModel
 		}
-		client := &agentVLM{ag: ag, reg: registry, provider: vc.Provider, model: model, maxTokens: vc.MaxTokens, temperature: float32(vc.Temperature)}
+		// A page the VLM already read is not sent again (reparse, same file).
+		client := cachedVLM{Transcriber: &agentVLM{ag: ag, reg: registry, provider: vc.Provider, model: model, maxTokens: vc.MaxTokens, temperature: float32(vc.Temperature)},
+			cache: st.ModelCache, log: log}
 		e, err := vlm.New(vlm.Config{
 			Layout: layout, Client: client, PagePrompt: vc.PagePrompt, Prompt: vc.Prompt,
 			MaxConcurrency: vc.MaxConcurrency, ContextMaxChars: vc.ContextMaxChars, ContextLowConf: vc.ContextLowConf,
@@ -234,7 +237,15 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	if err != nil {
 		return err
 	}
-	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: app.enqueuer, Renderer: renderer, Engines: engines, Cases: cs, Config: cfg, Log: log})
+	// Pages are classified by image only when the Decision API is configured (§6.9.4).
+	var classifier interfaces.PageClassifier
+	if dc := cfg.Classify.Decision; dc.BaseURL != "" {
+		classifier = cachedClassifier{
+			inner: decision.New(decision.Config{BaseURL: dc.BaseURL, Model: dc.Model, Instructions: dc.Instructions, Timeout: dc.Timeout, MaxSide: dc.MaxSide}),
+			cache: st.ModelCache, scope: dc.Model + "\n" + dc.Instructions, log: log}
+	}
+	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: app.enqueuer, Renderer: renderer, Engines: engines, Cases: cs,
+		Classifier: classifier, Config: cfg, Log: log})
 	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: app.enqueuer, TreeLLM: treeLLM, SearchLLM: searchLLM, Cases: cs, Config: cfg, Log: log})
 	app.docs = docs
 
@@ -246,8 +257,9 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		return err
 	}
 	ag.SetKnowledge(describer{st: st, docs: docs, cases: cs, idx: idx})
-	split := docmodel.NewSplit(docmodel.SplitDeps{Store: st, Queue: app.enqueuer, Cases: cs,
+	split := docmodel.NewSplit(docmodel.SplitDeps{Store: st, Queue: app.enqueuer, Cases: cs, Tree: idx,
 		LLM: completer(cfg.Classify.Provider, cfg.Classify.Model, 4096), Config: cfg, Log: log})
+	idx.SetSplit(split)
 	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Searcher: idx, Split: split,
 		Runner: sheetRunner{ag: ag, st: st, cfg: cfg.LLM}, Config: cfg, Log: log})
 	h.Sheets, h.Split = sh, split

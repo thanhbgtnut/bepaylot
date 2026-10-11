@@ -189,7 +189,7 @@ func TestBundleSheetFlow(t *testing.T) {
 
 	q := &stubQueue{}
 	llmFake := &fakeClassifier{}
-	split := docmodel.NewSplit(docmodel.SplitDeps{Store: h.Store, Queue: q, Cases: h.Cases, LLM: llmFake, Config: h.Config})
+	split := docmodel.NewSplit(docmodel.SplitDeps{Store: h.Store, Queue: q, Cases: h.Cases, LLM: llmFake, Tree: h.Index, Config: h.Config})
 
 	// Cut hints by code: every page whose number goes back to 1.
 	d, err := h.Store.Documents.Get(h.Ctx, doc)

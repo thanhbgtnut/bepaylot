@@ -249,3 +249,21 @@ func TestCaseToolsStayInCase(t *testing.T) {
 		t.Fatalf("deleted case: %v", err)
 	}
 }
+
+func TestDocTypeNote(t *testing.T) {
+	nodes := []types.TreeNode{
+		{ShortID: "n0", PageStart: 1, PageEnd: 6},
+		{ShortID: "n1", Title: "Hợp đồng", DocType: "hop_dong", PageStart: 1, PageEnd: 5},
+		{ShortID: "n2", Title: "Hoá đơn", DocType: "hoa_don", PageStart: 6, PageEnd: 6},
+		{ShortID: "n3", Title: "Điều 1", PageStart: 1, PageEnd: 2},
+	}
+	if got, want := docTypeNote(nodes, 2, 3), "Documents on these pages: n1 Hợp đồng [loại: hop_dong] (tr. 1–5).\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := docTypeNote(nodes, 5, 6); !strings.Contains(got, "n1 ") || !strings.Contains(got, "n2 Hoá đơn [loại: hoa_don] (tr. 6–6)") {
+		t.Errorf("two documents: %q", got)
+	}
+	if got := docTypeNote(nodes[:1], 1, 6); got != "" {
+		t.Errorf("a file without document nodes: %q", got)
+	}
+}

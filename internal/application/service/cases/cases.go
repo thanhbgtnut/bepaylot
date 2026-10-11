@@ -74,6 +74,15 @@ func (s *Service) CaseType(name string) types.CaseType {
 	return s.types[s.cfg.Cases.DefaultType]
 }
 
+// Classification implements interfaces.CaseService.
+func (s *Service) Classification(ctx context.Context, c types.Case) types.ClassificationRule {
+	rule := s.CaseType(c.CaseType).Classification
+	if kb, err := s.st.KBs.Get(ctx, c.KBID); err == nil && len(kb.Config.DocTypes) > 0 {
+		rule.Labels = kb.Config.DocTypes
+	}
+	return rule
+}
+
 // GetCase implements interfaces.CaseService.
 func (s *Service) GetCase(ctx context.Context, id uuid.UUID) (types.Case, error) {
 	c, err := s.st.Cases.Get(ctx, id)

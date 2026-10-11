@@ -25,6 +25,7 @@ type node struct {
 	tokens    int
 	shortID   string
 	id        uuid.UUID
+	docType   string // origin "doctype": the label of the document
 }
 
 // maxHeadingWords: a title/heading block longer than this is a paragraph the
@@ -170,18 +171,32 @@ func flattenBookmarks(bms []types.PDFBookmark, pageCount, depth int) []bookmark 
 	return out
 }
 
+// docSpan is one document inside a file: consecutive pages of one document
+// type (§6.9.4).
+type docSpan struct {
+	label, title       string
+	pageStart, pageEnd int
+}
+
 // BuildTree joins the page results in page order into the document tree
 // (§6.5 step 3). A node stays open until a node of the same or a higher
 // level starts; leading content of a page extends the open node. PDF
 // bookmarks are the top levels; page nodes nest under the deepest open
 // bookmark, and a page node repeating a bookmark title on its page is that
-// bookmark. firstLines titles a node for content before any heading. It is
-// pure.
-func BuildTree(pageCount int, bookmarks []types.PDFBookmark, results map[int]*pageResult, firstLines map[int]string, words int) *node {
+// bookmark. firstLines titles a node for content before any heading. With
+// spans (the documents of the file by type, covering every page), each span
+// is a top node that closes every node open before it, and bookmarks and
+// page nodes nest under the span of their page. It is pure.
+func BuildTree(pageCount int, bookmarks []types.PDFBookmark, results map[int]*pageResult, firstLines map[int]string, words int, spans []docSpan) *node {
 	pageCount = max(pageCount, 1)
 	root := &node{origin: "root", pageStart: 1, pageEnd: pageCount}
 	stack := []*node{root}
 	last := root
+	off := 0 // levels taken by the span nodes
+	if len(spans) > 0 {
+		off = 1
+	}
+	si := 0
 	push := func(n *node) {
 		for len(stack) > 1 && stack[len(stack)-1].level >= n.level {
 			stack = stack[:len(stack)-1]
@@ -196,13 +211,18 @@ func BuildTree(pageCount int, bookmarks []types.PDFBookmark, results map[int]*pa
 	bi := 0
 	for p := 1; p <= pageCount; p++ {
 		var started []*node
+		for si < len(spans) && spans[si].pageStart <= p {
+			stack = stack[:1]
+			push(&node{title: spans[si].title, origin: "doctype", docType: spans[si].label, level: 1, pageStart: p, pageEnd: p})
+			si++
+		}
 		for bi < len(bms) && bms[bi].page == p {
-			n := &node{title: bms[bi].title, origin: "bookmark", level: bms[bi].depth, pageStart: p, pageEnd: p}
+			n := &node{title: bms[bi].title, origin: "bookmark", level: bms[bi].depth + off, pageStart: p, pageEnd: p}
 			push(n)
 			started = append(started, n)
 			bi++
 		}
-		base := 0
+		base := off
 		for _, n := range stack {
 			if n.origin == "bookmark" {
 				base = n.level
@@ -343,7 +363,7 @@ func flatten(root *node, docID uuid.UUID, gen int, secs []types.Section) []types
 		}
 		out = append(out, types.TreeNode{
 			ID: n.id, DocumentID: docID, Gen: gen, ParentID: parent, ShortID: n.shortID, Ord: ord, Level: level,
-			Title: n.title, Origin: n.origin, PageStart: n.pageStart, PageEnd: n.pageEnd, Summary: n.summary,
+			Title: n.title, Origin: n.origin, DocType: n.docType, PageStart: n.pageStart, PageEnd: n.pageEnd, Summary: n.summary,
 			SectionIDs: ids, TokenCount: n.tokens,
 		})
 		id := n.id

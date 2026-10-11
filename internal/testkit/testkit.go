@@ -7,7 +7,9 @@ package testkit
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -47,6 +49,31 @@ type Harness struct {
 	Index   *index.Service
 	LLM     *ScriptLLM
 	Owner   types.User
+	// PageTypes scripts the Decision API: the i-th page classified gets
+	// PageTypes[i] ("" or past the end = the call fails). Only KBs with
+	// doc_types classify pages.
+	PageTypes *PageTypes
+}
+
+// PageTypes is the scripted interfaces.PageClassifier of the harness.
+type PageTypes struct {
+	mu     sync.Mutex
+	Labels []string
+	// Seen is the sha256 of every image asked about, in call order.
+	Seen  []string
+	calls int
+}
+
+// ClassifyPage implements interfaces.PageClassifier.
+func (p *PageTypes) ClassifyPage(_ context.Context, _ []types.ClassLabel, image []byte) (string, float64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	p.Seen = append(p.Seen, fmt.Sprintf("%x", sha256.Sum256(image)))
+	if p.calls > len(p.Labels) || p.Labels[p.calls-1] == "" {
+		return "", 0, errors.New("decision api: scripted failure")
+	}
+	return p.Labels[p.calls-1], 0.95, nil
 }
 
 var (
@@ -113,7 +140,9 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: renderer, Engines: engines, Cases: cs, Config: cfg})
+	pageTypes := &PageTypes{}
+	docs := document.New(document.Deps{Store: st, Objects: objects, Files: files, Queue: q, Renderer: renderer, Engines: engines, Cases: cs,
+		Classifier: pageTypes, Config: cfg})
 	idx := index.New(index.Deps{Store: st, Docs: docs, Queue: q, TreeLLM: ai, SearchLLM: ai, Cases: cs, Config: cfg})
 	handlers := map[string]queue.Handler{}
 	for _, m := range []map[string]queue.Handler{docs.Handlers(), cs.Handlers(), idx.Handlers()} {
@@ -124,7 +153,7 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 	q.Register(handlers, func(ctx context.Context, taskType, queueName string, payload []byte, err error, attempts int) {
 		_ = st.Tasks.InsertDeadLetter(ctx, postgres.DeadLetter{TaskType: taskType, Queue: queueName, Scope: "test", ScopeID: "test", Payload: payload, LastError: err.Error(), FailCount: attempts})
 	})
-	return &Harness{T: t, Ctx: ctx, Store: st, Config: cfg, Queue: q, Objects: objects, Docs: docs, Cases: cs, Index: idx, LLM: ai, Owner: user}
+	return &Harness{T: t, Ctx: ctx, Store: st, Config: cfg, Queue: q, Objects: objects, Docs: docs, Cases: cs, Index: idx, LLM: ai, Owner: user, PageTypes: pageTypes}
 }
 
 // scriptTweaks apply to the ScriptLLM of every harness built by New*; set

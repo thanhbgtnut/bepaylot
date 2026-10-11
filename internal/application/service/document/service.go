@@ -44,9 +44,12 @@ type Deps struct {
 	Renderer Renderer
 	Engines  *parser.Registry
 	// Cases resolves the case of an upload and the rules of its type.
-	Cases  interfaces.CaseService
-	Config *config.Config
-	Log    *slog.Logger
+	Cases interfaces.CaseService
+	// Classifier reads the document type of a page from its image; nil =
+	// pages are not classified (§6.9.4).
+	Classifier interfaces.PageClassifier
+	Config     *config.Config
+	Log        *slog.Logger
 	// Webhook sends completion callbacks; nil builds one from Config.Callback.
 	Webhook *webhook.Client
 }
@@ -60,6 +63,8 @@ type Service struct {
 	renderer Renderer
 	engines  *parser.Registry
 	cases    interfaces.CaseService
+	classify interfaces.PageClassifier
+	models   modelGate // classify.decision.serial: classification and OCR take turns
 	cfg      *config.Config
 	keys     storage.Keys
 	hooks    *webhook.Client
@@ -79,7 +84,7 @@ func New(d Deps) *Service {
 	}
 	return &Service{
 		hooks: hooks,
-		st:    d.Store, objects: d.Objects, files: d.Files, q: d.Queue, renderer: d.Renderer, engines: d.Engines, cases: d.Cases,
+		st:    d.Store, objects: d.Objects, files: d.Files, q: d.Queue, renderer: d.Renderer, engines: d.Engines, cases: d.Cases, classify: d.Classifier,
 		cfg: d.Config, keys: storage.Keys{Prefix: d.Config.Storage.S3.Prefix}, log: log.With("module", "document"),
 	}
 }

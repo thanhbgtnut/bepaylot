@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
@@ -8,10 +8,11 @@ import {
   getMarkdown,
   getPage,
   listEngines,
+  getTree,
   listPages,
   reparseDocument,
 } from "../../api/endpoints";
-import type { DocumentDetail as Doc, DocumentPage, EngineInfo, PageView } from "../../api/types";
+import type { DocumentDetail as Doc, DocumentPage, EngineInfo, PageView, TreeNode } from "../../api/types";
 import { Markdown } from "../../components/Markdown";
 import { PageImage } from "../../components/PageImage";
 import { Thumb } from "../../components/Thumb";
@@ -89,6 +90,30 @@ export function DocumentDetail() {
       clearTimeout(timer);
     };
   }, [id, reloadKey]);
+
+  // The documents of the file by type (the doctype nodes of its tree, §6.5),
+  // to break the thumbnails; while the file is still processing the type of
+  // each page stands in.
+  const [docNodes, setDocNodes] = useState<TreeNode[]>([]);
+  const indexed = doc?.status === "completed" || doc?.status === "partial";
+  useEffect(() => {
+    let alive = true;
+    setDocNodes([]);
+    if (indexed)
+      getTree(id).then(
+        (ns) => alive && setDocNodes(ns.filter((n) => n.doc_type)),
+        () => {},
+      );
+    return () => {
+      alive = false;
+    };
+  }, [id, indexed, reloadKey]);
+  const groupOf = (p: DocumentPage) => {
+    const n = docNodes.find((n) => p.page_no >= n.page_start && p.page_no <= n.page_end);
+    if (n) return { key: n.id, title: n.title || n.doc_type || "", pages: n.page_start === n.page_end ? `tr. ${n.page_start}` : `tr. ${n.page_start}–${n.page_end}` };
+    if (docNodes.length || !p.doc_type) return null;
+    return { key: "p:" + p.doc_type, title: p.doc_type === "other" ? "Khác" : p.doc_type, pages: "" };
+  };
 
   const pageReady = pages.find((p) => p.page_no === pageNo)?.status;
   useEffect(() => {
@@ -193,11 +218,19 @@ export function DocumentDetail() {
       <div className="flex min-h-0 flex-1">
         {/* thumbnails */}
         <div className="hidden w-36 flex-none flex-col gap-3 overflow-y-auto px-4 pt-1 pb-6 lg:flex">
-          {pages.map((p) => {
+          {pages.map((p, i) => {
             const on = p.page_no === pageNo;
+            const group = groupOf(p);
+            const head = group && group.key !== (i > 0 ? groupOf(pages[i - 1])?.key : undefined);
             return (
+              <Fragment key={p.page_no}>
+              {head && (
+                <div className={"w-full text-left text-[11px] leading-4 font-medium text-[#a8c7fa] " + (i > 0 ? "mt-1 border-t border-white/20 pt-3" : "")} title={group.title}>
+                  <span className="block truncate">{group.title}</span>
+                  {group.pages && <span className="block font-normal text-[#c4c7c5]">{group.pages}</span>}
+                </div>
+              )}
               <button
-                key={p.page_no}
                 ref={(el) => {
                   if (el && on) el.scrollIntoView({ block: "nearest" });
                 }}
@@ -217,6 +250,7 @@ export function DocumentDetail() {
                 </div>
                 <span className={"text-xs " + (on ? "font-medium text-white" : "text-[#c4c7c5]")}>{p.page_no}</span>
               </button>
+              </Fragment>
             );
           })}
         </div>
@@ -413,6 +447,11 @@ function InfoPanel({ doc, page, onGo }: { doc: Doc; page: PageView | null; onGo:
       {page && (
         <>
           <h3 className="pt-4 pb-1 text-sm font-medium">Trang {page.page_no}</h3>
+          {page.doc_type && (
+            <Row label="Loại giấy tờ">
+              {page.doc_type} · {Math.round((page.doc_type_confidence ?? 0) * 100)}%
+            </Row>
+          )}
           <Row label="Nguồn chữ">
             <SourceBadge source={page.text_source} />
           </Row>

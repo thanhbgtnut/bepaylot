@@ -190,6 +190,35 @@ func (r *PagesRepo) SetStatus(ctx context.Context, doc uuid.UUID, gen, page int,
 	return err
 }
 
+// SetDocType records the document type the Decision API gave a page (§6.9.4).
+func (r *PagesRepo) SetDocType(ctx context.Context, doc uuid.UUID, gen, page int, label string, confidence float64) error {
+	_, err := r.pool.Exec(ctx, `UPDATE document_pages SET doc_type = $4, doc_type_confidence = $5
+		WHERE document_id = $1 AND gen = $2 AND page_no = $3`, doc, gen, page, label, confidence)
+	return err
+}
+
+// DocTypes returns the document type of every page of a generation, in page
+// order; Label is "" for a page that was not classified.
+func (r *PagesRepo) DocTypes(ctx context.Context, doc uuid.UUID, gen int) ([]types.PageDocType, error) {
+	rows, err := r.pool.Query(ctx, `SELECT page_no, doc_type, doc_type_confidence FROM document_pages
+		WHERE document_id = $1 AND gen = $2 ORDER BY page_no`, doc, gen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.PageDocType
+	for rows.Next() {
+		var p types.PageDocType
+		var conf float32
+		if err := rows.Scan(&p.PageNo, &p.Label, &conf); err != nil {
+			return nil, err
+		}
+		p.Confidence = float64(conf)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // Get returns one page row.
 func (r *PagesRepo) Get(ctx context.Context, doc uuid.UUID, page int) (types.DocumentPage, error) {
 	rows, err := r.pool.Query(ctx, pageSelect+` WHERE document_id = $1 AND page_no = $2`, doc, page)
@@ -220,20 +249,20 @@ func (r *PagesRepo) List(ctx context.Context, doc uuid.UUID, gen, from, to int) 
 
 const pageSelect = `SELECT document_id, page_no, gen, status, attempts, width, height, dpi, width_pt, height_pt, rotation,
 	image_key, raw_key, text_layer_key, text_source, text_quality, render_ms, ocr_ms, engine, markdown, text_plain,
-	doc_md_offset, is_blank, error, started_at, finished_at FROM document_pages`
+	doc_md_offset, is_blank, error, started_at, finished_at, doc_type, doc_type_confidence FROM document_pages`
 
 func scanPages(rows pgx.Rows) ([]types.DocumentPage, error) {
 	defer rows.Close()
 	var out []types.DocumentPage
 	for rows.Next() {
 		var p types.DocumentPage
-		var dpi, wpt, hpt, tq float32
+		var dpi, wpt, hpt, tq, dtc float32
 		if err := rows.Scan(&p.DocumentID, &p.PageNo, &p.Gen, &p.Status, &p.Attempts, &p.Width, &p.Height, &dpi, &wpt, &hpt, &p.Rotation,
 			&p.ImageKey, &p.RawKey, &p.TextLayerKey, &p.TextSource, &tq, &p.RenderMs, &p.OCRMs, &p.Engine, &p.Markdown, &p.TextPlain,
-			&p.DocMdOffset, &p.IsBlank, &p.Error, &p.StartedAt, &p.FinishedAt); err != nil {
+			&p.DocMdOffset, &p.IsBlank, &p.Error, &p.StartedAt, &p.FinishedAt, &p.DocType, &dtc); err != nil {
 			return nil, err
 		}
-		p.DPI, p.WidthPt, p.HeightPt, p.TextQuality = float64(dpi), float64(wpt), float64(hpt), float64(tq)
+		p.DPI, p.WidthPt, p.HeightPt, p.TextQuality, p.DocTypeConfidence = float64(dpi), float64(wpt), float64(hpt), float64(tq), float64(dtc)
 		out = append(out, p)
 	}
 	return out, rows.Err()

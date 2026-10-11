@@ -34,6 +34,9 @@ func (s *Service) CreateKB(ctx context.Context, owner uuid.UUID, name, desc stri
 	if err := metadata.ValidateSchema(schema); err != nil {
 		return types.KnowledgeBase{}, fmt.Errorf("%w: %v", ErrBadRequest, err)
 	}
+	if err := types.ValidateLabels(cfg.DocTypes); err != nil {
+		return types.KnowledgeBase{}, fmt.Errorf("%w: doc_types: %v", ErrBadRequest, err)
+	}
 	kb, err := s.st.KBs.Create(ctx, types.KnowledgeBase{OwnerID: owner, Name: name, Description: desc, Config: cfg, MetadataSchema: schema, IsTemporary: temporary})
 	if err != nil {
 		return kb, err
@@ -71,6 +74,11 @@ func (s *Service) UpdateKB(ctx context.Context, owner, id uuid.UUID, p postgres.
 	if p.MetadataSchema != nil {
 		if err := metadata.ValidateSchema(*p.MetadataSchema); err != nil {
 			return types.KnowledgeBase{}, fmt.Errorf("%w: %v", ErrBadRequest, err)
+		}
+	}
+	if p.Config != nil {
+		if err := types.ValidateLabels(p.Config.DocTypes); err != nil {
+			return types.KnowledgeBase{}, fmt.Errorf("%w: doc_types: %v", ErrBadRequest, err)
 		}
 	}
 	kb, err := s.st.KBs.Update(ctx, id, owner, p)

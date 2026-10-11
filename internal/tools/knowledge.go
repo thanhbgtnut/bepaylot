@@ -236,7 +236,7 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 		Expand   []string       `json:"expand,omitempty" jsonschema_description:"File refs (d<n>) to show with their whole table of contents instead of the first branches."`
 	}
 	if err := add(utils.InferTool("kb_case_toc",
-		"The tree of this case, as given in <case_tree> at the start of the turn, rebuilt now: narrowed to files matching metadata, or with the files in expand (d<n>) shown whole. One line per file ([d<n>] file (pages) {metadata} — card summary) with nodes [d<n>.n<k>] title (tr. pages) — summary. document_ids maps d<n> to its document_id. Titles, page ranges and summaries only, no page text.",
+		"The tree of this case, as given in <case_tree> at the start of the turn, rebuilt now: narrowed to files matching metadata, or with the files in expand (d<n>) shown whole. One line per file ([d<n>] file (pages) {metadata} — card summary) with nodes [d<n>.n<k>] title (tr. pages) — summary. A file holding several documents has one node per document, marked [loại: <document type>], over that document's pages. document_ids maps d<n> to its document_id. Titles, page ranges and summaries only, no page text.",
 		func(ctx context.Context, a tocArgs) (map[string]any, error) {
 			sc, err := caseScope(ctx)
 			if err != nil {
@@ -376,7 +376,7 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 		PageTo     int    `json:"page_to,omitempty" jsonschema_description:"Inclusive; at most 10 pages per call."`
 	}
 	if err := add(utils.InferTool("kb_read_pages",
-		"The text of pages of a file of this case as numbered lines ([L<n>] text), at most 10 pages per call: the pages of a tree node (node_id) or a page range. Lines are cited as doc:<document_id>:p<page>:l<a>-<b>.",
+		"The text of pages of a file of this case as numbered lines ([L<n>] text), at most 10 pages per call: the pages of a tree node (node_id) or a page range. The reply first names the documents of the file these pages belong to (document type, node, pages). Lines are cited as doc:<document_id>:p<page>:l<a>-<b>.",
 		func(ctx context.Context, a readArgs) (string, error) {
 			document, node := nodeArg(a.DocumentID, a.NodeID)
 			sc, id, err := docArg(ctx, searcher, document)
@@ -384,11 +384,11 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 				return "", err
 			}
 			from, to, note := a.PageFrom, max(a.PageTo, a.PageFrom), ""
+			nodes, err := searcher.DocumentTree(ctx, sc.Owner, id)
+			if err != nil && node != "" {
+				return "", err
+			}
 			if node != "" {
-				nodes, err := searcher.DocumentTree(ctx, sc.Owner, id)
-				if err != nil {
-					return "", err
-				}
 				var hit *types.TreeNode
 				for i := range nodes {
 					if nodes[i].ShortID == node {
@@ -405,7 +405,7 @@ func knowledgeTools(searcher interfaces.Searcher) ([]tool.InvokableTool, error) 
 				}
 			}
 			text, err := searcher.ReadPages(ctx, sc.Owner, id, from, to)
-			return note + text, err
+			return note + docTypeNote(nodes, from, to) + text, err
 		})); err != nil {
 		return nil, err
 	}
@@ -509,6 +509,24 @@ func nodeAt(nodes []types.TreeNode, page int) (types.TreeNode, bool) {
 		}
 	}
 	return best, found
+}
+
+// docTypeNote names the documents of a file (its document-type nodes) that
+// pages from..to belong to; at most 10 pages are read from from. It is empty
+// for a file not split by document type.
+func docTypeNote(nodes []types.TreeNode, from, to int) string {
+	from = max(from, 1)
+	to = min(max(to, from), from+9)
+	var parts []string
+	for _, n := range nodes {
+		if n.DocType != "" && n.PageStart <= to && n.PageEnd >= from {
+			parts = append(parts, fmt.Sprintf("%s %s [loại: %s] (tr. %d–%d)", n.ShortID, n.Title, n.DocType, n.PageStart, n.PageEnd))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Documents on these pages: " + strings.Join(parts, "; ") + ".\n"
 }
 
 // childList names the children of a node with their pages, for a node too

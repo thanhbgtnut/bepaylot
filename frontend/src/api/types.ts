@@ -9,6 +9,8 @@ export interface BBox {
 
 export interface KBConfig {
   parser_engine?: string;
+  /** Loại giấy tờ của KB: trang của file được phân loại theo ảnh vào các loại này. */
+  doc_types?: ClassLabel[];
 }
 
 export interface MetadataField {
@@ -73,6 +75,9 @@ export interface DocumentDetail extends Document {
 export interface DocumentPage {
   page_no: number;
   status: string;
+  /** Loại giấy tờ Decision API đọc từ ảnh trang (mã trong doc_types của KB). */
+  doc_type?: string;
+  doc_type_confidence?: number;
   width: number;
   height: number;
   dpi: number;
@@ -124,6 +129,8 @@ export interface TreeNode {
   ord: number;
   title?: string;
   origin: string;
+  /** origin = "doctype": mã loại giấy tờ của node (một giấy tờ trong file). */
+  doc_type?: string;
   page_start: number;
   page_end: number;
   summary?: string;

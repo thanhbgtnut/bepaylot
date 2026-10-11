@@ -57,7 +57,7 @@ func TestBuildTreeJoinsPages(t *testing.T) {
 		4: {leadTokens: 30, leadSummary: "Phải thu"},
 		5: {nodes: []pageNode{{title: "III. Nguồn vốn", level: 1, summary: "Vốn", tokens: 40}}},
 	}
-	root := finish(BuildTree(5, nil, results, nil, 60))
+	root := finish(BuildTree(5, nil, results, nil, 60, nil))
 	if len(root.children) != 3 {
 		t.Fatalf("top nodes = %d", len(root.children))
 	}
@@ -82,7 +82,7 @@ func TestBuildTreeUnderBookmarks(t *testing.T) {
 		1: {nodes: []pageNode{{title: "Thông tin chung", level: 1, summary: "Hộ kinh doanh A", tokens: 20}, {title: "Chủ hộ", level: 1, summary: "Ông B", tokens: 10}}},
 		2: {leadTokens: 15, leadSummary: "50 triệu"},
 	}
-	root := finish(BuildTree(2, bms, results, nil, 60))
+	root := finish(BuildTree(2, bms, results, nil, 60, nil))
 	if len(root.children) != 2 {
 		t.Fatalf("top = %+v", root.children)
 	}
@@ -97,7 +97,7 @@ func TestBuildTreeUnderBookmarks(t *testing.T) {
 
 func TestBuildTreeLeadWithoutHeading(t *testing.T) {
 	results := map[int]*pageResult{1: {leadTokens: 10, leadSummary: "Giấy chứng nhận"}}
-	root := finish(BuildTree(1, nil, results, map[int]string{1: "GIẤY CHỨNG NHẬN"}, 60))
+	root := finish(BuildTree(1, nil, results, map[int]string{1: "GIẤY CHỨNG NHẬN"}, 60, nil))
 	if len(root.children) != 1 || root.children[0].title != "GIẤY CHỨNG NHẬN" || root.children[0].summary != "Giấy chứng nhận" {
 		t.Fatalf("tree = %+v", root.children)
 	}

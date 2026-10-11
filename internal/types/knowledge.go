@@ -87,6 +87,10 @@ type KnowledgeBase struct {
 // KBConfig holds per-KB overrides of the global pipeline defaults.
 type KBConfig struct {
 	ParserEngine string `json:"parser_engine,omitempty"`
+	// DocTypes are the document types of the KB (code, title, description).
+	// Pages of its files are classified into them from their image and they
+	// replace the classification labels of the case type (§6.9.4).
+	DocTypes []ClassLabel `json:"doc_types,omitempty"`
 }
 
 // UploadBatch records one multi-file upload request.
@@ -151,32 +155,36 @@ func (d *Document) Progress() float64 {
 
 // DocumentPage is one page of a document.
 type DocumentPage struct {
-	DocumentID   uuid.UUID  `json:"document_id"`
-	PageNo       int        `json:"page_no"`
-	Gen          int        `json:"gen"`
-	Status       string     `json:"status"`
-	Attempts     int        `json:"attempts"`
-	Width        int        `json:"width"`
-	Height       int        `json:"height"`
-	DPI          float64    `json:"dpi"`
-	WidthPt      float64    `json:"width_pt"`
-	HeightPt     float64    `json:"height_pt"`
-	Rotation     int        `json:"rotation"`
-	ImageKey     string     `json:"-"`
-	RawKey       string     `json:"-"`
-	TextLayerKey string     `json:"-"`
-	TextSource   string     `json:"text_source"`
-	TextQuality  float64    `json:"text_quality"`
-	RenderMs     int        `json:"render_ms"`
-	OCRMs        int        `json:"ocr_ms"`
-	Engine       string     `json:"engine,omitempty"`
-	Markdown     string     `json:"markdown"`
-	TextPlain    string     `json:"text_plain"`
-	DocMdOffset  int        `json:"doc_md_offset"`
-	IsBlank      bool       `json:"is_blank"`
-	Error        string     `json:"error,omitempty"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	DocumentID   uuid.UUID `json:"document_id"`
+	PageNo       int       `json:"page_no"`
+	Gen          int       `json:"gen"`
+	Status       string    `json:"status"`
+	Attempts     int       `json:"attempts"`
+	Width        int       `json:"width"`
+	Height       int       `json:"height"`
+	DPI          float64   `json:"dpi"`
+	WidthPt      float64   `json:"width_pt"`
+	HeightPt     float64   `json:"height_pt"`
+	Rotation     int       `json:"rotation"`
+	ImageKey     string    `json:"-"`
+	RawKey       string    `json:"-"`
+	TextLayerKey string    `json:"-"`
+	TextSource   string    `json:"text_source"`
+	TextQuality  float64   `json:"text_quality"`
+	RenderMs     int       `json:"render_ms"`
+	OCRMs        int       `json:"ocr_ms"`
+	Engine       string    `json:"engine,omitempty"`
+	Markdown     string    `json:"markdown"`
+	TextPlain    string    `json:"text_plain"`
+	DocMdOffset  int       `json:"doc_md_offset"`
+	IsBlank      bool      `json:"is_blank"`
+	// DocType is the document type the Decision API read from the page image
+	// (a doc_types code of the KB, §6.9.4); "" = not classified.
+	DocType           string     `json:"doc_type,omitempty"`
+	DocTypeConfidence float64    `json:"doc_type_confidence,omitempty"`
+	Error             string     `json:"error,omitempty"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
 // PageStatusCounts summarises a document's pages by state.
@@ -221,15 +229,18 @@ type SourceSpan struct {
 // TreeNode is one node of the vectorless document tree (§6.4). The root node
 // (ParentID == nil) is the document card.
 type TreeNode struct {
-	ID         uuid.UUID   `json:"id"`
-	DocumentID uuid.UUID   `json:"document_id"`
-	Gen        int         `json:"gen"`
-	ParentID   *uuid.UUID  `json:"parent_id,omitempty"`
-	ShortID    string      `json:"short_id"`
-	Ord        int         `json:"ord"`
-	Level      int         `json:"level"`
-	Title      string      `json:"title,omitempty"`
-	Origin     string      `json:"origin"` // root | bookmark | heading | llm | page
+	ID         uuid.UUID  `json:"id"`
+	DocumentID uuid.UUID  `json:"document_id"`
+	Gen        int        `json:"gen"`
+	ParentID   *uuid.UUID `json:"parent_id,omitempty"`
+	ShortID    string     `json:"short_id"`
+	Ord        int        `json:"ord"`
+	Level      int        `json:"level"`
+	Title      string     `json:"title,omitempty"`
+	Origin     string     `json:"origin"` // root | doctype | bookmark | heading | llm | page
+	// DocType is the document type of an origin=doctype node: the pages of
+	// one document inside the file (§6.5).
+	DocType    string      `json:"doc_type,omitempty"`
 	PageStart  int         `json:"page_start"`
 	PageEnd    int         `json:"page_end"`
 	Summary    string      `json:"summary,omitempty"`
