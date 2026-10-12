@@ -308,7 +308,7 @@ classify:                           # §6.9.4; document types: doc_types of the 
   # (POST <base_url>/v1/systemone, question type "choice", criteria = doc_types
   # of the KB). Runs in page:ocr for KBs that have doc_types.
   decision:
-    base_url: ${DECISION_API_URL}   # e.g. http://127.0.0.1:1234; empty = pages are not classified
+    base_url: ${DECISION_API_URL}   # Ollama, e.g. http://127.0.0.1:11434; empty = pages are not classified
     model: ${DECISION_API_MODEL}    # e.g. cloudflare_clef-flash
     instructions: ""                # "" = "Đây là loại chứng từ nào?"
     timeout: 120s

@@ -1,5 +1,6 @@
-// Package decision is the client of the Decision API (POST /v1/systemone):
-// a typed question about an image, answered with a choice and its
+// Package decision is the client of the Decision API, Ollama's System One
+// endpoint (POST /v1/systemone, https://docs.ollama.com/api/systemone): a
+// typed question about an image, answered with a choice and its
 // probabilities. bepaylot uses it to read the document type of a page
 // (§6.9.4).
 package decision
@@ -67,7 +68,9 @@ type response struct {
 }
 
 // ClassifyPage implements interfaces.PageClassifier: it asks which of labels
-// the page image is. The image goes inline as a base64 data URL.
+// the page image is. The image goes inline as raw base64: the endpoint takes
+// neither URLs nor data URLs, and a "data:" prefix is refused as illegal
+// base64.
 func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, img []byte) (string, float64, error) {
 	criteria := make(map[string]string, len(labels))
 	for _, l := range labels {
@@ -78,7 +81,7 @@ func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, im
 	}
 	body, err := json.Marshal(request{
 		Model: c.cfg.Model, State: "Ảnh chứng từ:",
-		Images:    []string{"data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(downscale(img, c.cfg.MaxSide))},
+		Images:    []string{base64.StdEncoding.EncodeToString(downscale(img, c.cfg.MaxSide))},
 		Questions: map[string]choiceQuestion{question: {Type: "choice", Instructions: c.cfg.Instructions, Criteria: criteria}},
 	})
 	if err != nil {

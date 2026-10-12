@@ -48,11 +48,11 @@ func TestClassifyPage(t *testing.T) {
 	if got.Model != "m1" || q.Type != "choice" || q.Criteria["uy_nhiem_chi"] != "Ủy nhiệm chi — Payment order" || q.Criteria["hop_dong"] != "Hợp đồng" {
 		t.Errorf("payload: %+v", got)
 	}
-	// The image goes inline as a data URL, downscaled to max_side.
-	b64, ok := strings.CutPrefix(got.Images[0], "data:image/jpeg;base64,")
-	raw, err := base64.StdEncoding.DecodeString(b64)
-	if !ok || err != nil {
-		t.Fatalf("image is not a jpeg data URL: %v", err)
+	// The image goes inline as raw base64 (no data URL prefix), downscaled to
+	// max_side.
+	raw, err := base64.StdEncoding.DecodeString(got.Images[0])
+	if err != nil || strings.HasPrefix(got.Images[0], "data:") {
+		t.Fatalf("image is not raw base64: %v", err)
 	}
 	if cfg, _, err := image.DecodeConfig(bytes.NewReader(raw)); err != nil || cfg.Width != 100 || cfg.Height != 50 {
 		t.Errorf("image size: %+v %v", cfg, err)
