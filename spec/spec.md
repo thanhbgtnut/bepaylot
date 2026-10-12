@@ -2300,7 +2300,7 @@ Mọi route `/v1/*` cần xác thực (§10.6): `Authorization: Bearer <access t
 |---|---|---|
 | POST | `/kbs` | tạo KB (`name`, `config`); `config.doc_types: [{name, title, description?}]` là các loại giấy tờ của KB (U50, §6.9.4), mã sai hoặc trùng → `400` |
 | GET | `/kbs` | danh sách KB |
-| GET / PATCH / DELETE | `/kbs/:id` | chi tiết, cập nhật config, xoá (async) |
+| GET / PATCH / DELETE | `/kbs/:id` | chi tiết, cập nhật (`name`, `description`, `config`), xoá (async). `config` gửi lên **thay cả** config cũ, nên client gửi đủ `parser_engine` và `doc_types`. Sửa `doc_types` (thêm, đổi tên, xoá loại) ở hộp thoại "Sửa knowledge base" (nút bút chì cạnh tên KB ở thanh bên, U50); thay đổi áp dụng cho file upload hoặc reparse sau đó, file đã index giữ nguyên segment và cây |
 | GET | `/case-types` | các loại case đã nạp (`name, title, code.pattern`, metadata schema, engine parse, nhãn phân loại) |
 | POST | `/kbs/:id/cases` | tạo case `{code, case_type?, title?, metadata?}` → `201`; mã đã tồn tại → `409` kèm case hiện có; mã sai `pattern` → `422` |
 | GET | `/kbs/:id/cases` | danh sách case, lọc `q` (một phần mã/tiêu đề), `case_type`, `status`, `metadata` (JSON); kèm số file theo trạng thái |

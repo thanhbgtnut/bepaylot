@@ -24,7 +24,7 @@ export function Logo() {
 }
 
 export function Layout() {
-  const { kbs, kb, selectKB, connected, connError, openSettings, openCreateKB } = useApp();
+  const { kbs, kb, selectKB, connected, connError, openSettings, openCreateKB, openEditKB } = useApp();
   const { user, signOut } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
@@ -82,15 +82,19 @@ export function Layout() {
         {kbs.map((k) => {
           const on = k.id === kb?.id;
           return (
-            <button
-              key={k.id}
-              onClick={() => selectKB(k.id)}
-              title={k.description || k.name}
-              className={"flex h-8 items-center gap-4 rounded-full pr-3 pl-4 text-left text-sm " + (on ? "bg-surface-3 font-medium text-fg" : "text-fg hover:bg-fg/8")}
-            >
-              <Icon name="folder_shared" fill={on} size={20} className={on ? "text-accent" : "text-muted"} />
-              <span className="min-w-0 flex-1 truncate">{k.name}</span>
-            </button>
+            <div key={k.id} className={"group flex h-8 items-center rounded-full pr-1 text-sm " + (on ? "bg-surface-3 font-medium text-fg" : "text-fg hover:bg-fg/8")}>
+              <button onClick={() => selectKB(k.id)} title={k.description || k.name} className="flex h-full min-w-0 flex-1 items-center gap-4 pl-4 text-left">
+                <Icon name="folder_shared" fill={on} size={20} className={on ? "text-accent" : "text-muted"} />
+                <span className="min-w-0 flex-1 truncate">{k.name}</span>
+              </button>
+              <button
+                className={"btn-icon btn-sm " + (on ? "" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+                title="Sửa knowledge base, loại giấy tờ"
+                onClick={() => openEditKB(k)}
+              >
+                <Icon name="edit" size={18} />
+              </button>
+            </div>
           );
         })}
         {!kbs.length && connected && <div className="px-4 py-1 text-xs text-subtle">Chưa có knowledge base</div>}

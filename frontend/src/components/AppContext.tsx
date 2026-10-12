@@ -1,7 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { settings } from "../api/client";
-import { createKB, listCases, listEngines, listKBs } from "../api/endpoints";
+import { createKB, listCases, listEngines, listKBs, updateKB } from "../api/endpoints";
 import type { Case, ClassLabel, EngineInfo, KnowledgeBase } from "../api/types";
 import { SettingsDialog, type SettingsTab } from "./SettingsDialog";
 import { useToast } from "./toast";
@@ -25,6 +25,7 @@ interface AppState {
   // Settings opens on a tab: account, keys (key & cost), users (admin), server.
   openSettings: (tab?: SettingsTab) => void;
   openCreateKB: () => void;
+  openEditKB: (kb: KnowledgeBase) => void;
 }
 
 const Ctx = createContext<AppState>(null!);
@@ -39,6 +40,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [connError, setConnError] = useState("");
   const [showSettings, setShowSettings] = useState<SettingsTab | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editKB, setEditKB] = useState<KnowledgeBase | null>(null);
 
   const reloadKBs = useCallback(async () => {
     setLoading(true);
@@ -108,6 +110,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     updateKBLocal: (kb) => setKBs((xs) => xs.map((x) => (x.id === kb.id ? kb : x))),
     openSettings: (tab) => setShowSettings(tab ?? "account"),
     openCreateKB: () => setShowCreate(true),
+    openEditKB: setEditKB,
   };
 
   return (
@@ -124,12 +127,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
         />
       )}
       {showCreate && (
-        <CreateKBDialog
+        <KBDialog
           onClose={() => setShowCreate(false)}
-          onCreated={async (kb) => {
+          onSaved={async (kb) => {
             setShowCreate(false);
             await reloadKBs();
             setKbId(kb.id);
+          }}
+          onError={fail}
+        />
+      )}
+      {editKB && (
+        <KBDialog
+          kb={editKB}
+          onClose={() => setEditKB(null)}
+          onSaved={(kb) => {
+            setEditKB(null);
+            setKBs((xs) => xs.map((x) => (x.id === kb.id ? kb : x)));
           }}
           onError={fail}
         />
@@ -138,21 +152,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function CreateKBDialog({
+// KBDialog creates a knowledge base, or edits `kb` (name, description, OCR
+// engine and document types).
+function KBDialog({
+  kb,
   onClose,
-  onCreated,
+  onSaved,
   onError,
 }: {
+  kb?: KnowledgeBase;
   onClose: () => void;
-  onCreated: (kb: KnowledgeBase) => void;
+  onSaved: (kb: KnowledgeBase) => void;
   onError: (e: unknown) => void;
 }) {
   const [engines, setEngines] = useState<EngineInfo[]>([]);
-  const [name, setName] = useState("");
-  const [desc, setDesc] = useState("");
-  const [engine, setEngine] = useState("");
-  const [docTypes, setDocTypes] = useState<ClassLabel[]>([]);
+  const [name, setName] = useState(kb?.name ?? "");
+  const [desc, setDesc] = useState(kb?.description ?? "");
+  const [engine, setEngine] = useState(kb?.config.parser_engine ?? "");
+  const [docTypes, setDocTypes] = useState<ClassLabel[]>(kb?.config.doc_types ?? []);
   const [busy, setBusy] = useState(false);
+  // A second click lands before `busy` disables the button; the ref stops it
+  // from sending the request twice.
+  const sending = useRef(false);
   const setType = (i: number, patch: Partial<ClassLabel>) => setDocTypes((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
   useEffect(() => {
     listEngines().then(setEngines, () => {});
@@ -164,19 +185,24 @@ function CreateKBDialog({
       .filter((t) => t.name || t.title);
     if (types.some((t) => !/^[a-z0-9_][a-z0-9_-]*$/.test(t.name) || !t.title))
       return onError(new Error("Mỗi loại giấy tờ cần mã (chữ thường, số, _ hoặc -) và tên"));
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     try {
-      onCreated(await createKB({ name: name.trim(), description: desc.trim(), config: { parser_engine: engine, doc_types: types } }));
+      // PATCH replaces the whole config, so an edit sends what it has.
+      const body = { name: name.trim(), description: desc.trim(), config: { ...kb?.config, parser_engine: engine, doc_types: types } };
+      onSaved(kb ? await updateKB(kb.id, body) : await createKB(body));
     } catch (e) {
       onError(e);
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };
   return (
     <Modal
-      title="Knowledge base mới"
-      icon="create_new_folder"
+      title={kb ? "Sửa knowledge base" : "Knowledge base mới"}
+      icon={kb ? "edit" : "create_new_folder"}
       onClose={onClose}
       footer={
         <>
@@ -184,7 +210,7 @@ function CreateKBDialog({
             Huỷ
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={busy}>
-            Tạo
+            {kb ? "Lưu" : "Tạo"}
           </button>
         </>
       }
@@ -212,7 +238,10 @@ function CreateKBDialog({
       </label>
       <div className="field">
         <span>Loại giấy tờ</span>
-        <span className="font-normal">Mỗi trang của file được phân loại theo ảnh vào các loại này; trang liền nhau cùng loại gom thành một giấy tờ trên cây hồ sơ.</span>
+        <span className="font-normal">
+          Mỗi trang của file được phân loại theo ảnh vào các loại này; trang liền nhau cùng loại gom thành một giấy tờ trên cây hồ sơ.
+          {kb && " Thay đổi áp dụng cho file tải lên hoặc xử lý lại sau khi lưu."}
+        </span>
         {docTypes.map((t, i) => (
           <div key={i} className="flex items-center gap-2">
             <input className="input w-32" value={t.name} onChange={(e) => setType(i, { name: e.target.value })} placeholder="Mã, vd hop_dong" />
