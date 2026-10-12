@@ -130,6 +130,9 @@ type PageDocType struct {
 	PageNo     int
 	Label      string // "" = not classified
 	Confidence float64
+	// Break is the Decision API's is_break: the page is the first page of a
+	// document, not the continuation of the one before it.
+	Break bool
 	// Blank and Opens come from the parsed page: a page without content,
 	// and a page that starts with a document title.
 	Blank, Opens bool

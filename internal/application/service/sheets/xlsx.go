@@ -43,8 +43,9 @@ func sheetName(title string, used map[string]bool) string {
 
 // XLSX writes the workbook of a sheet and returns its file name: one sheet
 // per chosen sub-table (all when tables is empty) with only the data —
-// field labels in row 1, the bundle (or file) in column A, one document per
-// row — plus the hidden _bp sheet.
+// field labels in row 1, one document per row, the document type in column
+// A and the bundle in column B (a sub-table without label has the file in
+// column A instead) — plus the hidden _bp sheet.
 func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string, w io.Writer) (string, error) {
 	v, err := s.Get(ctx, owner, id)
 	if err != nil {
@@ -80,11 +81,12 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 		} else if _, err := f.NewSheet(name); err != nil {
 			return "", err
 		}
-		colA := "Bộ"
+		title := tableTitle(tv.SheetTable)
+		header := []any{"Loại tài liệu", "Bộ"}
 		if tv.Label == "" {
-			colA = "File"
+			header = []any{"File"}
 		}
-		header := []any{colA}
+		lead := len(header) // columns before the fields
 		for _, fd := range tv.Fields {
 			header = append(header, fd.Label)
 		}
@@ -92,18 +94,22 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 		last, _ := excelize.CoordinatesToCellName(len(header), 1)
 		_ = f.SetCellStyle(name, "A1", last, head)
 		_ = f.SetColWidth(name, "A", "A", 12)
-		if len(header) > 1 {
-			lastCol, _ := excelize.ColumnNumberToName(len(header))
-			_ = f.SetColWidth(name, "B", lastCol, 22)
+		if tv.Label != "" {
+			_ = f.SetColWidth(name, "A", "A", 22)
+			_ = f.SetColWidth(name, "B", "B", 12)
 		}
-		_ = f.SetPanes(name, &excelize.Panes{Freeze: true, Split: false, XSplit: 1, YSplit: 1, TopLeftCell: "B2", ActivePane: "bottomRight"})
+		firstField, _ := excelize.ColumnNumberToName(lead + 1)
+		if len(header) > lead {
+			lastCol, _ := excelize.ColumnNumberToName(len(header))
+			_ = f.SetColWidth(name, firstField, lastCol, 22)
+		}
+		_ = f.SetPanes(name, &excelize.Panes{Freeze: true, Split: false, XSplit: lead, YSplit: 1, TopLeftCell: firstField + "2", ActivePane: "bottomRight"})
 		for i, r := range tv.Rows {
 			n := i + 2
-			a := r.Bundle
+			vals := []any{title, r.Bundle}
 			if tv.Label == "" {
-				a = r.FileName
+				vals = []any{r.FileName}
 			}
-			vals := []any{a}
 			for _, fd := range tv.Fields {
 				vals = append(vals, r.CellsView[fd.Key].Value)
 			}
@@ -113,7 +119,7 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 				seg = r.SegmentID.String()
 			}
 			for j, fd := range tv.Fields {
-				cell, _ := excelize.CoordinatesToCellName(j+2, n)
+				cell, _ := excelize.CoordinatesToCellName(j+lead+1, n)
 				cv := r.CellsView[fd.Key]
 				fieldID := ""
 				if cv.FieldID != nil {

@@ -23,9 +23,9 @@ type countClassifier struct {
 	err   error
 }
 
-func (c *countClassifier) ClassifyPage(context.Context, []types.ClassLabel, []byte) (string, float64, error) {
+func (c *countClassifier) ClassifyPage(context.Context, []types.ClassLabel, []byte) (string, float64, bool, error) {
 	c.calls++
-	return "uy_nhiem_chi", 0.98, c.err
+	return "uy_nhiem_chi", 0.98, true, c.err
 }
 
 type countVLM struct {
@@ -47,7 +47,7 @@ func TestCachedClassifier(t *testing.T) {
 	c := cachedClassifier{inner: inner, cache: memCache{}, scope: "m1", log: slog.Default()}
 	labels := []types.ClassLabel{{Name: "uy_nhiem_chi", Title: "Uỷ nhiệm chi"}}
 	for i := 0; i < 3; i++ {
-		if l, conf, err := c.ClassifyPage(ctx, labels, []byte("img-1")); err != nil || l != "uy_nhiem_chi" || conf != 0.98 {
+		if l, conf, isBreak, err := c.ClassifyPage(ctx, labels, []byte("img-1")); err != nil || l != "uy_nhiem_chi" || conf != 0.98 || !isBreak {
 			t.Fatalf("got %q %v %v", l, conf, err)
 		}
 	}
@@ -61,7 +61,7 @@ func TestCachedClassifier(t *testing.T) {
 	}
 	inner.err = errors.New("boom")
 	for i := 0; i < 2; i++ {
-		if _, _, err := c.ClassifyPage(ctx, labels, []byte("img-3")); err == nil {
+		if _, _, _, err := c.ClassifyPage(ctx, labels, []byte("img-3")); err == nil {
 			t.Fatal("a failed call must fail")
 		}
 	}

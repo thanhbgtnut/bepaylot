@@ -190,17 +190,18 @@ func (r *PagesRepo) SetStatus(ctx context.Context, doc uuid.UUID, gen, page int,
 	return err
 }
 
-// SetDocType records the document type the Decision API gave a page (§6.9.4).
-func (r *PagesRepo) SetDocType(ctx context.Context, doc uuid.UUID, gen, page int, label string, confidence float64) error {
-	_, err := r.pool.Exec(ctx, `UPDATE document_pages SET doc_type = $4, doc_type_confidence = $5
-		WHERE document_id = $1 AND gen = $2 AND page_no = $3`, doc, gen, page, label, confidence)
+// SetDocType records the document type the Decision API gave a page, and
+// whether it said the page starts a document (§6.9.4).
+func (r *PagesRepo) SetDocType(ctx context.Context, doc uuid.UUID, gen, page int, label string, confidence float64, isBreak bool) error {
+	_, err := r.pool.Exec(ctx, `UPDATE document_pages SET doc_type = $4, doc_type_confidence = $5, is_break = $6
+		WHERE document_id = $1 AND gen = $2 AND page_no = $3`, doc, gen, page, label, confidence, isBreak)
 	return err
 }
 
 // DocTypes returns the document type of every page of a generation, in page
 // order; Label is "" for a page that was not classified.
 func (r *PagesRepo) DocTypes(ctx context.Context, doc uuid.UUID, gen int) ([]types.PageDocType, error) {
-	rows, err := r.pool.Query(ctx, `SELECT page_no, doc_type, doc_type_confidence FROM document_pages
+	rows, err := r.pool.Query(ctx, `SELECT page_no, doc_type, doc_type_confidence, is_break FROM document_pages
 		WHERE document_id = $1 AND gen = $2 ORDER BY page_no`, doc, gen)
 	if err != nil {
 		return nil, err
@@ -210,7 +211,7 @@ func (r *PagesRepo) DocTypes(ctx context.Context, doc uuid.UUID, gen int) ([]typ
 	for rows.Next() {
 		var p types.PageDocType
 		var conf float32
-		if err := rows.Scan(&p.PageNo, &p.Label, &conf); err != nil {
+		if err := rows.Scan(&p.PageNo, &p.Label, &conf, &p.Break); err != nil {
 			return nil, err
 		}
 		p.Confidence = float64(conf)

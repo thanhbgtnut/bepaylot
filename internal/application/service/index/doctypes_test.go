@@ -27,6 +27,13 @@ func TestSegmentsFromPages(t *testing.T) {
 		{"trang dưới ngưỡng hoặc lỗi nối vào giấy tờ trước",
 			[]types.PageDocType{pt(1, "hop_dong", 0.9), pt(2, "hoa_don", 0.3), pt(3, "", 0), pt(4, "hoa_don", 0.9)},
 			[]seg{{1, 3, "hop_dong", ""}, {4, 4, "hoa_don", ""}}},
+		{"cùng loại liền nhau: trang is_break mở giấy tờ mới, trang tiếp theo thì nối",
+			[]types.PageDocType{
+				{PageNo: 1, Label: "hop_dong", Confidence: 0.9, Break: true}, pt(2, "hop_dong", 0.9),
+				{PageNo: 3, Label: "hop_dong", Confidence: 0.9, Break: true}, {PageNo: 4, Label: "hop_dong", Confidence: 0.9, Break: true},
+				{PageNo: 5, Label: "hoa_don", Confidence: 0.3, Break: true}, {PageNo: 6, Label: types.LabelOther, Confidence: 0.9, Break: true},
+			},
+			[]seg{{1, 2, "hop_dong", ""}, {3, 3, "hop_dong", ""}, {4, 6, "hop_dong", ""}}},
 		{"đầu file dưới ngưỡng là unknown",
 			[]types.PageDocType{pt(1, "hoa_don", 0.4), pt(2, "", 0), pt(3, "hop_dong", 0.9)},
 			[]seg{{1, 2, types.LabelUnknown, "hoa_don"}, {3, 3, "hop_dong", ""}}},

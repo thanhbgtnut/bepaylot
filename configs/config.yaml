@@ -306,7 +306,9 @@ classify:                           # §6.9.4; document types: doc_types of the 
   page_marks: true                  # send cut hints (page number back to 1, blank page, size change; U49)
   # Decision API (U50): reads the document type of every page from its image
   # (POST <base_url>/v1/systemone, question type "choice", criteria = doc_types
-  # of the KB). Runs in page:ocr for KBs that have doc_types.
+  # of the KB). The same call asks is_break (FIRST / CONTINUATION, U58): a
+  # first page cuts consecutive documents of one type apart. Runs in page:ocr
+  # for KBs that have doc_types.
   decision:
     base_url: ${DECISION_API_URL}   # Ollama, e.g. http://127.0.0.1:11434; empty = pages are not classified
     model: ${DECISION_API_MODEL}    # e.g. cloudflare_clef-flash

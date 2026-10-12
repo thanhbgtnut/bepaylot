@@ -59,21 +59,23 @@ type Harness struct {
 type PageTypes struct {
 	mu     sync.Mutex
 	Labels []string
+	// Breaks[i] answers is_break for the i-th page (past the end = false).
+	Breaks []bool
 	// Seen is the sha256 of every image asked about, in call order.
 	Seen  []string
 	calls int
 }
 
 // ClassifyPage implements interfaces.PageClassifier.
-func (p *PageTypes) ClassifyPage(_ context.Context, _ []types.ClassLabel, image []byte) (string, float64, error) {
+func (p *PageTypes) ClassifyPage(_ context.Context, _ []types.ClassLabel, image []byte) (string, float64, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++
 	p.Seen = append(p.Seen, fmt.Sprintf("%x", sha256.Sum256(image)))
 	if p.calls > len(p.Labels) || p.Labels[p.calls-1] == "" {
-		return "", 0, errors.New("decision api: scripted failure")
+		return "", 0, false, errors.New("decision api: scripted failure")
 	}
-	return p.Labels[p.calls-1], 0.95, nil
+	return p.Labels[p.calls-1], 0.95, p.calls <= len(p.Breaks) && p.Breaks[p.calls-1], nil
 }
 
 var (

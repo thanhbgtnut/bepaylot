@@ -9,7 +9,9 @@ import (
 
 // SegmentsFromPages groups the pages of a file into documents by the type
 // the Decision API gave each page (§6.9.4): consecutive pages of one type
-// are one segment and a change of type starts a new one. A blank page is
+// are one segment and a change of type starts a new one; so does a page the
+// Decision API marked as the first page of a document (Break), which cuts
+// consecutive documents of one type apart. A blank page is
 // other, whatever the model said. A page below min (or not classified)
 // continues the document before it; so does a page typed other that has
 // content but no document title of its own, when the document before it has
@@ -39,7 +41,7 @@ func SegmentsFromPages(pages []types.PageDocType, min float64) []types.Segment {
 			out[last].PageEnd = p.PageNo
 		case typed && p.Label == types.LabelOther && !p.Blank && !p.Opens:
 			out[last].PageEnd = p.PageNo
-		case last >= 0 && out[last].Label == p.Label:
+		case last >= 0 && out[last].Label == p.Label && !(typed && p.Break):
 			out[last].PageEnd = p.PageNo
 			out[last].Confidence = (out[last].Confidence*float64(sure) + p.Confidence) / float64(sure+1)
 			sure++

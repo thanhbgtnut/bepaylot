@@ -141,49 +141,16 @@ export function ChatConfigDialog({
   );
 }
 
-// Starting points for a first sheet template: one sub-table per document
-// type the case type knows (a payment bundle), else one table of a whole file
-// (a loan plan).
+// Starting point for a first sheet template: one sub-table per document type
+// of the case (the doc_types of its KB, else the labels of its case type),
+// else one table of a whole file. The columns are the template's own: no
+// field is built in, the editor enters them.
 const DEFAULT_BODY =
   "Với mỗi giấy tờ được liệt kê (ref, loại, trang), bóc tách các trường còn thiếu. Đọc đúng các trang của giấy tờ, ghi bằng kb_save_fields với segment và citation_id của dòng gốc. Không tìm thấy thì không ghi và nêu lý do. Giá trị tính (tỷ lệ, tổng) phải ghi note cách tính.";
-const DEFAULT_FIELDS: Record<string, SheetField[]> = {
-  hop_dong: [
-    { key: "so_hop_dong", label: "Số hợp đồng", value_type: "string" },
-    { key: "ngay_ky", label: "Ngày ký", value_type: "date" },
-    { key: "ben_ban", label: "Bên bán", value_type: "string" },
-    { key: "ben_mua", label: "Bên mua", value_type: "string" },
-    { key: "gia_tri", label: "Giá trị hợp đồng (đồng)", value_type: "money" },
-    { key: "thoi_han_tt", label: "Thời hạn thanh toán", value_type: "string" },
-  ],
-  hoa_don: [
-    { key: "ky_hieu", label: "Ký hiệu", value_type: "string" },
-    { key: "so_hoa_don", label: "Số hoá đơn", value_type: "string" },
-    { key: "ngay_lap", label: "Ngày lập", value_type: "date" },
-    { key: "mst_ban", label: "MST bên bán", value_type: "string" },
-    { key: "tien_truoc_thue", label: "Tiền trước thuế", value_type: "money" },
-    { key: "thue_gtgt", label: "Thuế GTGT", value_type: "money" },
-    { key: "tong_tien", label: "Tổng thanh toán", value_type: "money" },
-  ],
-  bb_ban_giao: [
-    { key: "so_bb", label: "Số biên bản", value_type: "string" },
-    { key: "ngay_bg", label: "Ngày bàn giao", value_type: "date" },
-    { key: "can_cu_hd", label: "Căn cứ HĐ số", value_type: "string" },
-    { key: "hang_hoa", label: "Hàng hoá", value_type: "string" },
-    { key: "so_luong", label: "Số lượng", value_type: "string" },
-  ],
-  "": [
-    { key: "ten_doanh_nghiep", label: "Tên doanh nghiệp", value_type: "string" },
-    { key: "ma_so_thue", label: "Mã số thuế", value_type: "string" },
-    { key: "von_dieu_le", label: "Vốn điều lệ (đồng)", value_type: "money" },
-    { key: "loi_nhuan_sau_thue", label: "Lợi nhuận sau thuế năm gần nhất (đồng)", value_type: "money" },
-    { key: "so_tien_vay", label: "Số tiền đề nghị vay (đồng)", value_type: "money" },
-    { key: "muc_dich_vay", label: "Mục đích vay", value_type: "string" },
-  ],
-};
+const emptyField = (): SheetField => ({ key: "", label: "", value_type: "string" });
 function defaultSheet(labels: ClassLabel[]): { name: string; tables: SheetTable[] } {
-  const typed = labels.filter((l) => DEFAULT_FIELDS[l.name]);
-  if (typed.length) return { name: "Bộ chứng từ", tables: typed.map((l) => ({ label: l.name, title: l.title, fields: DEFAULT_FIELDS[l.name] })) };
-  return { name: "Bảng tổng hợp phương án vay", tables: [{ label: "", title: "Tổng hợp", fields: DEFAULT_FIELDS[""] }] };
+  if (labels.length) return { name: "Bộ chứng từ", tables: labels.map((l) => ({ label: l.name, title: l.title, fields: [emptyField()] })) };
+  return { name: "Bảng tổng hợp", tables: [{ label: "", title: "Tổng hợp", fields: [emptyField()] }] };
 }
 const TYPES = ["string", "number", "money", "date", "bool"];
 const copyTables = (ts?: SheetTable[]) => (ts ?? []).map((t) => ({ ...t, fields: t.fields.map((f) => ({ ...f })) }));
@@ -413,7 +380,16 @@ export function SheetTemplateDialog({
                     ))}
                     <tr className="border-t border-line">
                       <td colSpan={5} className="px-3 py-1.5 text-xs">
-                        Cột A luôn là <b>{table.label ? "Bộ" : "File"}</b> ·{" "}
+                        {table.label ? (
+                          <>
+                            Cột A luôn là <b>loại tài liệu</b>, cột B là <b>Bộ</b>
+                          </>
+                        ) : (
+                          <>
+                            Cột A luôn là <b>File</b>
+                          </>
+                        )}{" "}
+                        ·{" "}
                         <button className="text-accent" onClick={() => setFields((xs) => [...xs, { key: "", label: "", value_type: "string" }])}>
                           + Thêm trường
                         </button>

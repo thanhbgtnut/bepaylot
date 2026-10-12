@@ -420,7 +420,8 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 }
 
 // classifyPage asks the Decision API which document type of the KB the page
-// image is and keeps the answer on the page row (§6.9.4). It runs when the KB
+// image is, and whether the page starts a document (is_break), and keeps the
+// answer on the page row (§6.9.4). It runs when the KB
 // has doc_types and a classifier is configured, once per page: a retry of
 // page:ocr keeps the type it has. A failure is logged and leaves the page
 // unclassified; it never fails the page.
@@ -447,12 +448,12 @@ func (s *Service) classifyPage(ctx context.Context, d types.Document, row types.
 	// blank page, a letter) is forced into one of them, often confidently.
 	labels := append(append([]types.ClassLabel(nil), kb.Config.DocTypes...),
 		types.ClassLabel{Name: types.LabelOther, Title: "Khác", Description: "trang trắng, hoặc giấy tờ không thuộc các loại trên"})
-	label, conf, err := s.classify.ClassifyPage(ctx, labels, img)
+	label, conf, isBreak, err := s.classify.ClassifyPage(ctx, labels, img)
 	if err != nil {
 		s.log.Warn("classify page failed", "doc", d.ID, "page", row.PageNo, "err", err)
 		return
 	}
-	if err := s.st.Pages.SetDocType(ctx, d.ID, d.Gen, row.PageNo, label, conf); err != nil {
+	if err := s.st.Pages.SetDocType(ctx, d.ID, d.Gen, row.PageNo, label, conf, isBreak); err != nil {
 		s.log.Warn("classify page: save", "doc", d.ID, "page", row.PageNo, "err", err)
 	}
 }

@@ -369,10 +369,11 @@ func TestBundleSheetFlow(t *testing.T) {
 		t.Fatalf("sheets = %s", got)
 	}
 	head, _ := wb.GetRows("Hoá đơn")
-	if strings.Join(head[0], "|") != "Bộ|Số hoá đơn|Tổng thanh toán" || len(head) != 4 || head[2][1] != "0001241" {
+	// Column A is the document type, column B the bundle, then the fields.
+	if strings.Join(head[0], "|") != "Loại tài liệu|Bộ|Số hoá đơn|Tổng thanh toán" || len(head) != 4 || head[2][0] != "Hoá đơn" || head[2][2] != "0001241" {
 		t.Fatalf("invoice sheet = %v", head)
 	}
-	_ = wb.SetCellValue("Hoá đơn", "B2", "0001235")
+	_ = wb.SetCellValue("Hoá đơn", "C2", "0001235")
 	_ = wb.SetCellValue("Hoá đơn", "A6", "B09")
 	var edited bytes.Buffer
 	if err := wb.Write(&edited); err != nil {

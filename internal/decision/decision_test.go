@@ -26,7 +26,7 @@ func jpegOf(t *testing.T, w, h int) []byte {
 
 func TestClassifyPage(t *testing.T) {
 	var got request
-	answer := `{"answers":{"document_type":{"type":"choice","choice":"uy_nhiem_chi","probabilities":{"uy_nhiem_chi":0.99,"hop_dong":0.01},"confidence":0.98}}}`
+	answer := `{"answers":{"document_type":{"type":"choice","choice":"uy_nhiem_chi","probabilities":{"uy_nhiem_chi":0.99,"hop_dong":0.01},"confidence":0.98},"is_break":{"type":"choice","choice":"FIRST","probabilities":{"FIRST":0.9,"CONTINUATION":0.1},"confidence":0.53}}}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/systemone" || r.Method != http.MethodPost {
 			t.Errorf("request: %s %s", r.Method, r.URL.Path)
@@ -40,9 +40,13 @@ func TestClassifyPage(t *testing.T) {
 
 	labels := []types.ClassLabel{{Name: "uy_nhiem_chi", Title: "Ủy nhiệm chi", Description: "Payment order"}, {Name: "hop_dong", Title: "Hợp đồng"}}
 	c := New(Config{BaseURL: srv.URL + "/", Model: "m1", Instructions: "Đây là loại chứng từ nào?", MaxSide: 100})
-	label, conf, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 400, 200))
-	if err != nil || label != "uy_nhiem_chi" || conf != 0.98 {
-		t.Fatalf("got %q %v %v", label, conf, err)
+	label, conf, isBreak, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 400, 200))
+	if err != nil || label != "uy_nhiem_chi" || conf != 0.98 || !isBreak {
+		t.Fatalf("got %q %v %v %v", label, conf, isBreak, err)
+	}
+	// is_break goes in the same request: first page or continuation.
+	if b := got.Questions["is_break"]; b.Type != "choice" || len(b.Criteria) != 2 || b.Criteria["FIRST"] == "" || b.Criteria["CONTINUATION"] == "" {
+		t.Errorf("is_break question: %+v", b)
 	}
 	q := got.Questions["document_type"]
 	if got.Model != "m1" || q.Type != "choice" || q.Criteria["uy_nhiem_chi"] != "Ủy nhiệm chi — Payment order" || q.Criteria["hop_dong"] != "Hợp đồng" {
@@ -58,14 +62,22 @@ func TestClassifyPage(t *testing.T) {
 		t.Errorf("image size: %+v %v", cfg, err)
 	}
 
+	// A continuation page, or an answer without is_break, does not break.
+	for _, b := range []string{`,"is_break":{"choice":"CONTINUATION","confidence":0.8}`, ``} {
+		answer = `{"answers":{"document_type":{"choice":"hop_dong","confidence":0.9}` + b + `}}`
+		if label, _, isBreak, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err != nil || label != "hop_dong" || isBreak {
+			t.Errorf("is_break %q: got %q %v %v", b, label, isBreak, err)
+		}
+	}
+
 	// A choice outside the labels, or an HTTP error, is an error.
 	answer = `{"answers":{"document_type":{"choice":"la","confidence":0.9}}}`
-	if _, _, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err == nil {
+	if _, _, _, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err == nil {
 		t.Error("an unknown choice must fail")
 	}
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", 500) }))
 	defer bad.Close()
-	if _, _, err := New(Config{BaseURL: bad.URL}).ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err == nil {
+	if _, _, _, err := New(Config{BaseURL: bad.URL}).ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err == nil {
 		t.Error("HTTP 500 must fail")
 	}
 }

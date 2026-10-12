@@ -116,6 +116,29 @@ func TestNoDocTypesNoClassification(t *testing.T) {
 	}
 }
 
+// One file with two contracts scanned one after the other: every page is a
+// contract, and the page the Decision API marks as a first page (is_break)
+// cuts them into two documents.
+func TestIsBreakCutsSameTypePages(t *testing.T) {
+	h := testkit.New(t)
+	h.PageTypes.Labels = []string{"hop_dong", "hop_dong", "hop_dong"}
+	h.PageTypes.Breaks = []bool{true, false, true}
+	kb := h.KB(types.KBConfig{DocTypes: []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}}}, nil)
+	doc := h.Upload(kb.ID, "hai-hop-dong.pdf", nil, []pdftest.Page{
+		{"HOP DONG MUA BAN", "So 01"},
+		{"Dieu 2 thanh toan trong 30 ngay"},
+		{"HOP DONG MUA BAN", "So 02"},
+	})
+	h.Drain()
+	segs, err := h.Store.Segments.ByDocument(h.Ctx, doc)
+	if err != nil || len(segs) != 2 {
+		t.Fatalf("segments = %+v %v", segs, err)
+	}
+	if a, b := segs[0], segs[1]; a.Label != "hop_dong" || a.PageStart != 1 || a.PageEnd != 2 || b.Label != "hop_dong" || b.PageStart != 3 || b.PageEnd != 3 {
+		t.Fatalf("segments = %+v", segs)
+	}
+}
+
 // A reparse renders the same page image byte for byte, so the model cache
 // (keyed by the image) answers it without calling the model again; and the
 // cache keeps what it is given.

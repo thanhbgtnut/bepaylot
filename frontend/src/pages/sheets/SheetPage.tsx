@@ -119,7 +119,7 @@ export function SheetPage() {
       t.rows.forEach((row, ri) =>
         t.fields.forEach((f, fi) => {
           const id = cellId(t.label, rowIdOf(row), f.key);
-          m.set(id, { id, table: t, row, key: f.key, label: f.label, cv: row.cells_view[f.key], ref: col(fi + 1) + (ri + 2) });
+          m.set(id, { id, table: t, row, key: f.key, label: f.label, cv: row.cells_view[f.key], ref: col(fi + (t.label ? 2 : 1)) + (ri + 2) });
         }),
       );
     return m;
@@ -352,6 +352,10 @@ function Grid({
 }) {
   const head = "sticky top-0 z-2 h-6 border-r border-b border-line bg-surface-2 px-2 text-center text-[11.5px] font-normal text-subtle";
   const td = "border-r border-b border-line bg-surface";
+  // A sub-table of a document type opens with the type (A) and the bundle
+  // (B); one without label opens with the file (A). Then the fields.
+  const lead = table.label ? 2 : 1;
+  const typeCol = "w-32 max-w-32 min-w-32 truncate";
   const widths = table.fields.map((f) =>
     Math.min(34, Math.max(12, f.label.length + 2, ...table.rows.map((r) => (r.cells_view[f.key]?.value ?? "").length + 3))),
   );
@@ -360,10 +364,11 @@ function Grid({
       <thead>
         <tr>
           <th className={head + " sticky left-0 z-3 w-10 min-w-10"} />
-          <th className={head + " sticky left-10 z-3 min-w-16"}>A</th>
+          <th className={head + " sticky left-10 z-3 " + (table.label ? typeCol : "min-w-16")}>A</th>
+          {table.label && <th className={head + " sticky left-42 z-3 min-w-16"}>B</th>}
           {table.fields.map((f, i) => (
             <th key={f.key} className={head}>
-              {col(i + 1)}
+              {col(i + lead)}
             </th>
           ))}
         </tr>
@@ -371,7 +376,8 @@ function Grid({
       <tbody>
         <tr>
           <td className="sticky left-0 z-1 border-r border-b border-line bg-surface-2 text-center text-[11.5px] text-subtle">1</td>
-          <td className="sticky left-10 z-1 border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium text-fg">{table.label ? "Bộ" : "File"}</td>
+          <td className={"sticky left-10 z-1 border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium text-fg " + (table.label ? typeCol : "")}>{table.label ? "Loại tài liệu" : "File"}</td>
+          {table.label && <td className="sticky left-42 z-1 border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium text-fg">Bộ</td>}
           {table.fields.map((f, i) => (
             <td key={f.key} className="border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg" style={{ minWidth: widths[i] + "ch" }}>
               {f.label}
@@ -386,9 +392,10 @@ function Grid({
           return (
             <tr key={rowId}>
               <td className={"sticky left-0 z-1 border-r border-b border-line text-center text-[11.5px]" + rule + (selected ? " bg-[#107c41] text-white" : " bg-surface-2 text-subtle")}>{ri + 2}</td>
-              <td className={"sticky left-10 z-1 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg " + td + rule} title={`${row.file_name ?? ""} · ${pages(row.page_start, row.page_end)}`}>
-                {table.label ? row.bundle : <span className="font-normal">{row.file_name}</span>}
+              <td className={"sticky left-10 z-1 px-2.5 py-1.5 whitespace-nowrap text-fg " + td + rule + (table.label ? " " + typeCol : "")} title={`${row.file_name ?? ""} · ${pages(row.page_start, row.page_end)}`}>
+                {table.label ? table.title : row.file_name}
               </td>
+              {table.label && <td className={"sticky left-42 z-1 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg " + td + rule}>{row.bundle}</td>}
               {table.fields.map((f) => {
                 const c = cells.get(cellId(table.label, rowId, f.key))!;
                 const cv = c.cv;
@@ -612,14 +619,14 @@ function DownloadDialog({ sheet, onClose, onDownload }: { sheet: SheetView; onCl
         </>
       }
     >
-      <p className="text-sm">Mỗi bảng được chọn là một sheet: dòng 1 là tên trường, cột A là Bộ, mỗi giấy tờ một dòng. File chỉ có dữ liệu, không có cột nguồn, độ tin cậy hay trạng thái.</p>
+      <p className="text-sm">Mỗi bảng được chọn là một sheet: dòng 1 là tên trường, cột A là loại tài liệu, cột B là Bộ, các cột sau là trường của mẫu bảng, mỗi giấy tờ một dòng. File chỉ có dữ liệu, không có cột nguồn, độ tin cậy hay trạng thái.</p>
       <div className="flex flex-col gap-1 rounded-xl border border-line p-1.5">
         {sheet.tables_view.map((t) => (
           <label key={t.label || "_"} className="flex h-10 cursor-pointer items-center gap-3 rounded-lg px-2 text-sm text-fg hover:bg-fg/5">
             <input type="checkbox" checked={!!pick[t.label]} onChange={(e) => setPick((p) => ({ ...p, [t.label]: e.target.checked }))} />
             <span className="flex-1">{t.title || "Cả file"}</span>
             <span className="text-xs text-muted">
-              {t.rows.length} dòng · {t.fields.length + 1} cột
+              {t.rows.length} dòng · {t.fields.length + (t.label ? 2 : 1)} cột
             </span>
           </label>
         ))}

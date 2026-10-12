@@ -47,6 +47,21 @@ func New(cfg Config) *Client {
 
 const question = "document_type"
 
+// breakQuestion asks whether the page starts a document or continues the one
+// on the page before it: consecutive pages of one type are cut into separate
+// documents at every page answered breakFirst (§6.9.4).
+const (
+	breakQuestion     = "is_break"
+	breakFirst        = "FIRST"
+	breakContinuation = "CONTINUATION"
+	breakInstructions = "Trang này là trang đầu tiên của một tài liệu mới, hay là trang tiếp theo của tài liệu ở trang trước?"
+)
+
+var breakCriteria = map[string]string{
+	breakFirst:        "Trang đầu tiên của một tài liệu: có tiêu đề, số hiệu, ngày tháng hoặc phần mở đầu của tài liệu",
+	breakContinuation: "Trang tiếp theo của một tài liệu: nội dung nối tiếp trang trước, không có tiêu đề mở đầu",
+}
+
 type request struct {
 	Model     string                    `json:"model"`
 	State     string                    `json:"state"`
@@ -68,10 +83,11 @@ type response struct {
 }
 
 // ClassifyPage implements interfaces.PageClassifier: it asks which of labels
-// the page image is. The image goes inline as raw base64: the endpoint takes
+// the page image is, and in the same call whether the page starts a document
+// (is_break). The image goes inline as raw base64: the endpoint takes
 // neither URLs nor data URLs, and a "data:" prefix is refused as illegal
-// base64.
-func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, img []byte) (string, float64, error) {
+// base64. An answer without is_break is a page that does not break.
+func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, img []byte) (string, float64, bool, error) {
 	criteria := make(map[string]string, len(labels))
 	for _, l := range labels {
 		criteria[l.Name] = l.Title
@@ -81,35 +97,38 @@ func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, im
 	}
 	body, err := json.Marshal(request{
 		Model: c.cfg.Model, State: "Ảnh chứng từ:",
-		Images:    []string{base64.StdEncoding.EncodeToString(downscale(img, c.cfg.MaxSide))},
-		Questions: map[string]choiceQuestion{question: {Type: "choice", Instructions: c.cfg.Instructions, Criteria: criteria}},
+		Images: []string{base64.StdEncoding.EncodeToString(downscale(img, c.cfg.MaxSide))},
+		Questions: map[string]choiceQuestion{
+			question:      {Type: "choice", Instructions: c.cfg.Instructions, Criteria: criteria},
+			breakQuestion: {Type: "choice", Instructions: breakInstructions, Criteria: breakCriteria},
+		},
 	})
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/v1/systemone", bytes.NewReader(body))
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("decision api: %w", err)
+		return "", 0, false, fmt.Errorf("decision api: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", 0, fmt.Errorf("decision api: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw[:min(len(raw), 300)])))
+		return "", 0, false, fmt.Errorf("decision api: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw[:min(len(raw), 300)])))
 	}
 	var out response
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", 0, fmt.Errorf("decision api: %w", err)
+		return "", 0, false, fmt.Errorf("decision api: %w", err)
 	}
 	a, ok := out.Answers[question]
 	if _, known := criteria[a.Choice]; !ok || !known {
-		return "", 0, fmt.Errorf("decision api: no valid choice in the answer (%q)", a.Choice)
+		return "", 0, false, fmt.Errorf("decision api: no valid choice in the answer (%q)", a.Choice)
 	}
-	return a.Choice, a.Confidence, nil
+	return a.Choice, a.Confidence, out.Answers[breakQuestion].Choice == breakFirst, nil
 }
 
 // downscale re-encodes an image whose long side is above maxSide; any other
