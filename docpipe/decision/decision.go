@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/image/draw"
@@ -37,6 +38,12 @@ type Config struct {
 type Client struct {
 	cfg  Config
 	http *http.Client
+	// dataURL is set once the server refused a raw base64 image and took a
+	// data URL: Ollama wants raw base64, LM Studio wants a data URL.
+	dataURL atomic.Bool
+	// split is set once the server refused the two questions in one request
+	// and answered them one by one (a local server with a small batch size).
+	split atomic.Bool
 }
 
 // New builds a client.
@@ -58,8 +65,8 @@ const (
 )
 
 var firstPageCriteria = map[string]string{
-	firstPageYes: "Là trang đầu tiên của một tài liệu: có tiêu đề, số hiệu, ngày tháng hoặc phần mở đầu của tài liệu",
-	firstPageNo:  "Không phải trang đầu: nội dung nối tiếp trang trước, không có tiêu đề mở đầu",
+	firstPageYes: "Trang đầu của tài liệu, có tiêu đề",
+	firstPageNo:  "Trang tiếp theo",
 }
 
 type request struct {
@@ -84,9 +91,13 @@ type response struct {
 
 // ClassifyPage implements interfaces.PageClassifier: it asks which of labels
 // the page image is, and in the same call whether the page is the first page
-// of a document (is_first_page). The image goes inline as raw base64: the
-// endpoint takes neither URLs nor data URLs, and a "data:" prefix is refused
-// as illegal base64. An answer without is_first_page is not a first page.
+// of a document (is_first_page). The image goes inline as raw base64, which
+// is what Ollama takes (it refuses a "data:" prefix as illegal base64). A
+// server that answers 400 to that (LM Studio takes only data URLs) is asked
+// again with a data URL, and gets data URLs from then on. A server that
+// fails on the two questions together (LM Studio: "input is too large",
+// they exceed the model's batch size) is asked them one by one, and from
+// then on. An answer without is_first_page is not a first page.
 func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, img []byte) (string, float64, bool, error) {
 	criteria := make(map[string]string, len(labels))
 	for _, l := range labels {
@@ -95,34 +106,74 @@ func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, im
 			criteria[l.Name] = l.Title + " — " + l.Description
 		}
 	}
-	body, err := json.Marshal(request{
-		Model: c.cfg.Model, State: "Ảnh chứng từ:",
-		Images: []string{base64.StdEncoding.EncodeToString(downscale(img, c.cfg.MaxSide))},
-		Questions: map[string]choiceQuestion{
-			question:          {Type: "choice", Instructions: c.cfg.Instructions, Criteria: criteria},
-			firstPageQuestion: {Type: "choice", Instructions: firstPageInstructions, Criteria: firstPageCriteria},
-		},
-	})
-	if err != nil {
-		return "", 0, false, err
+	jpg := downscale(img, c.cfg.MaxSide)
+	b64 := base64.StdEncoding.EncodeToString(jpg)
+	post := func(asDataURL bool, questions map[string]choiceQuestion) (int, []byte, error) {
+		image := b64
+		if asDataURL {
+			image = "data:" + http.DetectContentType(jpg) + ";base64," + b64
+		}
+		body, err := json.Marshal(request{Model: c.cfg.Model, State: "Ảnh chứng từ:", Images: []string{image}, Questions: questions})
+		if err != nil {
+			return 0, nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/v1/systemone", bytes.NewReader(body))
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return 0, nil, fmt.Errorf("decision api: %w", err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return resp.StatusCode, raw, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/v1/systemone", bytes.NewReader(body))
-	if err != nil {
-		return "", 0, false, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", 0, false, fmt.Errorf("decision api: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return "", 0, false, fmt.Errorf("decision api: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw[:min(len(raw), 300)])))
-	}
+	// ask sends questions and merges the answers into out.
 	var out response
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", 0, false, fmt.Errorf("decision api: %w", err)
+	ask := func(questions map[string]choiceQuestion) error {
+		asDataURL := c.dataURL.Load()
+		status, raw, err := post(asDataURL, questions)
+		if err == nil && status == http.StatusBadRequest && !asDataURL {
+			if status, raw, err = post(true, questions); err == nil && status == http.StatusOK {
+				c.dataURL.Store(true)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("decision api: HTTP %d: %s", status, strings.TrimSpace(string(raw[:min(len(raw), 300)])))
+		}
+		var got response
+		if err := json.Unmarshal(raw, &got); err != nil {
+			return fmt.Errorf("decision api: %w", err)
+		}
+		if out.Answers == nil {
+			out.Answers = got.Answers
+		}
+		for k, v := range got.Answers {
+			out.Answers[k] = v
+		}
+		return nil
+	}
+	docQ := map[string]choiceQuestion{question: {Type: "choice", Instructions: c.cfg.Instructions, Criteria: criteria}}
+	firstQ := map[string]choiceQuestion{firstPageQuestion: {Type: "choice", Instructions: firstPageInstructions, Criteria: firstPageCriteria}}
+	together := !c.split.Load()
+	var err error
+	if together {
+		err = ask(map[string]choiceQuestion{question: docQ[question], firstPageQuestion: firstQ[firstPageQuestion]})
+	}
+	if !together || err != nil {
+		if err = ask(docQ); err == nil {
+			if err = ask(firstQ); err == nil {
+				c.split.Store(true)
+			}
+		}
+	}
+	if err != nil {
+		return "", 0, false, err
 	}
 	a, ok := out.Answers[question]
 	if _, known := criteria[a.Choice]; !ok || !known {

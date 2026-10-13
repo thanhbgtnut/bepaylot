@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"net/http"
@@ -79,5 +80,63 @@ func TestClassifyPage(t *testing.T) {
 	defer bad.Close()
 	if _, _, _, err := New(Config{BaseURL: bad.URL}).ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err == nil {
 		t.Error("HTTP 500 must fail")
+	}
+}
+
+// A server that takes only data URLs (LM Studio) answers 400 to raw base64:
+// the page is asked again with a data URL, and later pages go as data URLs
+// at once.
+func TestClassifyPageDataURLFallback(t *testing.T) {
+	var images []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got request
+		json.NewDecoder(r.Body).Decode(&got)
+		images = append(images, got.Images[0][:min(len(got.Images[0]), 23)])
+		if !strings.HasPrefix(got.Images[0], "data:image/jpeg;base64,") {
+			http.Error(w, `{"error":{"message":"Images must be inline base64 image data URLs"}}`, http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"answers":{"document_type":{"choice":"hop_dong","confidence":0.9},"is_first_page":{"choice":"YES"}}}`))
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL})
+	labels := []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}}
+	for range 2 {
+		if label, _, first, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err != nil || label != "hop_dong" || !first {
+			t.Fatalf("got %q %v %v", label, first, err)
+		}
+	}
+	if len(images) != 3 || strings.HasPrefix(images[0], "data:") || images[1] != "data:image/jpeg;base64," || images[2] != "data:image/jpeg;base64," {
+		t.Errorf("requests = %q", images)
+	}
+}
+
+// A server that cannot take the two questions in one request (a small batch
+// size) answers them one by one; later pages are asked one by one at once.
+func TestClassifyPageSplitsQuestions(t *testing.T) {
+	var asked []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got request
+		json.NewDecoder(r.Body).Decode(&got)
+		asked = append(asked, len(got.Questions))
+		switch _, doc := got.Questions["document_type"]; {
+		case len(got.Questions) > 1:
+			http.Error(w, `{"error":{"message":"input (545 tokens) is too large to process"}}`, http.StatusInternalServerError)
+		case doc:
+			w.Write([]byte(`{"answers":{"document_type":{"choice":"hop_dong","confidence":0.9}}}`))
+		default:
+			w.Write([]byte(`{"answers":{"is_first_page":{"choice":"YES"}}}`))
+		}
+	}))
+	defer srv.Close()
+	c := New(Config{BaseURL: srv.URL})
+	labels := []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}}
+	for range 2 {
+		if label, conf, first, err := c.ClassifyPage(context.Background(), labels, jpegOf(t, 10, 10)); err != nil || label != "hop_dong" || conf != 0.9 || !first {
+			t.Fatalf("got %q %v %v %v", label, conf, first, err)
+		}
+	}
+	if fmt.Sprint(asked) != "[2 1 1 1 1]" {
+		t.Errorf("questions per request = %v", asked)
 	}
 }
