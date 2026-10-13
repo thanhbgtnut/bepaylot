@@ -12,8 +12,9 @@ import { SheetTemplateDialog } from "./dialogs";
 const XL = "#107c41"; // the Excel accent of the Studio card
 
 // Studio column of the case page (§7.2): the "Xuất Excel" card — the
-// template's sub-tables, one per document type, to pick — and the sheets made
-// for the case; a sheet opens on its own page (§7.6).
+// template's sub-tables, one per document type, to pick; the agent reads the
+// files to fill them — and the sheets made for the case; a sheet opens on its
+// own page (§7.6).
 export function Studio({ kcase, split, className }: { kcase: Case; split: SplitView | null; className: string }) {
   const { user } = useAuth();
   const { toast, fail } = useToast();
@@ -56,19 +57,13 @@ export function Studio({ kcase, split, className }: { kcase: Case; split: SplitV
     }
   };
 
-  // Rows per sub-table: the reviewed documents of its type; a sub-table
-  // without type, or of a type the case does not classify (the template is
-  // independent of the KB), has one row per indexed file and the agent finds
-  // the document in it.
-  const reviewed = (split?.files ?? []).filter((f) => f.status === "reviewed");
-  const bySplit = (label: string) => !!split?.labels.some((l) => l.name === label);
-  const docsOf = (label: string) =>
-    bySplit(label) ? reviewed.flatMap((f) => f.segments).filter((g) => g.label === label).length : (split?.files.filter((f) => f.indexed).length ?? 0);
+  // A sheet does not use the classification of the case: the agent reads
+  // every indexed file and finds the documents of each sub-table's type, so
+  // every sub-table can be picked once a file is indexed.
+  const nFiles = split?.files.filter((f) => f.indexed).length ?? 0;
+  const usable = !split || nFiles > 0;
   const tables = tpl?.tables ?? [];
-  const picked = tables.filter((t) => !off[t.label] && (!split || docsOf(t.label) > 0));
-  const needSplit = !!split && !split.reviewed && picked.some((t) => bySplit(t.label));
-  const unreviewed = (split?.files ?? []).filter((f) => f.indexed && f.status !== "reviewed");
-  const nBundles = new Set(reviewed.flatMap((f) => f.segments.map((g) => g.bundle))).size;
+  const picked = tables.filter((t) => usable && !off[t.label]);
   const titles = (labels: string[]) => labels.map((l) => tables.find((t) => t.label === l)?.title || "Cả file").join(" · ");
 
   const start = async () => {
@@ -81,7 +76,7 @@ export function Studio({ kcase, split, className }: { kcase: Case; split: SplitV
         picked.map((t) => t.label),
       );
       setSheets((xs) => [s, ...(xs ?? [])]);
-      toast("Đang tạo bảng: ô đã duyệt được dùng lại, ô còn thiếu gửi agent mỗi bộ một lượt");
+      toast("Đang tạo bảng: ô đã duyệt được dùng lại, ô còn thiếu gửi agent mỗi file một lượt");
     } catch (e) {
       fail(e);
     } finally {
@@ -108,45 +103,25 @@ export function Studio({ kcase, split, className }: { kcase: Case; split: SplitV
         {tables.length > 0 && (
           <div className="mt-3 flex flex-col gap-0.5 rounded-xl bg-surface p-1.5">
             <div className="px-2 pt-1 pb-0.5 text-xs text-muted">Chọn bảng cần tạo (mỗi loại giấy tờ một bảng)</div>
-            {tables.map((t) => {
-              const n = docsOf(t.label);
-              const usable = !split || n > 0;
-              return (
-                <label key={t.label} className={"flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-fg " + (usable ? "cursor-pointer hover:bg-fg/5" : "opacity-50")}>
-                  <input type="checkbox" checked={usable && !off[t.label]} disabled={!usable} onChange={(e) => setOff((o) => ({ ...o, [t.label]: !e.target.checked }))} />
-                  <span className="min-w-0 flex-1 truncate">{t.title || "Cả file"}</span>
-                  <span className="text-xs whitespace-nowrap text-muted">
-                    {split ? `${n} ${bySplit(t.label) ? "giấy tờ" : "file"} · ` : ""}
-                    {t.fields.length} cột
-                  </span>
-                </label>
-              );
-            })}
+            {tables.map((t) => (
+              <label key={t.label} className={"flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-fg " + (usable ? "cursor-pointer hover:bg-fg/5" : "opacity-50")}>
+                <input type="checkbox" checked={usable && !off[t.label]} disabled={!usable} onChange={(e) => setOff((o) => ({ ...o, [t.label]: !e.target.checked }))} />
+                <span className="min-w-0 flex-1 truncate">{t.title || "Cả file"}</span>
+                <span className="text-xs whitespace-nowrap text-muted">{t.fields.length} cột</span>
+              </label>
+            ))}
           </div>
         )}
-        {needSplit ? (
-          <>
-            <div className="mt-3 flex gap-2 rounded-xl bg-warn-soft p-3 text-xs text-warn">
-              <Icon name="content_cut" size={18} />
-              <div className="flex-1">
-                {unreviewed.length} file chưa duyệt tách & gom ({unreviewed.map((f) => f.file_name).join(", ")}). Bảng chỉ dùng giấy tờ đã duyệt.
-              </div>
-            </div>
-            <button className="btn mt-2 w-full border-transparent text-white hover:shadow-1" style={{ background: XL }} onClick={() => nav(`/cases/${kcase.id}/split`)}>
-              <Icon name="content_cut" size={18} /> Tách & gom trang
-            </button>
-          </>
-        ) : (
-          <button
-            className="btn mt-3 w-full border-transparent text-white hover:shadow-1"
-            style={{ background: XL }}
-            onClick={start}
-            disabled={starting || templates === null || (!tpl && !editor) || (!!tpl && !picked.length)}
-          >
-            {starting ? <Spinner className="size-4 border-2 border-white/40 border-t-white" /> : <Icon name="auto_awesome" size={18} />}
-            {tpl ? `Tạo ${picked.length} bảng${nBundles && picked.some((t) => bySplit(t.label)) ? ` từ ${nBundles} bộ` : ""}` : editor ? "Tạo mẫu bảng" : "Chưa có mẫu bảng"}
-          </button>
-        )}
+        <button
+          className="btn mt-3 w-full border-transparent text-white hover:shadow-1"
+          style={{ background: XL }}
+          onClick={start}
+          disabled={starting || templates === null || (!tpl && !editor) || (!!tpl && !picked.length)}
+        >
+          {starting ? <Spinner className="size-4 border-2 border-white/40 border-t-white" /> : <Icon name="auto_awesome" size={18} />}
+          {tpl ? `Tạo ${picked.length} bảng${split && nFiles ? ` từ ${nFiles} file` : ""}` : editor ? "Tạo mẫu bảng" : "Chưa có mẫu bảng"}
+        </button>
+        {tpl && split && !nFiles && <div className="mt-2 text-xs text-warn">Chưa có file nào index xong để tạo bảng.</div>}
         <div className="mt-2 text-xs text-muted">Trường đã duyệt được dùng lại, không bóc tách lại.</div>
       </div>
 

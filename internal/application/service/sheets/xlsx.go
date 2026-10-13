@@ -82,7 +82,11 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 			return "", err
 		}
 		title := tableTitle(tv.SheetTable)
-		header := []any{"Loại tài liệu", "Bộ"}
+		header := []any{"Loại tài liệu"}
+		bundle := len(tv.Rows) > 0 && tv.Rows[0].SegmentID != nil // a sheet built from the split (before U67)
+		if bundle {
+			header = append(header, "Bộ")
+		}
 		if tv.Label == "" {
 			header = []any{"File"}
 		}
@@ -96,6 +100,8 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 		_ = f.SetColWidth(name, "A", "A", 12)
 		if tv.Label != "" {
 			_ = f.SetColWidth(name, "A", "A", 22)
+		}
+		if bundle {
 			_ = f.SetColWidth(name, "B", "B", 12)
 		}
 		firstField, _ := excelize.ColumnNumberToName(lead + 1)
@@ -106,11 +112,12 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 		_ = f.SetPanes(name, &excelize.Panes{Freeze: true, Split: false, XSplit: lead, YSplit: 1, TopLeftCell: firstField + "2", ActivePane: "bottomRight"})
 		for i, r := range tv.Rows {
 			n := i + 2
-			vals := []any{title, r.Bundle}
+			vals := []any{title}
+			if bundle {
+				vals = append(vals, r.Bundle)
+			}
 			if tv.Label == "" {
 				vals = []any{r.FileName}
-			} else if r.SegmentID == nil { // a file row: no bundle, the file tells the rows apart
-				vals = []any{title, r.FileName}
 			}
 			for _, fd := range tv.Fields {
 				vals = append(vals, r.CellsView[fd.Key].Value)
@@ -263,7 +270,7 @@ func (s *Service) Import(ctx context.Context, owner, id uuid.UUID, r io.Reader) 
 		}
 		rows, _ := f.GetRows(sheet)
 		if _, known := lastRow[sheet]; !known {
-			if len(rows) > 0 {
+			if len(rows) > 1 { // only a header: a sub-table without rows
 				res.Ignored = append(res.Ignored, Ignored{Sheet: sheet, Cell: "A1", Reason: "sheet thêm tay hoặc đổi tên, không gắn với bảng nào"})
 			}
 			continue

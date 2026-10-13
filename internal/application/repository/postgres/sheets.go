@@ -138,7 +138,8 @@ func (r *SheetsRepo) DeleteByCase(ctx context.Context, caseID uuid.UUID) error {
 // SheetEdit is one cell a user saves (§6.9.6): the field to write and, when
 // the value differs from the AI's, the correction to record.
 type SheetEdit struct {
-	Row        int // index in Sheet.Rows
+	Row        int    // index in Sheet.Rows
+	Key        string // column key of the cell (Field.Key may carry the sub-table's label)
 	Field      FieldWrite
 	Correction *types.Correction
 }
@@ -162,7 +163,7 @@ func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []S
 		if err != nil {
 			return types.Sheet{}, err
 		}
-		key, label := e.Field.Key, ""
+		key, label := e.Key, ""
 		if e.Row >= 0 && e.Row < len(sh.Rows) {
 			row := &sh.Rows[e.Row]
 			label = row.Table

@@ -267,7 +267,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	split := docmodel.NewSplit(docmodel.SplitDeps{Store: st, Queue: app.enqueuer, Cases: cs, Tree: idx,
 		LLM: completer(cfg.Classify.Provider, cfg.Classify.Model, 4096), Config: cfg, Log: log})
 	idx.SetSplit(split)
-	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Searcher: idx, Split: split,
+	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Searcher: idx,
 		Runner: sheetRunner{ag: ag, st: st, cfg: cfg.LLM}, Config: cfg, Log: log})
 	h.Sheets, h.Split = sh, split
 

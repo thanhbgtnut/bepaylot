@@ -705,27 +705,3 @@ func (s *Split) AutoConfirm(ctx context.Context, caseID uuid.UUID) error {
 	}
 	return s.Save(ctx, types.User{ID: c.CreatedBy}, caseID, in)
 }
-
-// Unreviewed returns the indexed files of a case whose split is not reviewed
-// (§6.9.6: sub-tables with a label need it).
-func (s *Split) Unreviewed(ctx context.Context, caseID uuid.UUID) ([]string, error) {
-	docs, err := s.st.Segments.SplitDocs(ctx, caseID)
-	if err != nil {
-		return nil, err
-	}
-	segs, err := s.st.Segments.ByCase(ctx, caseID)
-	if err != nil {
-		return nil, err
-	}
-	byDoc := map[uuid.UUID][]types.Segment{}
-	for _, g := range segs {
-		byDoc[g.DocumentID] = append(byDoc[g.DocumentID], g)
-	}
-	var out []string
-	for _, d := range docs {
-		if d.Seq > 0 && splitStatus(d, byDoc[d.ID]) != types.SplitReviewed {
-			out = append(out, d.FileName)
-		}
-	}
-	return out, nil
-}

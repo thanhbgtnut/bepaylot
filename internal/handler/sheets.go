@@ -27,10 +27,7 @@ func (h *Handlers) sheetsReady(c *app.RequestContext) bool {
 }
 
 func (h *Handlers) sheetError(c *app.RequestContext, err error) {
-	var split *sheets.SplitNotReviewedError
 	switch {
-	case errors.As(err, &split):
-		c.JSON(consts.StatusConflict, dto.NewError("split_not_reviewed", err.Error()))
 	case errors.Is(err, sheets.ErrNotFound):
 		h.notFound(c, "sheet not found")
 	case errors.Is(err, sheets.ErrNotSheet), errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNoTables),
@@ -46,7 +43,7 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 // CreateSheet handles POST /v1/cases/{id}/sheets.
 //
 // @Summary      Build a sheet of a case from a sheet template (§6.9.6)
-// @Description  One sub-table per document type (tables = labels, omitted = all); rows are the reviewed documents of the case. Confirmed fields are reused; the missing ones are extracted by one agent turn per bundle (task case:sheet). Poll GET /v1/sheets/{id} for progress. 409 split_not_reviewed when a file's split is not reviewed.
+// @Description  One sub-table per document type (tables = labels, omitted = all); one row per indexed file in which the agent finds a document of that type (the classification of the case is not used). Confirmed fields are reused; the missing ones are extracted by one agent turn per file (task case:sheet). Poll GET /v1/sheets/{id} for progress.
 // @Tags         Sheets
 // @Accept       json
 // @Produce      json
@@ -54,7 +51,6 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 // @Param        request  body      dto.CreateSheetRequest  true  "Template"
 // @Success      202      {object}  types.Sheet
 // @Failure      402      {object}  dto.ErrorResponse
-// @Failure      409      {object}  dto.ErrorResponse
 // @Failure      422      {object}  dto.ErrorResponse
 // @Security     ApiKeyAuth
 // @Router       /v1/cases/{id}/sheets [post]

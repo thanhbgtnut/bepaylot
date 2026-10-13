@@ -73,8 +73,8 @@ func (f *fakeClassifier) CompleteJSON(_ context.Context, system, user string, ou
 }
 
 // fakeAgent stands in for the hidden agent turn of a sheet: for each
-// document of the prompt it finds "Label: value" lines on the document's
-// pages and saves them with kb_save_fields' service, by segment.
+// sub-table of the prompt it finds "Label: value" lines on the file's pages
+// and saves them with kb_save_fields' service, by file.
 type fakeAgent struct {
 	h       *testkit.Harness
 	dm      *docmodel.Service
@@ -85,8 +85,8 @@ type fakeAgent struct {
 }
 
 var (
-	itemRe  = regexp.MustCompile(`(?m)^\[(d\d+)(?:\.s(\d+))?\] .* · tr\. (\d+)(?:–(\d+))?$`)
-	fieldRe = regexp.MustCompile(`^- (\w+) · `)
+	itemRe  = regexp.MustCompile(`(?m)^\[(d\d+)\] .* · tr\. (\d+)(?:–(\d+))?$`)
+	fieldRe = regexp.MustCompile(`^- ((?:\w+\.)?(\w+)) · `)
 )
 
 // where each key is written in the test documents.
@@ -103,19 +103,10 @@ func (a *fakeAgent) RunSheet(ctx context.Context, user types.User, caseID, _ uui
 		}
 		doc := a.refs[m[1]]
 		ref := m[1]
-		var seg *uuid.UUID
-		if m[2] != "" {
-			k, _ := strconv.Atoi(m[2])
-			id, err := a.dm.SegmentAt(ctx, doc, k)
-			if err != nil {
-				return "", err
-			}
-			seg, ref = &id, ref+".s"+m[2]
-		}
-		from, _ := strconv.Atoi(m[3])
+		from, _ := strconv.Atoi(m[2])
 		to := from
-		if m[4] != "" {
-			to, _ = strconv.Atoi(m[4])
+		if m[3] != "" {
+			to, _ = strconv.Atoi(m[3])
 		}
 		var in []types.FieldInput
 		for _, fl := range lines[i+1:] {
@@ -123,7 +114,7 @@ func (a *fakeAgent) RunSheet(ctx context.Context, user types.User, caseID, _ uui
 			if fm == nil {
 				break
 			}
-			key := fm[1]
+			key, name := fm[1], fm[2]
 			if a.skip[ref+" "+key] {
 				fmt.Fprintf(&reply, "%s %s: không có dòng nào ghi giá trị này\n", ref, key)
 				continue
@@ -134,16 +125,17 @@ func (a *fakeAgent) RunSheet(ctx context.Context, user types.User, caseID, _ uui
 			}
 			var hit *postgres.PageLine
 			for i := range lines {
-				if strings.HasPrefix(lines[i].Text, keyLine[key]+": ") {
+				if strings.HasPrefix(lines[i].Text, keyLine[name]+": ") {
 					hit = &lines[i]
 					break
 				}
 			}
-			if hit == nil {
-				return "", fmt.Errorf("no line %q in %s", keyLine[key], ref)
+			if hit == nil { // the file has no document of that type
+				fmt.Fprintf(&reply, "%s %s: file không có loại giấy tờ này\n", ref, key)
+				continue
 			}
-			value := strings.TrimPrefix(hit.Text, keyLine[key]+": ")
-			in = append(in, types.FieldInput{DocumentID: doc, SegmentID: seg, Key: key, Value: value, Confidence: 0.9,
+			value := strings.TrimPrefix(hit.Text, keyLine[name]+": ")
+			in = append(in, types.FieldInput{DocumentID: doc, Key: key, Value: value, Confidence: 0.9,
 				Citations: []string{fmt.Sprintf("doc:%s:p%d:l%d-%d", doc, hit.PageNo, hit.LineNo, hit.LineNo)}})
 		}
 		for _, r := range a.dm.SaveAgentFields(ctx, user.ID, a.caseID, nil, in) {
@@ -155,9 +147,10 @@ func (a *fakeAgent) RunSheet(ctx context.Context, user types.User, caseID, _ uui
 	return reply.String(), nil
 }
 
-// U47–U49 end to end on the database (fake LLM and agent): one scan with two
-// bundles is split by code + one classification call, reviewed, and built
-// into one sub-table per document type with a row per document.
+// U47–U49, U67 end to end on the database (fake LLM and agent): one scan with
+// two bundles is split by code + one classification call and reviewed; the
+// sheet is built without the split, one sub-table per document type with a
+// row per file where the agent finds the type.
 func TestBundleSheetFlow(t *testing.T) {
 	h := testkit.New(t)
 	kb := h.KB(types.KBConfig{}, nil)
@@ -234,7 +227,7 @@ func TestBundleSheetFlow(t *testing.T) {
 		t.Fatalf("segment 5 = %+v", g)
 	}
 
-	// A sheet needs the reviewed split.
+	// A sheet does not wait for the split: it is built before the review.
 	tpl, err := h.Store.Templates.Create(h.Ctx, postgres.TemplateDraft{Kind: types.TemplateSheet, Slug: "tt_" + uuid.NewString()[:8], Name: "Bộ chứng từ",
 		CaseType: "thanh_toan", Body: "Bóc tách.", Tables: []types.SheetTable{
 			{Label: "hop_dong", Title: "Hợp đồng", Fields: []types.SheetField{{Key: "so_hop_dong", Label: "Số hợp đồng"}, {Key: "gia_tri", Label: "Giá trị", ValueType: "money"}}},
@@ -252,12 +245,102 @@ func TestBundleSheetFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	dm := docmodel.New(h.Store, h.Index)
-	agent := &fakeAgent{h: h, dm: dm, caseID: cs.ID, refs: refs, skip: map[string]bool{}}
+	// The agent misses one cell of the invoice and finds no handover record.
+	agent := &fakeAgent{h: h, dm: dm, caseID: cs.ID, refs: refs, skip: map[string]bool{"d1 hoa_don.tong_tien": true, "d1 bb_ban_giao.so_hop_dong": true}}
 	sq := &stubQueue{}
-	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: sq, Cases: h.Cases, Searcher: h.Index, Split: split, Runner: agent, Config: h.Config})
-	var notReviewed *sheets.SplitNotReviewedError
-	if _, err := svc.Create(h.Ctx, h.Owner, cs.ID, tpl.ID, nil); !errors.As(err, &notReviewed) {
+	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: sq, Cases: h.Cases, Searcher: h.Index, Runner: agent, Config: h.Config})
+	sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, tpl.ID, nil)
+	if err != nil {
 		t.Fatalf("sheet before review: %v", err)
+	}
+	if err := svc.Handlers()[types.TaskCaseSheet](h.Ctx, sq.payloads[len(sq.payloads)-1]); err != nil {
+		t.Fatal(err)
+	}
+	sv, err := svc.Get(h.Ctx, h.Owner.ID, sh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agent.prompts) != 1 || !strings.Contains(agent.prompts[0], "[d1] Hoá đơn (tìm trong file)") || !strings.Contains(agent.prompts[0], "- hoa_don.so_hoa_don · ") {
+		t.Fatalf("prompts (one per file):\n%s", strings.Join(agent.prompts, "\n----\n"))
+	}
+	if sv.Status != types.SheetDone || len(sv.TablesView) != 3 || sv.Total != 4 || sv.Filled != 3 {
+		t.Fatalf("sheet = %s tables=%d %d/%d", sv.Status, len(sv.TablesView), sv.Filled, sv.Total)
+	}
+	hd, inv := sv.TablesView[0], sv.TablesView[1]
+	if len(hd.Rows) != 1 || hd.Rows[0].SegmentID != nil || hd.Rows[0].CellsView["gia_tri"].Value != "660.000.000" {
+		t.Fatalf("contracts = %+v", hd.Rows)
+	}
+	if len(inv.Rows) != 1 || inv.Rows[0].CellsView["so_hoa_don"].Value != "0001234" {
+		t.Fatalf("invoices = %+v", inv.Rows)
+	}
+	if c := inv.Rows[0].CellsView["tong_tien"]; c.FieldID != nil || c.Note == "" {
+		t.Fatalf("missing cell = %+v", c)
+	}
+	if n := len(sv.TablesView[2].Rows); n != 0 {
+		t.Fatalf("a file without the document type keeps %d rows", n)
+	}
+
+	// Edit the invoice: a correction for that table and key.
+	sv, err = svc.SaveEdits(h.Ctx, h.Owner, sh.ID, []sheets.EditInput{{Table: "hoa_don", Key: "so_hoa_don", Value: "0001241"},
+		{Table: "hoa_don", Key: "tong_tien", Value: "550.000.000"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := sv.TablesView[1].Rows[0].CellsView["so_hoa_don"]; !c.Edited || c.Value != "0001241" || sv.TablesView[0].Rows[0].CellsView["so_hop_dong"].Edited {
+		t.Fatalf("after edit = %+v", sv.TablesView[1].Rows)
+	}
+	stats, err := svc.CorrectionStats(h.Ctx, tpl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range stats {
+		if s.Label == "hoa_don" && s.Key == "so_hoa_don" {
+			found = s.Edited == 1 && s.Sheets == 1
+		}
+	}
+	if !found {
+		t.Fatalf("stats = %+v", stats)
+	}
+
+	// .xlsx: one data sheet per sub-table, no confidence or source columns.
+	var buf bytes.Buffer
+	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, sh.ID, nil, &buf); err != nil {
+		t.Fatal(err)
+	}
+	wb, err := excelize.OpenReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(wb.GetSheetList(), ","); !strings.HasPrefix(got, "Hợp đồng,") || !strings.Contains(got, "Hoá đơn") || !strings.Contains(got, "_bp") {
+		t.Fatalf("sheets = %s", got)
+	}
+	head, _ := wb.GetRows("Hoá đơn")
+	// Column A is the document type, then the fields.
+	if strings.Join(head[0], "|") != "Loại tài liệu|Số hoá đơn|Tổng thanh toán" || len(head) != 2 || head[1][0] != "Hoá đơn" || head[1][1] != "0001241" {
+		t.Fatalf("invoice sheet = %v", head)
+	}
+	_ = wb.SetCellValue("Hoá đơn", "B2", "0001235")
+	_ = wb.SetCellValue("Hoá đơn", "A6", "B09")
+	var edited bytes.Buffer
+	if err := wb.Write(&edited); err != nil {
+		t.Fatal(err)
+	}
+	imp, err := svc.Import(h.Ctx, h.Owner.ID, sh.ID, bytes.NewReader(edited.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imp.Edits) != 1 || imp.Edits[0].Key != "so_hoa_don" || imp.Edits[0].SegmentID != nil ||
+		len(imp.Ignored) != 1 || len(imp.Conflicts) != 0 {
+		t.Fatalf("import = %+v", imp)
+	}
+	var one bytes.Buffer
+	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, sh.ID, []string{"hoa_don"}, &one); err != nil {
+		t.Fatal(err)
+	}
+	wb1, _ := excelize.OpenReader(bytes.NewReader(one.Bytes()))
+	if got := len(wb1.GetSheetList()); got != 2 {
+		t.Fatalf("one table + _bp, got %v", wb1.GetSheetList())
 	}
 
 	// Review: a page left out is refused; the proposal as is is accepted.
@@ -300,100 +383,6 @@ func TestBundleSheetFlow(t *testing.T) {
 	segIDs := map[int]uuid.UUID{}
 	for _, g := range v.Files[0].Segments {
 		segIDs[g.PageStart] = g.ID
-	}
-
-	// Build two of the three sub-tables; the agent misses one cell of B02.
-	agent.skip["d1.s6 tong_tien"] = true
-	sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, tpl.ID, []string{"hop_dong", "hoa_don"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Handlers()[types.TaskCaseSheet](h.Ctx, sq.payloads[len(sq.payloads)-1]); err != nil {
-		t.Fatal(err)
-	}
-	sv, err := svc.Get(h.Ctx, h.Owner.ID, sh.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(agent.prompts) != 2 || !strings.Contains(agent.prompts[0], "Bộ chứng từ B01") || !strings.Contains(agent.prompts[0], "[d1.s3] Hoá đơn") {
-		t.Fatalf("prompts (one per bundle):\n%s", strings.Join(agent.prompts, "\n----\n"))
-	}
-	if sv.Status != types.SheetDone || len(sv.TablesView) != 2 || sv.Total != 10 || sv.Filled != 9 {
-		t.Fatalf("sheet = %s tables=%d %d/%d", sv.Status, len(sv.TablesView), sv.Filled, sv.Total)
-	}
-	hd, inv := sv.TablesView[0], sv.TablesView[1]
-	if len(hd.Rows) != 2 || hd.Rows[0].Bundle != "B01" || hd.Rows[1].Bundle != "B02" || hd.Rows[1].CellsView["gia_tri"].Value != "1.320.000.000" {
-		t.Fatalf("contracts = %+v", hd.Rows)
-	}
-	if len(inv.Rows) != 3 || inv.Rows[0].CellsView["so_hoa_don"].Value != "0001234" || inv.Rows[1].CellsView["so_hoa_don"].Value != "0001240" {
-		t.Fatalf("invoices (two in the same file) = %+v", inv.Rows)
-	}
-	if c := inv.Rows[2].CellsView["tong_tien"]; c.FieldID != nil || c.Note == "" {
-		t.Fatalf("missing cell = %+v", c)
-	}
-
-	// Edit one invoice: a correction for that table and key.
-	seg2 := inv.Rows[1].SegmentID
-	sv, err = svc.SaveEdits(h.Ctx, h.Owner, sh.ID, []sheets.EditInput{{Table: "hoa_don", SegmentID: seg2, Key: "so_hoa_don", Value: "0001241"},
-		{Table: "hoa_don", SegmentID: inv.Rows[2].SegmentID, Key: "tong_tien", Value: "1.320.000.000"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c := sv.TablesView[1].Rows[1].CellsView["so_hoa_don"]; !c.Edited || c.Value != "0001241" || sv.TablesView[1].Rows[0].CellsView["so_hoa_don"].Edited {
-		t.Fatalf("after edit = %+v", sv.TablesView[1].Rows[:2])
-	}
-	stats, err := svc.CorrectionStats(h.Ctx, tpl.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, s := range stats {
-		if s.Label == "hoa_don" && s.Key == "so_hoa_don" {
-			found = s.Edited == 1 && s.Sheets == 3
-		}
-	}
-	if !found {
-		t.Fatalf("stats = %+v", stats)
-	}
-
-	// .xlsx: one data sheet per sub-table, no confidence or source columns.
-	var buf bytes.Buffer
-	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, sh.ID, nil, &buf); err != nil {
-		t.Fatal(err)
-	}
-	wb, err := excelize.OpenReader(bytes.NewReader(buf.Bytes()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(wb.GetSheetList(), ","); got != "Hợp đồng,_bp,Hoá đơn" && got != "Hợp đồng,Hoá đơn,_bp" {
-		t.Fatalf("sheets = %s", got)
-	}
-	head, _ := wb.GetRows("Hoá đơn")
-	// Column A is the document type, column B the bundle, then the fields.
-	if strings.Join(head[0], "|") != "Loại tài liệu|Bộ|Số hoá đơn|Tổng thanh toán" || len(head) != 4 || head[2][0] != "Hoá đơn" || head[2][2] != "0001241" {
-		t.Fatalf("invoice sheet = %v", head)
-	}
-	_ = wb.SetCellValue("Hoá đơn", "C2", "0001235")
-	_ = wb.SetCellValue("Hoá đơn", "A6", "B09")
-	var edited bytes.Buffer
-	if err := wb.Write(&edited); err != nil {
-		t.Fatal(err)
-	}
-	imp, err := svc.Import(h.Ctx, h.Owner.ID, sh.ID, bytes.NewReader(edited.Bytes()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(imp.Edits) != 1 || imp.Edits[0].Key != "so_hoa_don" || imp.Edits[0].SegmentID == nil || *imp.Edits[0].SegmentID != *inv.Rows[0].SegmentID ||
-		len(imp.Ignored) != 1 || len(imp.Conflicts) != 0 {
-		t.Fatalf("import = %+v", imp)
-	}
-	var one bytes.Buffer
-	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, sh.ID, []string{"hoa_don"}, &one); err != nil {
-		t.Fatal(err)
-	}
-	wb1, _ := excelize.OpenReader(bytes.NewReader(one.Bytes()))
-	if got := len(wb1.GetSheetList()); got != 2 {
-		t.Fatalf("one table + _bp, got %v", wb1.GetSheetList())
 	}
 
 	// Confirming the same split again keeps the segments, so the fields stay.

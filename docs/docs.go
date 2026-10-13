@@ -1404,7 +1404,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One sub-table per document type (tables = labels, omitted = all); rows are the reviewed documents of the case. Confirmed fields are reused; the missing ones are extracted by one agent turn per bundle (task case:sheet). Poll GET /v1/sheets/{id} for progress. 409 split_not_reviewed when a file's split is not reviewed.",
+                "description": "One sub-table per document type (tables = labels, omitted = all); one row per indexed file in which the agent finds a document of that type (the classification of the case is not used). Confirmed fields are reused; the missing ones are extracted by one agent turn per file (task case:sheet). Poll GET /v1/sheets/{id} for progress.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1443,12 +1443,6 @@ const docTemplate = `{
                     },
                     "402": {
                         "description": "Payment Required",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
