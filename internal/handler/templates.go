@@ -291,7 +291,9 @@ func (h *Handlers) TemplateCorrections(ctx context.Context, c *app.RequestContex
 
 // checkTemplate validates a template version: a sheet template needs at
 // least one sub-table, each with fields (unique snake_case keys) and a label
-// of the case type's classification, or "" for one row per file (§6.9.6).
+// (a document type code), or "" for one row per file (§6.9.6). The label is
+// not checked against any KB or case type: a sub-table whose document type a
+// case does not have simply gets no rows.
 func (h *Handlers) checkTemplate(kind, body, caseType string, tables []types.SheetTable) string {
 	if strings.TrimSpace(body) == "" {
 		return "body is required"
@@ -301,10 +303,6 @@ func (h *Handlers) checkTemplate(kind, body, caseType string, tables []types.She
 	}
 	if len(tables) == 0 {
 		return "a sheet template needs tables (or fields)"
-	}
-	var rule types.ClassificationRule
-	if h.Cases != nil && caseType != "" {
-		rule = h.Cases.CaseType(caseType).Classification
 	}
 	labels := map[string]bool{}
 	for _, t := range tables {
@@ -316,8 +314,8 @@ func (h *Handlers) checkTemplate(kind, body, caseType string, tables []types.She
 			if caseType == "" {
 				return "a table with a document type (label) needs the template's case_type"
 			}
-			if t.Label == types.LabelOther || t.Label == types.LabelUnknown || !rule.HasLabel(t.Label) {
-				return fmt.Sprintf("table label %q is not a classification label of case type %s", t.Label, caseType)
+			if types.ValidateLabels([]types.ClassLabel{{Name: t.Label}}) != nil {
+				return fmt.Sprintf("table label %q is not a document type code", t.Label)
 			}
 		}
 		if len(t.Fields) == 0 {

@@ -145,6 +145,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U57 | Tạo knowledge base rồi thì phải **thêm/sửa được loại tài liệu** của KB (tính năng edit loại tài liệu) | còn hiệu lực; bổ sung U50 | §7.10, §10.1 |
 | U58 | Sửa phần **xử lý ngắt trang**: trong request Decision API phân loại thêm biến **`is_break`** (ví dụ `"page_role": {"type": "choice", "options": ["FIRST", "CONTINUATION", ...]}`) để xác định trang cần ngắt hay trang tiếp tục, đưa vào logic phân bộ. Mục đích: **một PDF nhiều trang cùng loại liên tục cũng được ngắt thành từng bộ tài liệu riêng biệt** | còn hiệu lực; làm rõ U50 (thay câu "hai giấy tờ cùng loại liền nhau ra một segment" của §6.9.4 bản 0.19) | §6.9.4, §9.2 (migration `0024`), §12 (N51) |
 | U59 | Sửa phần **xuất Excel**: **cột đầu tiên là loại tài liệu đã được phân loại**, các cột tiếp theo là trường thông tin, không phải cột đầu là tên file; **các cột theo cấu hình, không fix cứng**. (Chốt khi hỏi lại: cấu hình cột là **mẫu bảng** hiện có; vẫn **mỗi loại một sheet**; cột **Bộ chuyển sang cột B**) | còn hiệu lực; sửa U47, U48 (cột đầu); làm rõ U45 (mẫu bảng là nơi cấu hình cột) | §6.9.6, §7.6, §7.7, §12 (N52) |
+| U60 | Người quản trị **tạo mẫu Excel không phụ thuộc vào knowledge base** (lỗi gốc: tạo mẫu ở loại case `default` báo `table label "packing" is not a classification label of case type default`) | còn hiệu lực; làm rõ U45, U59 (nhãn bảng con của mẫu không còn bị đối chiếu với loại case/KB) | §6.9.6 |
 
 ## 1. Yêu cầu chung
 
@@ -1497,7 +1498,7 @@ Bảng tổng hợp gom các trường của **cả case** (nhiều file) để 
 
 Bảng **không có** cột Tin cậy, Nguồn hay Trạng thái. Nguồn, độ tin cậy, trạng thái AI và lịch sử chỉnh sửa của ô chỉ hiện ở panel phải của trang bảng, khi người dùng mở (§7.6).
 
-**Mẫu bảng.** Bảng luôn dựng từ một mẫu `kind=sheet` (§8.4). Phiên bản mẫu gồm prompt bóc tách và `tables: [{label, title, fields: [{key, label, value_type}]}]`; `label` là một nhãn của `classification.labels` (rỗng = mỗi file một dòng). User thường chỉ chọn mẫu đã phát hành; `prompt_editor` sửa bảng con, trường và prompt (tạo phiên bản mới).
+**Mẫu bảng.** Bảng luôn dựng từ một mẫu `kind=sheet` (§8.4). Phiên bản mẫu gồm prompt bóc tách và `tables: [{label, title, fields: [{key, label, value_type}]}]`; `label` là mã một loại tài liệu (rỗng = mỗi file một dòng); mẫu **không phụ thuộc KB hay loại case** (U60): API chỉ kiểm dạng mã, không đối chiếu với `doc_types` của KB hay `classification.labels`, bảng con mà case không có loại đó thì không có dòng. User thường chỉ chọn mẫu đã phát hành; `prompt_editor` sửa bảng con, trường và prompt (tạo phiên bản mới).
 
 **Điều kiện.** Bảng con có `label` cần các file của case đã được **duyệt tách & gom** (§6.9.7). File của KB có `doc_types` được tự xác nhận sau khi index (U53) nên không cần ai duyệt. Còn file chưa duyệt (KB không có `doc_types`, hoặc Decision API lỗi mọi trang) thì `POST /cases/:id/sheets` trả `409 split_not_reviewed` kèm danh sách file; Studio hiện nút mở màn Tách & gom (§7.9). File đang xử lý không chặn: bảng chụp các file đã duyệt, file sau cần tạo bảng mới.
 
