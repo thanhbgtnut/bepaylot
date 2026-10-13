@@ -151,7 +151,10 @@ func (s *Service) tree(ctx context.Context, d types.Document) error {
 		return err
 	}
 	s.confirmSplit(ctx, d)
-	return s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil)
+	if err := s.docs.SetIndexResult(ctx, d.ID, d.Gen, card, nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 // confirmSplit makes the split proposed from the page types of the file the

@@ -54,7 +54,7 @@ var policies = map[string]Policy{
 	// Callback retries are scheduled by the handler itself (backoff, state in
 	// document_callbacks); asynq only retries infrastructure errors.
 	types.TaskDocumentCallback: {3, 2 * time.Minute},
-	types.TaskCaseSheet:        {3, 15 * time.Minute},
+	types.TaskCaseSheet:        {3, time.Hour},
 }
 
 // PolicyFor returns the policy of a task type.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
 	"github.com/thanhenti/bepaylot/internal/application/service/usage"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/llm"
@@ -16,24 +17,27 @@ import (
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 
-// sheetRunner runs the hidden agent turn of a case sheet (§6.9.6) in a
-// session bound to the case. The session carries metadata.sheet_id, which
-// hides it from the chat history and bills the turn as kind sheet (§8.5).
-type sheetRunner struct {
+// extractRunner runs one extraction turn of a sheet build (§6.9.3) in a hidden
+// session of the case: the agent gets the text of one document and only the
+// arithmetic and JSON tools, never the case tools or MCP tools of a chat. The
+// session carries metadata.extract_document_id, which hides it from the chat
+// history and bills the turn as kind parse (§8.5).
+type extractRunner struct {
 	ag  *agent.Agent
 	st  *postgres.Store
 	cfg config.LLM
 }
 
-func (r sheetRunner) RunSheet(ctx context.Context, user types.User, caseID, sheetID uuid.UUID, text string) (string, error) {
+func (r extractRunner) RunExtract(ctx context.Context, user types.User, caseID, doc uuid.UUID, text string) (string, error) {
 	sess, err := r.st.Sessions.Create(ctx, postgres.CreateParams{
-		UserID: user.ID, Title: "Bảng tổng hợp", Provider: r.cfg.DefaultProvider, Model: r.cfg.DefaultModel,
-		Metadata: map[string]any{"sheet_id": sheetID.String()}, CaseID: &caseID,
+		UserID: user.ID, Title: "Trích xuất trường", Provider: r.cfg.DefaultProvider, Model: r.cfg.DefaultModel,
+		Metadata: map[string]any{types.SessionExtract: doc.String()}, CaseID: &caseID,
 	})
 	if err != nil {
 		return "", err
 	}
-	out, err := r.ag.Run(ctx, agent.RunInput{User: user, Session: sess, UserText: text, Provider: r.cfg.DefaultProvider, Model: r.cfg.DefaultModel}, nil)
+	out, err := r.ag.Run(ctx, agent.RunInput{User: user, Session: sess, UserText: text, Provider: r.cfg.DefaultProvider, Model: r.cfg.DefaultModel,
+		Tools: docmodel.ExtractTools}, nil)
 	var b strings.Builder
 	for _, blk := range out.AssistantMessage.Blocks {
 		if blk.Type == types.BlockText {

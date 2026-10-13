@@ -20,7 +20,7 @@ func TestDocTypesInCaseTree(t *testing.T) {
 	split := docmodel.NewSplit(docmodel.SplitDeps{Store: h.Store, Queue: h.Queue, Cases: h.Cases, Tree: h.Index, Config: h.Config})
 	h.Index.SetSplit(split)
 	h.PageTypes.Labels = []string{"hop_dong", "", "hoa_don"} // page 2 fails: it continues the contract
-	kb := h.KB(types.KBConfig{DocTypes: []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}, {Name: "hoa_don", Title: "Hoá đơn"}}}, nil)
+	kb := h.KB(types.KBConfig{DocTypes: []types.DocType{{ClassLabel: types.ClassLabel{Name: "hop_dong", Title: "Hợp đồng"}}, {ClassLabel: types.ClassLabel{Name: "hoa_don", Title: "Hoá đơn"}}}}, nil)
 	doc := h.Upload(kb.ID, "bo-chung-tu.pdf", nil, []pdftest.Page{
 		{"HOP DONG MUA BAN", "Dieu 1 gia tri 500000000"},
 		{"Dieu 2 thanh toan trong 30 ngay"},
@@ -123,7 +123,7 @@ func TestFirstPageCutsSameTypePages(t *testing.T) {
 	h := testkit.New(t)
 	h.PageTypes.Labels = []string{"hop_dong", "hop_dong", "hop_dong"}
 	h.PageTypes.FirstPages = []bool{true, false, true}
-	kb := h.KB(types.KBConfig{DocTypes: []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}}}, nil)
+	kb := h.KB(types.KBConfig{DocTypes: []types.DocType{{ClassLabel: types.ClassLabel{Name: "hop_dong", Title: "Hợp đồng"}}}}, nil)
 	doc := h.Upload(kb.ID, "hai-hop-dong.pdf", nil, []pdftest.Page{
 		{"HOP DONG MUA BAN", "So 01"},
 		{"Dieu 2 thanh toan trong 30 ngay"},
@@ -145,7 +145,7 @@ func TestFirstPageCutsSameTypePages(t *testing.T) {
 func TestReparseSendsTheSameImage(t *testing.T) {
 	h := testkit.New(t)
 	h.PageTypes.Labels = []string{"hop_dong", "hop_dong"}
-	kb := h.KB(types.KBConfig{DocTypes: []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}}}, nil)
+	kb := h.KB(types.KBConfig{DocTypes: []types.DocType{{ClassLabel: types.ClassLabel{Name: "hop_dong", Title: "Hợp đồng"}}}}, nil)
 	doc := h.Upload(kb.ID, "a.pdf", nil, []pdftest.Page{{"HOP DONG MUA BAN", "Dieu 1"}})
 	h.Drain()
 	if _, err := h.Docs.Reparse(h.Ctx, h.Owner.ID, doc, document.ReparseRequest{}); err != nil {

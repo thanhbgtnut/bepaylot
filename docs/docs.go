@@ -3973,6 +3973,45 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Removes the sheet and its corrections; the fields extracted from the files stay, so a new sheet shows the same values.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Sheets"
+                ],
+                "summary": "Delete a sheet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Sheet id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OK"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/v1/sheets/{id}/edits": {
@@ -4325,46 +4364,6 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/types.PromptTemplate"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/templates/{id}/corrections": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Templates"
-                ],
-                "summary": "AI error rate per field of a sheet template (§6.9.6)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Template id",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/dto.CorrectionStats"
                         }
                     },
                     "403": {
@@ -5410,17 +5409,6 @@ const docTemplate = `{
             "properties": {
                 "queued": {
                     "type": "integer"
-                }
-            }
-        },
-        "dto.CorrectionStats": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.CorrectionStat"
-                    }
                 }
             }
         },
@@ -7293,35 +7281,6 @@ const docTemplate = `{
                 }
             }
         },
-        "types.CorrectionStat": {
-            "type": "object",
-            "properties": {
-                "edited": {
-                    "type": "integer"
-                },
-                "examples": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "key": {
-                    "type": "string"
-                },
-                "label": {
-                    "type": "string"
-                },
-                "rate": {
-                    "type": "number"
-                },
-                "sheets": {
-                    "type": "integer"
-                },
-                "version": {
-                    "type": "integer"
-                }
-            }
-        },
         "types.Document": {
             "type": "object",
             "properties": {
@@ -8129,6 +8088,10 @@ const docTemplate = `{
         "types.SheetField": {
             "type": "object",
             "properties": {
+                "description": {
+                    "description": "Description guides the agent when it extracts the field (U81).",
+                    "type": "string"
+                },
                 "key": {
                     "type": "string"
                 },

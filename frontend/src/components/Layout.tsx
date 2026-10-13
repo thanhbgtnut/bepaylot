@@ -54,7 +54,7 @@ export function Layout() {
         )}
         items={[
           { icon: "upload_file", label: "Tải file lên", onClick: () => nav("/documents?upload=1"), disabled: !kb },
-          { icon: "create_new_folder", label: "Knowledge base mới", onClick: openCreateKB },
+          { icon: "create_new_folder", label: "Thư viện mới", onClick: openCreateKB },
           { divider: true, label: "" },
           { icon: "chat_add_on", label: "Cuộc trò chuyện mới", onClick: () => nav("/chat") },
         ]}
@@ -73,8 +73,8 @@ export function Layout() {
       </nav>
 
       <div className="mt-4 flex items-center pr-1 pl-4">
-        <span className="flex-1 text-xs font-medium text-muted">Knowledge base</span>
-        <button className="btn-icon btn-sm" title="Knowledge base mới" onClick={openCreateKB}>
+        <span className="flex-1 text-xs font-medium text-muted">Thư viện</span>
+        <button className="btn-icon btn-sm" title="Thư viện mới" onClick={openCreateKB}>
           <Icon name="add" size={20} />
         </button>
       </div>
@@ -89,7 +89,7 @@ export function Layout() {
               </button>
               <button
                 className={"btn-icon btn-sm " + (on ? "" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
-                title="Sửa knowledge base, loại giấy tờ"
+                title="Sửa thư viện, loại giấy tờ"
                 onClick={() => openEditKB(k)}
               >
                 <Icon name="edit" size={18} />
@@ -97,17 +97,25 @@ export function Layout() {
             </div>
           );
         })}
-        {!kbs.length && connected && <div className="px-4 py-1 text-xs text-subtle">Chưa có knowledge base</div>}
+        {!kbs.length && connected && <div className="px-4 py-1 text-xs text-subtle">Chưa có thư viện</div>}
       </div>
 
       <div className="flex-1" />
-      <button onClick={() => openSettings("server")} className="mt-3 flex items-start gap-3 rounded-xl px-4 py-2 text-left hover:bg-fg/8" title={connError || settings.base}>
+      <NavLink to="/settings" className={(p) => "mt-3 flex-none " + navCls(p)} title="Cài đặt: loại giấy tờ và trường, người dùng, máy chủ">
+        {({ isActive }) => (
+          <>
+            <Icon name="settings" fill={isActive} size={20} />
+            Cài đặt
+          </>
+        )}
+      </NavLink>
+      <div className="flex items-start gap-3 px-4 py-2" title={connError || settings.base}>
         <Icon name={connected === false ? "cloud_off" : "cloud_done"} size={20} className={connected === false ? "text-err" : "text-muted"} />
         <span className="min-w-0 text-xs text-muted">
           <span className="block font-medium text-fg">{connected === false ? "Mất kết nối" : connected ? "Đã kết nối" : "Đang kết nối…"}</span>
           <span className="block truncate">{settings.base || location.host}</span>
         </span>
-      </button>
+      </div>
     </div>
   );
 
@@ -152,9 +160,6 @@ export function Layout() {
           )}
         </form>
         <div className="flex-1 max-md:hidden" />
-        <button className="btn-icon" title="Cài đặt: tài khoản, key và chi phí" onClick={() => openSettings("account")}>
-          <Icon name="settings" />
-        </button>
         <Menu
           align="right"
           trigger={(open) => (
@@ -169,7 +174,7 @@ export function Layout() {
           items={[
             { icon: "account_circle", label: user?.email ?? "Tài khoản", disabled: true },
             { divider: true, label: "" },
-            { icon: "manage_accounts", label: "Cài đặt", onClick: () => openSettings("account") },
+            { icon: "manage_accounts", label: "Thông tin", onClick: () => openSettings("account") },
             { icon: "account_balance_wallet", label: "Key & chi phí", onClick: () => openSettings("keys") },
             { icon: "logout", label: "Đăng xuất", onClick: signOut },
           ]}
@@ -212,23 +217,23 @@ export function TopBar({ title, subtitle, children }: { title: ReactNode; subtit
 }
 
 export function NeedKB() {
-  const { connected, connError, openSettings, openCreateKB, loadingKBs } = useApp();
+  const { connected, connError, reloadKBs, openCreateKB, loadingKBs } = useApp();
   if (loadingKBs) return null;
   if (connected === false)
     return (
       <Empty icon="cloud_off" title="Không kết nối được backend">
         <div className="text-xs">{connError}</div>
-        <button className="btn btn-primary mt-5" onClick={() => openSettings("server")}>
-          Cấu hình kết nối
+        <button className="btn btn-primary mt-5" onClick={reloadKBs}>
+          Thử lại
         </button>
       </Empty>
     );
   return (
-    <Empty icon="create_new_folder" title="Chưa có knowledge base">
-      Tạo knowledge base đầu tiên để tải file lên và hỏi đáp.
+    <Empty icon="create_new_folder" title="Chưa có thư viện">
+      Tạo thư viện đầu tiên để tải file lên và hỏi đáp.
       <div>
         <button className="btn btn-primary mt-5" onClick={openCreateKB}>
-          <Icon name="add" size={18} /> Knowledge base mới
+          <Icon name="add" size={18} /> Thư viện mới
         </button>
       </div>
     </Empty>

@@ -156,7 +156,7 @@ export function SheetPage() {
       setSheet(v);
       setDrafts({});
       setImported(null);
-      toast(n ? `Đã lưu ${unsaved.length} chỉnh sửa và ghi nhận ${n} lỗi AI cho mẫu v${v.template_version}` : `Đã lưu ${unsaved.length} chỉnh sửa`);
+      toast(n ? `Đã lưu ${unsaved.length} chỉnh sửa và ghi nhận ${n} lỗi AI` : `Đã lưu ${unsaved.length} chỉnh sửa`);
     } catch (e) {
       fail(e);
     } finally {
@@ -212,7 +212,7 @@ export function SheetPage() {
             {sheet.name}
           </h1>
           <div className="truncate text-xs text-muted">
-            Mẫu {sheet.template_name || sheet.name} v{sheet.template_version} · tạo {fmtDate(sheet.created_at)} · {tables.length} bảng · {nDocs} giấy tờ
+            Tạo {fmtDate(sheet.created_at)} · {tables.length} bảng · {nDocs} giấy tờ
             {nBundles ? ` · ${nBundles} bộ` : ""}
           </div>
         </div>
@@ -298,7 +298,6 @@ export function SheetPage() {
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
                 {panel === "edits" ? (
                   <Edits
-                    sheet={sheet}
                     changes={changes}
                     drafts={drafts}
                     imported={imported}
@@ -499,7 +498,6 @@ function Source({ c, value }: { c: Cell; value: string }) {
 // The edit history: every cell that differs from the AI value, the
 // conflicts and ignored cells of an uploaded file.
 function Edits({
-  sheet,
   changes,
   drafts,
   imported,
@@ -508,7 +506,6 @@ function Edits({
   onUndo,
   onConflict,
 }: {
-  sheet: SheetView;
   changes: Cell[];
   drafts: Record<string, Draft>;
   imported: SheetImport | null;
@@ -593,7 +590,7 @@ function Edits({
         </div>
       )}
       <p className="px-1 text-xs text-muted">
-        Khi lưu, mỗi chỉnh sửa thành giá trị đã duyệt của trường; ô khác giá trị AI được ghi là <b>AI sai</b> cho mẫu "{sheet.template_name || sheet.name}" v{sheet.template_version}, theo bảng và
+        Khi lưu, mỗi chỉnh sửa thành giá trị đã duyệt của trường; ô khác giá trị AI được ghi là <b>AI sai</b>, theo bảng và
         trường.
       </p>
     </>

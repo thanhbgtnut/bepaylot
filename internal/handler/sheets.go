@@ -9,7 +9,6 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
-	"github.com/google/uuid"
 
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
@@ -30,7 +29,7 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 	switch {
 	case errors.Is(err, sheets.ErrNotFound):
 		h.notFound(c, "sheet not found")
-	case errors.Is(err, sheets.ErrNotSheet), errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNoTables),
+	case errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNoTables),
 		errors.Is(err, sheets.ErrUnknownKey):
 		h.unprocessable(c, err.Error())
 	case errors.Is(err, sheets.ErrNotFinished):
@@ -42,13 +41,13 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 
 // CreateSheet handles POST /v1/cases/{id}/sheets.
 //
-// @Summary      Build a sheet of a case from a sheet template (§6.9.6)
-// @Description  One sub-table per document type (tables = labels, omitted = all); one row per indexed file in which the agent finds a document of that type (the classification of the case is not used). Confirmed fields are reused; the missing ones are extracted by one agent turn per file (task case:sheet). Poll GET /v1/sheets/{id} for progress.
+// @Summary      Build a sheet of a case from the document types of its knowledge base (§6.9.6)
+// @Description  One sub-table per document type that has fields (tables = codes, omitted = all); one row per document of that type in the indexed files, filled with the fields extracted while the files were processed. Files processed before a field was added are extracted first (task case:sheet). Poll GET /v1/sheets/{id} for progress.
 // @Tags         Sheets
 // @Accept       json
 // @Produce      json
 // @Param        id       path      string                  true  "Case id"  format(uuid)
-// @Param        request  body      dto.CreateSheetRequest  true  "Template"
+// @Param        request  body      dto.CreateSheetRequest  false  "Document types"
 // @Success      202      {object}  types.Sheet
 // @Failure      402      {object}  dto.ErrorResponse
 // @Failure      422      {object}  dto.ErrorResponse
@@ -64,19 +63,13 @@ func (h *Handlers) CreateSheet(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	var req dto.CreateSheetRequest
-	if err := c.BindJSON(&req); err != nil {
-		h.badRequest(c, "invalid JSON body: "+err.Error())
-		return
+	if len(c.Request.Body()) > 0 {
+		if err := c.BindJSON(&req); err != nil {
+			h.badRequest(c, "invalid JSON body: "+err.Error())
+			return
+		}
 	}
-	tpl, err := uuid.Parse(req.TemplateID)
-	if err != nil {
-		h.unprocessable(c, "template_id is required")
-		return
-	}
-	if !h.withinBudget(ctx, c, u) {
-		return
-	}
-	sh, err := h.Sheets.Create(ctx, u, caseID, tpl, req.Tables)
+	sh, err := h.Sheets.Create(ctx, u, caseID, req.Tables)
 	if err != nil {
 		h.sheetError(c, err)
 		return
@@ -135,6 +128,33 @@ func (h *Handlers) GetSheet(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, v)
+}
+
+// DeleteSheet handles DELETE /v1/sheets/{id}.
+//
+// @Summary      Delete a sheet
+// @Description  Removes the sheet and its corrections; the fields extracted from the files stay, so a new sheet shows the same values.
+// @Tags         Sheets
+// @Produce      json
+// @Param        id   path      string  true  "Sheet id"  format(uuid)
+// @Success      200  {object}  dto.OK
+// @Failure      404  {object}  dto.ErrorResponse
+// @Security     ApiKeyAuth
+// @Router       /v1/sheets/{id} [delete]
+func (h *Handlers) DeleteSheet(ctx context.Context, c *app.RequestContext) {
+	u, ok := h.user(c)
+	if !ok || !h.sheetsReady(c) {
+		return
+	}
+	id, ok := h.uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	if err := h.Sheets.Delete(ctx, u.ID, id); err != nil {
+		h.sheetError(c, err)
+		return
+	}
+	c.JSON(consts.StatusOK, dto.OK{OK: true})
 }
 
 // SaveSheetEdits handles POST /v1/sheets/{id}/edits.

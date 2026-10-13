@@ -1,6 +1,9 @@
 package types
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,10 +79,58 @@ type KnowledgeBase struct {
 // KBConfig holds per-KB overrides of the global pipeline defaults.
 type KBConfig struct {
 	ParserEngine string `json:"parser_engine,omitempty"`
-	// DocTypes are the document types of the KB (code, title, description).
-	// Pages of its files are classified into them from their image and they
-	// replace the classification labels of the case type (§6.9.4).
-	DocTypes []ClassLabel `json:"doc_types,omitempty"`
+	// DocTypes are the document types of the KB (code, title, description)
+	// and the fields to extract from a document of each type. Pages of its
+	// files are classified into them from their image and they replace the
+	// classification labels of the case type (§6.9.4).
+	DocTypes []DocType `json:"doc_types,omitempty"`
+}
+
+// DocType is one document type of a KB with the fields the pipeline extracts
+// from every document of that type (§6.9.3); they are the columns of its
+// sheet (§6.9.6).
+type DocType struct {
+	ClassLabel
+	Fields []SheetField `json:"fields,omitempty"`
+}
+
+// Labels returns the document types of the KB as classification labels.
+func (c KBConfig) Labels() []ClassLabel {
+	out := make([]ClassLabel, 0, len(c.DocTypes))
+	for _, t := range c.DocTypes {
+		out = append(out, t.ClassLabel)
+	}
+	return out
+}
+
+// SheetTables returns the document types that have fields, as sheet tables.
+func (c KBConfig) SheetTables() []SheetTable {
+	var out []SheetTable
+	for _, t := range c.DocTypes {
+		if len(t.Fields) > 0 {
+			out = append(out, SheetTable{Label: t.Name, Title: t.Title, Description: t.Description, Fields: t.Fields})
+		}
+	}
+	return out
+}
+
+var fieldKeyRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,63}$`)
+
+// ValidateDocTypes checks the codes of the document types and, per type, that
+// every field has a label and a unique snake_case key.
+func ValidateDocTypes(list []DocType) error {
+	labels := make([]ClassLabel, 0, len(list))
+	for _, t := range list {
+		labels = append(labels, t.ClassLabel)
+		seen := map[string]bool{}
+		for _, f := range t.Fields {
+			if !fieldKeyRe.MatchString(f.Key) || strings.TrimSpace(f.Label) == "" || seen[f.Key] {
+				return fmt.Errorf("%s: each field needs a label and a unique snake_case key (got %q)", t.Name, f.Key)
+			}
+			seen[f.Key] = true
+		}
+	}
+	return ValidateLabels(labels)
 }
 
 // UploadBatch records one multi-file upload request.

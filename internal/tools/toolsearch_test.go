@@ -313,3 +313,28 @@ func TestWrapModelWithoutExternalToolsHidesToolSearch(t *testing.T) {
 		t.Errorf("want the %d other built-ins bound, got %v", want, seen[0])
 	}
 }
+
+// An extraction turn is bound to the tools it names only: no other built-in,
+// no deferred (MCP) tool to search for and no case tool (§6.9.3).
+func TestSessionOnly(t *testing.T) {
+	r := newReg(t, githubAndSlack...)
+	r.knowledge = map[string]*Entry{}
+	e, err := newEntry(context.Background(), fakeExternal(t, "kb_search", "Search the case"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.knowledge[e.Name] = e
+	s := r.NewSession()
+	s.Only("calculate", "json_validate")
+	s.EnableKnowledge()
+	got := s.VisibleDescriptions()
+	if len(got) != 2 || got["calculate"] == "" || got["json_validate"] == "" {
+		t.Fatalf("visible = %v", got)
+	}
+	if n := len(s.Executable()); n != 2 {
+		t.Fatalf("executable = %d", n)
+	}
+	if len(s.DeferredNames()) != 0 || s.Visible(ToolSearchName) {
+		t.Fatal("deferred tools stay reachable")
+	}
+}

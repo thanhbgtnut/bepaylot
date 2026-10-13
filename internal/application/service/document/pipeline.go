@@ -446,7 +446,7 @@ func (s *Service) classifyPage(ctx context.Context, d types.Document, row types.
 	}
 	// "other" is always a choice: without it a page of no listed type (a
 	// blank page, a letter) is forced into one of them, often confidently.
-	labels := append(append([]types.ClassLabel(nil), kb.Config.DocTypes...),
+	labels := append(kb.Config.Labels(),
 		types.ClassLabel{Name: types.LabelOther, Title: "Khác", Description: "trang trắng, hoặc giấy tờ không thuộc các loại trên"})
 	label, conf, isFirstPage, err := s.classify.ClassifyPage(ctx, labels, img)
 	if err != nil {

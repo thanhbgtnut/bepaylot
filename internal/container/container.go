@@ -267,8 +267,8 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	split := docmodel.NewSplit(docmodel.SplitDeps{Store: st, Queue: app.enqueuer, Cases: cs, Tree: idx,
 		LLM: completer(cfg.Classify.Provider, cfg.Classify.Model, 4096), Config: cfg, Log: log})
 	idx.SetSplit(split)
-	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Searcher: idx,
-		Runner: sheetRunner{ag: ag, st: st, cfg: cfg.LLM}, Config: cfg, Log: log})
+	extractor := docmodel.NewExtractor(st, extractRunner{ag: ag, st: st, cfg: cfg.LLM}, log)
+	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Extractor: extractor, Config: cfg, Log: log})
 	h.Sheets, h.Split = sh, split
 
 	if cfg.Workers.RunsWorkers() {
@@ -285,6 +285,9 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 				handlers[k] = v
 			}
 		}
+		// document:extract was a task until 0.26 (U80): fields are now
+		// extracted when a sheet is built. One still queued is dropped.
+		handlers["document:extract"] = func(context.Context, []byte) error { return nil }
 		// One sweep re-drives every module (§4.3).
 		handlers[types.TaskHousekeeping] = func(ctx context.Context, _ []byte) error {
 			return errors.Join(docs.Housekeeping(ctx), cs.Housekeeping(ctx))

@@ -146,7 +146,7 @@ export function LoginPage() {
         <div key={mode} className="w-full max-w-105 animate-fade-up rounded-[28px] bg-surface p-8 shadow-2 max-sm:px-5">
           <h1 className="text-[28px] leading-9 font-normal text-fg">{mode === "login" ? "Đăng nhập" : "Tạo tài khoản"}</h1>
           <p className="mt-1 text-sm text-muted">
-            {mode === "login" ? "Chào mừng trở lại BePaylot" : "Mỗi tài khoản có knowledge base, hồ sơ và phiên hỏi đáp riêng"}
+            {mode === "login" ? "Chào mừng trở lại BePaylot" : "Mỗi tài khoản có thư viện, hồ sơ và phiên hỏi đáp riêng"}
           </p>
 
           {configError && (

@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
@@ -30,79 +33,94 @@ func (q *stubQueue) Enqueue(_ context.Context, _ string, payload any, _ queue.Op
 	return err
 }
 
-// fakeRunner stands in for the agent turn: it records the prompt and
-// answers that the purpose field was not found.
-type fakeRunner struct{ prompts []string }
-
-func (r *fakeRunner) RunSheet(_ context.Context, _ types.User, _, _ uuid.UUID, text string) (string, error) {
-	r.prompts = append(r.prompts, text)
-	return "Đã ghi 2 trường.\n- muc_dich_vay: không có trang nào nêu mục đích vay", nil
+// fakeExtract stands in for the agent's extraction turn: it answers the JSON
+// the prompt asks for from the "Label: value" lines of the document text.
+type fakeExtract struct {
+	mu      sync.Mutex
+	prompts []string
+	delay   time.Duration // how long a turn takes
 }
 
-// U43/U44 end to end on the database: agent fields with evidence, a sheet
-// that reuses confirmed values, user edits recorded as corrections, and the
-// .xlsx round trip that finds the edited cell (§6.9.6).
-func TestSheetFlow(t *testing.T) {
+var (
+	askedRe = regexp.MustCompile(`(?m)^- (\w+) · `)
+	pageRe  = regexp.MustCompile(`^<page n="(\d+)">$`)
+	lineRe  = regexp.MustCompile(`^\[L(\d+)\] (.*)$`)
+)
+
+// where each key is written in the test documents.
+var keyLine = map[string]string{"so_hop_dong": "So hop dong", "gia_tri": "Gia tri hop dong", "ngay_ky": "Ngay ky",
+	"so_hoa_don": "So hoa don", "tong_tien": "Tong thanh toan"}
+
+func (f *fakeExtract) RunExtract(_ context.Context, _ types.User, _, _ uuid.UUID, text string) (string, error) {
+	f.mu.Lock()
+	f.prompts = append(f.prompts, text)
+	f.mu.Unlock()
+	time.Sleep(f.delay)
+	var fields []map[string]any
+	for _, m := range askedRe.FindAllStringSubmatch(text, -1) {
+		key, page := m[1], 0
+		for _, l := range strings.Split(text, "\n") {
+			if pm := pageRe.FindStringSubmatch(l); pm != nil {
+				page, _ = strconv.Atoi(pm[1])
+			}
+			lm := lineRe.FindStringSubmatch(l)
+			if lm == nil || keyLine[key] == "" || !strings.HasPrefix(lm[2], keyLine[key]+": ") {
+				continue
+			}
+			line, _ := strconv.Atoi(lm[1])
+			fields = append(fields, map[string]any{"key": key, "value": strings.TrimPrefix(lm[2], keyLine[key]+": "), "confidence": 0.9, "page": page, "line": line})
+			break
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"fields": fields})
+	return "```json\n" + string(b) + "\n```", nil
+}
+
+func docType(name, title string, fields ...types.SheetField) types.DocType {
+	return types.DocType{ClassLabel: types.ClassLabel{Name: name, Title: title}, Fields: fields}
+}
+
+// U68–U70, U80–U82 end to end on the database (scripted page types, fake
+// extraction turn): the fields of each document type are set on the KB,
+// extracted only when a sheet is built and kept for the next sheets, one row
+// per document and one sub-table per type.
+func TestDocTypeSheetFlow(t *testing.T) {
 	h := testkit.New(t)
-	kb := h.KB(types.KBConfig{}, nil)
-	doc := h.UploadTo(kb.ID, "PA-001", "phuong-an.pdf", nil, []pdftest.Page{
-		{"PHUONG AN VAY VON", "So tien vay 15.000.000.000 dong", "Loi nhuan sau thue 6.124.800.000"},
+	h.Index.SetSplit(docmodel.NewSplit(docmodel.SplitDeps{Store: h.Store, Queue: h.Queue, Cases: h.Cases, Tree: h.Index, Config: h.Config}))
+	agent := &fakeExtract{}
+	ex := docmodel.NewExtractor(h.Store, agent, nil)
+
+	cfg := types.KBConfig{DocTypes: []types.DocType{
+		docType("hop_dong", "Hợp đồng", types.SheetField{Key: "so_hop_dong", Label: "Số hợp đồng", Description: "Số ở đầu trang,\nsau chữ So hop dong"}, types.SheetField{Key: "gia_tri", Label: "Giá trị", ValueType: "money"}),
+		docType("hoa_don", "Hoá đơn", types.SheetField{Key: "so_hoa_don", Label: "Số hoá đơn"}, types.SheetField{Key: "tong_tien", Label: "Tổng thanh toán", ValueType: "money"},
+			types.SheetField{Key: "mst", Label: "Mã số thuế"}),
+		docType("bien_ban", "Biên bản"), // no field: no sub-table
+	}}
+	kb := h.KB(cfg, nil)
+	h.PageTypes.Labels = []string{"hop_dong", "hop_dong", "hoa_don", "hoa_don"}
+	h.PageTypes.FirstPages = []bool{true, false, true, true}
+	doc := h.Upload(kb.ID, "bo-chung-tu.pdf", nil, []pdftest.Page{
+		{"HOP DONG MUA BAN", "So hop dong: 012/2026/HDMB", "Ngay ky: 2026-03-01"},
+		{"Dieu 2 thanh toan", "Gia tri hop dong: 660.000.000"},
+		{"HOA DON GIA TRI GIA TANG", "So hoa don: 0001234", "Tong thanh toan: 550.000.000"},
+		{"HOA DON GIA TRI GIA TANG", "So hoa don: 0001240", "Tong thanh toan: 110.000.000"},
 	})
 	h.Drain()
-	cs := h.Case(kb.ID, "PA-001")
-	cite := func(q string) string {
-		pages, err := h.Index.FindInDocument(h.Ctx, h.Owner.ID, doc, q, types.SearchKeyword, 0, 0)
-		if err != nil || len(pages) == 0 || len(pages[0].Hits) == 0 {
-			t.Fatalf("find %q: %+v %v", q, pages, err)
-		}
-		l := pages[0].Hits[0].LineNo
-		return fmt.Sprintf("doc:%s:p%d:l%d-%d", doc, pages[0].PageNo, l, l)
-	}
+	cs := h.Case(kb.ID, testkit.DefaultCase)
 
-	dm := docmodel.New(h.Store, h.Index)
-	// A value not in the quote needs a note.
-	res := dm.SaveAgentFields(h.Ctx, h.Owner.ID, cs.ID, nil, []types.FieldInput{
-		{DocumentID: doc, Key: "loi_nhuan_sau_thue", Value: "6.214.800.000", Confidence: 0.6, Citations: []string{cite("loi nhuan")}},
-	})
-	if res[0].Error == "" {
-		t.Fatalf("unmatched value without note was saved: %+v", res)
+	// Processing a file asks the agent for nothing.
+	if len(agent.prompts) != 0 {
+		t.Fatalf("processing the file ran %d extraction turns", len(agent.prompts))
 	}
-	res = dm.SaveAgentFields(h.Ctx, h.Owner.ID, cs.ID, nil, []types.FieldInput{
-		{DocumentID: doc, Key: "loi_nhuan_sau_thue", Value: "6.214.800.000", Confidence: 0.6, Citations: []string{cite("loi nhuan")}, Note: "đọc từ dòng lợi nhuận"},
-		{DocumentID: doc, Key: "so_tien_vay", Value: float64(15000000000), ValueType: "money", Confidence: 0.95, Citations: []string{cite("tien vay")}},
-		{DocumentID: doc, Key: "muc_dich_vay", Value: "x", Confidence: 0.9, Citations: []string{"doc:" + uuid.NewString() + ":p1:l1-1"}},
-	})
-	if res[0].Error != "" || res[0].ValueMatched || res[1].Error != "" || !res[1].ValueMatched || res[2].Error == "" {
-		t.Fatalf("save fields = %+v", res)
-	}
-
-	tpl, err := h.Store.Templates.Create(h.Ctx, postgres.TemplateDraft{Kind: types.TemplateSheet, Slug: "pa_" + uuid.NewString()[:8], Name: "Bảng phương án",
-		Body: "Bóc tách.", Fields: []types.SheetField{{Key: "loi_nhuan_sau_thue", Label: "Lợi nhuận sau thuế"}, {Key: "so_tien_vay", Label: "Số tiền vay", ValueType: "money"}, {Key: "muc_dich_vay", Label: "Mục đích vay"}}, By: h.Owner.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := h.Store.Templates.Publish(h.Ctx, tpl.ID, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	q, runner := &stubQueue{}, &fakeRunner{}
-	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: q, Cases: h.Cases, Searcher: h.Index, Runner: runner, Config: h.Config})
-	// A 0.16 template (fields only) is one sub-table without label: one row
-	// per file, the fields as columns.
-	cells := func(v sheets.View) map[string]sheets.CellView {
+	sq := &stubQueue{}
+	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: sq, Cases: h.Cases, Extractor: ex, Config: h.Config})
+	build := func(tables ...string) sheets.View {
 		t.Helper()
-		if len(v.TablesView) != 1 || len(v.TablesView[0].Rows) != 1 {
-			t.Fatalf("tables = %+v", v.TablesView)
-		}
-		return v.TablesView[0].Rows[0].CellsView
-	}
-	build := func() sheets.View {
-		t.Helper()
-		sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, tpl.ID, nil)
+		sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, tables)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := svc.Handlers()[types.TaskCaseSheet](h.Ctx, q.payloads[len(q.payloads)-1]); err != nil {
+		if err := svc.Handlers()[types.TaskCaseSheet](h.Ctx, sq.payloads[len(sq.payloads)-1]); err != nil {
 			t.Fatal(err)
 		}
 		v, err := svc.Get(h.Ctx, h.Owner.ID, sh.ID)
@@ -112,75 +130,200 @@ func TestSheetFlow(t *testing.T) {
 		return v
 	}
 
-	v := build()
-	if v.Status != types.SheetDone || v.Filled != 2 || v.Total != 3 {
-		t.Fatalf("sheet = %s %d/%d", v.Status, v.Filled, v.Total)
+	// A sheet of one document type extracts that type only.
+	only := build("hoa_don")
+	if len(agent.prompts) != 2 || len(only.TablesView) != 1 || strings.Contains(strings.Join(agent.prompts, ""), "So hop dong") {
+		t.Fatalf("sheet of invoices: %d turns, %d tables", len(agent.prompts), len(only.TablesView))
 	}
-	c := cells(v)
-	if p := runner.prompts[0]; !strings.Contains(p, "loi_nhuan_sau_thue") || !strings.Contains(p, "muc_dich_vay") {
-		t.Fatalf("first build must ask for every unconfirmed field:\n%s", p)
-	}
-	if c["muc_dich_vay"].Note == "" || c["loi_nhuan_sau_thue"].Edited || !c["loi_nhuan_sau_thue"].Calc {
-		t.Fatalf("cells = %+v", c)
+	agent.prompts = nil
+	if err := svc.Delete(h.Ctx, h.Owner.ID, only.ID); err != nil {
+		t.Fatal(err)
 	}
 
-	// Format-only change: no correction; a real change: one correction.
-	v, err = svc.SaveEdits(h.Ctx, h.Owner, v.ID, []sheets.EditInput{{Key: "so_tien_vay", Value: "15.000.000.000"}, {Key: "loi_nhuan_sau_thue", Value: "6.124.800.000"}})
+	// The first sheet of every type asks for the contract, with the text of
+	// its pages and the description of the field, and once more for the field
+	// the invoices did not have (U82). The values are saved on the document
+	// (segment) with evidence.
+	sv := build()
+	if !strings.Contains(agent.prompts[0], "- so_hop_dong · Số hợp đồng · string · Số ở đầu trang, sau chữ So hop dong\n") ||
+		!strings.Contains(agent.prompts[0], "- gia_tri · Giá trị · money\n") || !strings.Contains(agent.prompts[1], "- mst · ") ||
+		strings.Contains(agent.prompts[1], "- so_hoa_don · ") {
+		t.Fatalf("extraction prompts:\n%s", strings.Join(agent.prompts, "\n----\n"))
+	}
+	if len(agent.prompts) != 3 || !strings.Contains(agent.prompts[0], "Hợp đồng") || !strings.Contains(agent.prompts[0], `<page n="2">`) ||
+		strings.Contains(agent.prompts[0], "So hoa don") {
+		t.Fatalf("extraction turns:\n%s", strings.Join(agent.prompts, "\n----\n"))
+	}
+	fields, err := h.Store.Fields.ListByCase(h.Ctx, cs.ID, &doc, "gia_tri")
+	if err != nil || len(fields) != 1 {
+		t.Fatalf("fields = %+v %v", fields, err)
+	}
+	if f := fields[0]; f.SegmentID == nil || f.ValueText != "660.000.000" || f.ValueType != "money" || f.Status != types.FieldProposed ||
+		len(f.Evidence) != 1 || f.Evidence[0].PageNo != 2 || !f.ValueMatched {
+		t.Fatalf("field = %+v", f)
+	}
+
+	// Everything is saved: later sheets ask for nothing, not even the field
+	// that was not found twice, also after the earlier sheet is deleted.
+	for i := 0; i < 2; i++ {
+		again := build()
+		if len(agent.prompts) != 3 {
+			t.Fatalf("building the sheet again ran %d more turns", len(agent.prompts)-3)
+		}
+		if err := svc.Delete(h.Ctx, h.Owner.ID, again.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sv.Status != types.SheetDone || len(sv.TablesView) != 2 || sv.Total != 8 || sv.Filled != 6 {
+		t.Fatalf("sheet = %s tables=%d %d/%d", sv.Status, len(sv.TablesView), sv.Filled, sv.Total)
+	}
+	hd, inv := sv.TablesView[0], sv.TablesView[1]
+	if len(hd.Rows) != 1 || hd.Rows[0].SegmentID == nil || hd.Rows[0].PageEnd != 2 || hd.Rows[0].CellsView["so_hop_dong"].Value != "012/2026/HDMB" {
+		t.Fatalf("contracts = %+v", hd.Rows)
+	}
+	if len(inv.Rows) != 2 || inv.Rows[0].CellsView["so_hoa_don"].Value != "0001234" || inv.Rows[1].CellsView["tong_tien"].Value != "110.000.000" {
+		t.Fatalf("invoices = %+v", inv.Rows)
+	}
+	if c := inv.Rows[0].CellsView["mst"]; c.FieldID != nil || c.Note == "" || c.Value != "" {
+		t.Fatalf("a field the document does not have = %+v", c)
+	}
+
+	// A field added to a type afterwards is extracted when the next sheet is
+	// built, and only that field is asked for. Changing the description of a
+	// field that has a value asks for nothing.
+	cfg.DocTypes[0].Fields[0].Description = "Số hợp đồng ở dòng thứ hai"
+	cfg.DocTypes[0].Fields = append(cfg.DocTypes[0].Fields, types.SheetField{Key: "ngay_ky", Label: "Ngày ký", ValueType: "date"})
+	if _, err := h.Docs.UpdateKB(h.Ctx, h.Owner.ID, kb.ID, postgres.KBPatch{Config: &cfg}); err != nil {
+		t.Fatal(err)
+	}
+	sv2 := build()
+	if len(agent.prompts) != 4 || !strings.Contains(agent.prompts[3], "- ngay_ky · ") || strings.Contains(agent.prompts[3], "- so_hop_dong · ") {
+		t.Fatalf("turns after a new field:\n%s", strings.Join(agent.prompts[3:], "\n----\n"))
+	}
+	if got := sv2.TablesView[0].Rows[0].CellsView["ngay_ky"].Value; got != "2026-03-01" {
+		t.Fatalf("new field = %q", got)
+	}
+	if len(sv.TablesView[0].Fields) != 2 {
+		t.Fatal("the first sheet keeps the columns it was made with")
+	}
+
+	// A user edit is a confirmed field of that document, recorded as edited.
+	seg := inv.Rows[0].SegmentID
+	sv, err = svc.SaveEdits(h.Ctx, h.Owner, sv.ID, []sheets.EditInput{{Table: "hoa_don", SegmentID: seg, Key: "so_hoa_don", Value: "0001235"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	c = cells(v)
-	if l := c["loi_nhuan_sau_thue"]; !l.Edited || c["so_tien_vay"].Edited || l.Status != types.FieldConfirmed || !l.Matched {
-		t.Fatalf("after edits = %+v", c)
-	}
-	stats, err := svc.CorrectionStats(h.Ctx, tpl.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	edited := map[string]int{}
-	for _, s := range stats {
-		edited[s.Key] = s.Edited
-	}
-	if edited["loi_nhuan_sau_thue"] != 1 || edited["so_tien_vay"] != 0 {
-		t.Fatalf("corrections = %+v", stats)
-	}
-	// An unknown cell is refused.
-	if _, err := svc.SaveEdits(h.Ctx, h.Owner, v.ID, []sheets.EditInput{{Key: "khong_co", Value: "x"}}); !errors.Is(err, sheets.ErrUnknownKey) {
-		t.Fatalf("edit of an unknown key: %v", err)
+	if c := sv.TablesView[1].Rows[0].CellsView["so_hoa_don"]; !c.Edited || c.Value != "0001235" || c.Status != types.FieldConfirmed {
+		t.Fatalf("after edit = %+v", c)
 	}
 
-	// The second sheet reuses the confirmed values.
-	v2 := build()
-	if p := runner.prompts[1]; strings.Contains(p, "loi_nhuan_sau_thue") || strings.Contains(p, "so_tien_vay") || !strings.Contains(p, "muc_dich_vay") {
-		t.Fatalf("second build must ask only for the missing field:\n%s", p)
-	}
-	if l := cells(v2)["loi_nhuan_sau_thue"]; l.Value != "6.124.800.000" || l.Edited {
-		t.Fatalf("second sheet cell = %+v", l)
-	}
-
-	// .xlsx round trip: one changed cell and one row typed by hand.
+	// .xlsx: one worksheet per document type, one row per document.
 	var buf bytes.Buffer
-	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, v.ID, nil, &buf); err != nil {
+	if _, err := svc.XLSX(h.Ctx, h.Owner.ID, sv.ID, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
-	f, err := excelize.OpenReader(bytes.NewReader(buf.Bytes()))
+	wb, err := excelize.OpenReader(bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = f.SetCellValue("Tổng hợp", "C2", "16.000.000.000")
-	_ = f.SetCellValue("Tổng hợp", "A4", "Ghi chú thẩm định: khách hàng quen")
-	var edited2 bytes.Buffer
-	if err := f.Write(&edited2); err != nil {
+	if got := strings.Join(wb.GetSheetList(), ","); got != "Hợp đồng,_bp,Hoá đơn" && got != "Hợp đồng,Hoá đơn,_bp" {
+		t.Fatalf("worksheets = %s", got)
+	}
+	rows, _ := wb.GetRows("Hoá đơn")
+	if len(rows) != 3 || strings.Join(rows[0], "|") != "Loại tài liệu|Bộ|Số hoá đơn|Tổng thanh toán|Mã số thuế" || rows[1][0] != "Hoá đơn" || rows[1][2] != "0001235" {
+		t.Fatalf("invoice worksheet = %v", rows)
+	}
+	_ = wb.SetCellValue("Hoá đơn", "D3", "120.000.000")
+	var edited bytes.Buffer
+	if err := wb.Write(&edited); err != nil {
 		t.Fatal(err)
 	}
-	imp, err := svc.Import(h.Ctx, h.Owner.ID, v.ID, bytes.NewReader(edited2.Bytes()))
-	if err != nil {
+	imp, err := svc.Import(h.Ctx, h.Owner.ID, sv.ID, bytes.NewReader(edited.Bytes()))
+	if err != nil || len(imp.Edits) != 1 || imp.Edits[0].Key != "tong_tien" || imp.Edits[0].SegmentID == nil {
+		t.Fatalf("import = %+v %v", imp, err)
+	}
+
+	// Deleting a sheet removes only that sheet: the other one and the fields
+	// of the case stay, and someone else's sheet is not found.
+	if err := svc.Delete(h.Ctx, uuid.New(), sv2.ID); !errors.Is(err, sheets.ErrNotFound) {
+		t.Fatalf("delete by another user: %v", err)
+	}
+	if err := svc.Delete(h.Ctx, h.Owner.ID, sv2.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(imp.Edits) != 1 || imp.Edits[0].Key != "so_tien_vay" || len(imp.Ignored) != 1 || len(imp.Conflicts) != 0 {
-		t.Fatalf("import = %+v", imp)
+	if _, err := svc.Get(h.Ctx, h.Owner.ID, sv2.ID); !errors.Is(err, sheets.ErrNotFound) {
+		t.Fatalf("deleted sheet: %v", err)
 	}
-	if _, err := svc.Import(h.Ctx, h.Owner.ID, v2.ID, bytes.NewReader(edited2.Bytes())); !errors.Is(err, sheets.ErrBadFile) {
-		t.Fatalf("a file of another sheet must be refused: %v", err)
+	if list, err := svc.List(h.Ctx, h.Owner.ID, cs.ID); err != nil || len(list) != 1 || list[0].ID != sv.ID {
+		t.Fatalf("sheets after delete = %+v %v", list, err)
+	}
+	if fields, err := h.Store.Fields.ListByCase(h.Ctx, cs.ID, &doc, "ngay_ky"); err != nil || len(fields) != 1 {
+		t.Fatalf("fields after delete = %+v %v", fields, err)
+	}
+
+	// A KB whose document types have no field has nothing to build.
+	bare := h.KB(types.KBConfig{DocTypes: []types.DocType{docType("hop_dong", "Hợp đồng")}}, nil)
+	h.PageTypes.Labels = append(h.PageTypes.Labels, "hop_dong")
+	h.UploadTo(bare.ID, "HS-BARE", "a.pdf", nil, []pdftest.Page{{"HOP DONG"}})
+	h.Drain()
+	if _, err := svc.Create(h.Ctx, h.Owner, h.Case(bare.ID, "HS-BARE").ID, nil); !errors.Is(err, sheets.ErrNoTables) {
+		t.Fatalf("sheet without fields: %v", err)
+	}
+}
+
+// U80: two sheets built at the same time ask for each document once, and a
+// file added later is the only one the next sheet asks for.
+func TestSheetsAskOnce(t *testing.T) {
+	h := testkit.New(t)
+	h.Index.SetSplit(docmodel.NewSplit(docmodel.SplitDeps{Store: h.Store, Queue: h.Queue, Cases: h.Cases, Tree: h.Index, Config: h.Config}))
+	agent := &fakeExtract{delay: 100 * time.Millisecond}
+	kb := h.KB(types.KBConfig{DocTypes: []types.DocType{docType("hoa_don", "Hoá đơn", types.SheetField{Key: "so_hoa_don", Label: "Số hoá đơn"})}}, nil)
+	h.PageTypes.Labels = []string{"hoa_don", "hoa_don", "hoa_don"}
+	h.PageTypes.FirstPages = []bool{true, true, true}
+	h.Upload(kb.ID, "a.pdf", nil, []pdftest.Page{
+		{"HOA DON GIA TRI GIA TANG", "So hoa don: 0000001", "Tong thanh toan: 550.000.000"},
+		{"HOA DON GIA TRI GIA TANG", "So hoa don: 0000002", "Tong thanh toan: 110.000.000"},
+	})
+	h.Drain()
+	cs := h.Case(kb.ID, testkit.DefaultCase)
+
+	sq := &stubQueue{}
+	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: sq, Cases: h.Cases, Extractor: docmodel.NewExtractor(h.Store, agent, nil), Config: h.Config})
+	create := func() []byte {
+		t.Helper()
+		if _, err := svc.Create(h.Ctx, h.Owner, cs.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		return sq.payloads[len(sq.payloads)-1]
+	}
+	tasks := [][]byte{create(), create()}
+	var wg sync.WaitGroup
+	errs := make([]error, len(tasks))
+	for i, p := range tasks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = svc.Handlers()[types.TaskCaseSheet](h.Ctx, p)
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		t.Fatal(err)
+	}
+	if len(agent.prompts) != 2 {
+		t.Fatalf("two sheets at once ran %d turns for 2 documents:\n%s", len(agent.prompts), strings.Join(agent.prompts, "\n----\n"))
+	}
+	list, err := svc.List(h.Ctx, h.Owner.ID, cs.ID)
+	if err != nil || len(list) != 2 || list[0].Filled != 2 || list[1].Filled != 2 {
+		t.Fatalf("sheets = %+v %v", list, err)
+	}
+
+	h.Upload(kb.ID, "b.pdf", nil, []pdftest.Page{{"HOA DON GIA TRI GIA TANG", "So hoa don: 0000003", "Tong thanh toan: 220.000.000"}})
+	h.Drain()
+	if err := svc.Handlers()[types.TaskCaseSheet](h.Ctx, create()); err != nil {
+		t.Fatal(err)
+	}
+	if len(agent.prompts) != 3 || !strings.Contains(agent.prompts[2], "0000003") {
+		t.Fatalf("after a new file: %d turns", len(agent.prompts))
 	}
 }

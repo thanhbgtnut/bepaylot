@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -79,7 +78,6 @@ var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,62}$`)
 // @Description  Published templates of a kind (chat or sheet), usable for a case type. body and fields are returned to prompt editors only; they also see drafts with drafts=1.
 // @Tags         Templates
 // @Produce      json
-// @Param        kind       query     string  false  "chat | sheet"
 // @Param        case_type  query     string  false  "Only templates usable for this case type"
 // @Param        drafts     query     bool    false  "Include drafts (prompt editors)"
 // @Success      200        {object}  dto.TemplateList
@@ -91,7 +89,7 @@ func (h *Handlers) ListTemplates(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	editor := h.canPrompt(u)
-	list, err := h.Store.Templates.List(ctx, string(c.Query("kind")), string(c.Query("case_type")), editor && c.Query("drafts") != "")
+	list, err := h.Store.Templates.List(ctx, types.TemplateChat, string(c.Query("case_type")), editor && c.Query("drafts") != "")
 	if err != nil {
 		h.serverError(c, err)
 		return
@@ -99,9 +97,6 @@ func (h *Handlers) ListTemplates(ctx context.Context, c *app.RequestContext) {
 	if !editor {
 		for i := range list {
 			list[i].Body = ""
-			if list[i].Kind == types.TemplateChat {
-				list[i].Fields = nil
-			}
 		}
 	}
 	c.JSON(consts.StatusOK, dto.TemplateList{Data: list})
@@ -157,21 +152,20 @@ func (h *Handlers) CreateTemplate(ctx context.Context, c *app.RequestContext) {
 		h.badRequest(c, "invalid JSON body: "+err.Error())
 		return
 	}
-	if req.Kind != types.TemplateChat && req.Kind != types.TemplateSheet {
-		h.unprocessable(c, "kind must be chat or sheet")
+	if req.Kind != types.TemplateChat {
+		h.unprocessable(c, "kind must be chat")
 		return
 	}
 	if !slugRe.MatchString(req.Slug) || strings.TrimSpace(req.Name) == "" {
 		h.unprocessable(c, "slug (a-z, 0-9, _ -) and name are required")
 		return
 	}
-	tables := req.SheetTables()
-	if msg := h.checkTemplate(req.Kind, req.Body, req.CaseType, tables); msg != "" {
-		h.unprocessable(c, msg)
+	if strings.TrimSpace(req.Body) == "" {
+		h.unprocessable(c, "body is required")
 		return
 	}
 	draft := postgres.TemplateDraft{Kind: req.Kind, Slug: req.Slug, Name: req.Name, Description: req.Description,
-		CaseType: req.CaseType, Body: req.Body, Tables: tables, By: u.ID}
+		CaseType: req.CaseType, Body: req.Body, By: u.ID}
 	t, err := h.Store.Templates.Create(ctx, draft)
 	if errors.Is(err, postgres.ErrSlugTaken) { // templates are independent: a taken slug gets a suffix, it never blocks a new one
 		draft.Slug = req.Slug[:min(len(req.Slug), 54)] + "_" + uuid.NewString()[:8]
@@ -195,7 +189,7 @@ func (h *Handlers) CreateTemplate(ctx context.Context, c *app.RequestContext) {
 // @Accept    json
 // @Produce   json
 // @Param     id       path      string               true  "Template id"  format(uuid)
-// @Param     request  body      dto.TemplateRequest  true  "Body and fields (name/description optional)"
+// @Param     request  body      dto.TemplateRequest  true  "Body (name/description optional)"
 // @Success   201      {object}  types.PromptTemplate
 // @Failure   403      {object}  dto.ErrorResponse
 // @Failure   422      {object}  dto.ErrorResponse
@@ -215,18 +209,12 @@ func (h *Handlers) AddTemplateVersion(ctx context.Context, c *app.RequestContext
 		h.badRequest(c, "invalid JSON body: "+err.Error())
 		return
 	}
-	cur, err := h.Store.Templates.Get(ctx, id, 0)
-	if err != nil {
-		h.serviceError(c, err)
-		return
-	}
-	tables := req.SheetTables()
-	if msg := h.checkTemplate(cur.Kind, req.Body, cur.CaseType, tables); msg != "" {
-		h.unprocessable(c, msg)
+	if strings.TrimSpace(req.Body) == "" {
+		h.unprocessable(c, "body is required")
 		return
 	}
 	t, err := h.Store.Templates.AddVersion(ctx, id, postgres.TemplateDraft{Name: req.Name, Description: req.Description,
-		Body: req.Body, Tables: tables, By: u.ID})
+		Body: req.Body, By: u.ID})
 	if err != nil {
 		h.serviceError(c, err)
 		return
@@ -266,75 +254,6 @@ func (h *Handlers) PublishTemplate(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, t)
-}
-
-// TemplateCorrections handles GET /v1/templates/{id}/corrections.
-//
-// @Summary   AI error rate per field of a sheet template (§6.9.6)
-// @Tags      Templates
-// @Produce   json
-// @Param     id   path      string  true  "Template id"  format(uuid)
-// @Success   200  {object}  dto.CorrectionStats
-// @Failure   403  {object}  dto.ErrorResponse
-// @Security  ApiKeyAuth
-// @Router    /v1/templates/{id}/corrections [get]
-func (h *Handlers) TemplateCorrections(ctx context.Context, c *app.RequestContext) {
-	if _, ok := h.requirePrompt(c); !ok {
-		return
-	}
-	id, ok := h.uuidParam(c, "id")
-	if !ok {
-		return
-	}
-	stats, err := h.Store.Sheets.CorrectionStats(ctx, id)
-	if err != nil {
-		h.serverError(c, err)
-		return
-	}
-	c.JSON(consts.StatusOK, dto.CorrectionStats{Data: stats})
-}
-
-// checkTemplate validates a template version: a sheet template needs at
-// least one sub-table, each with fields (unique snake_case keys) and a label
-// (a document type code), or "" for one row per file (§6.9.6). The label is
-// not checked against any KB or case type: a sub-table whose document type a
-// case does not have simply gets no rows.
-func (h *Handlers) checkTemplate(kind, body, caseType string, tables []types.SheetTable) string {
-	if strings.TrimSpace(body) == "" {
-		return "body is required"
-	}
-	if kind != types.TemplateSheet {
-		return ""
-	}
-	if len(tables) == 0 {
-		return "a sheet template needs tables (or fields)"
-	}
-	labels := map[string]bool{}
-	for _, t := range tables {
-		if labels[t.Label] {
-			return fmt.Sprintf("table %q appears twice", t.Label)
-		}
-		labels[t.Label] = true
-		if t.Label != "" {
-			if caseType == "" {
-				return "a table with a document type (label) needs the template's case_type"
-			}
-			if types.ValidateLabels([]types.ClassLabel{{Name: t.Label}}) != nil {
-				return fmt.Sprintf("table label %q is not a document type code", t.Label)
-			}
-		}
-		if len(t.Fields) == 0 {
-			return "each table needs fields"
-		}
-		seen := map[string]bool{}
-		for _, f := range t.Fields {
-			if !slugRe.MatchString(f.Key) || strings.TrimSpace(f.Label) == "" || seen[f.Key] {
-				return "each field needs a unique snake_case key and a label"
-			}
-			seen[f.Key] = true
-		}
-	}
-	return ""
 }
 
 func (h *Handlers) unprocessable(c *app.RequestContext, msg string) {

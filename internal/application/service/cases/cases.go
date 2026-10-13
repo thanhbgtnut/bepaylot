@@ -78,7 +78,7 @@ func (s *Service) CaseType(name string) types.CaseType {
 func (s *Service) Classification(ctx context.Context, c types.Case) types.ClassificationRule {
 	rule := s.CaseType(c.CaseType).Classification
 	if kb, err := s.st.KBs.Get(ctx, c.KBID); err == nil && len(kb.Config.DocTypes) > 0 {
-		rule.Labels = kb.Config.DocTypes
+		rule.Labels = kb.Config.Labels()
 	}
 	return rule
 }

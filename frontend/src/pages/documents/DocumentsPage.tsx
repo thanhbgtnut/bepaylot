@@ -119,7 +119,7 @@ export function DocumentsPage() {
   const actions = (d: Document): MenuItem[] => [
     { icon: "open_in_new", label: "Mở", onClick: () => nav(`/documents/${d.id}`) },
     { icon: "download", label: "Tải xuống", onClick: () => downloadOriginal(d).catch(fail) },
-    { icon: "forum", label: "Hỏi đáp về knowledge base", onClick: () => nav("/chat") },
+    { icon: "forum", label: "Hỏi đáp về thư viện", onClick: () => nav("/chat") },
     { divider: true, label: "" },
     {
       icon: "refresh",
@@ -275,7 +275,7 @@ export function DocumentsPage() {
         {!err && !docs && <Loading />}
         {!err && docs && !shown.length && (
           <Empty icon="cloud_upload" title={q || status || ftype || meta ? "Không có file nào khớp" : "Thả file vào đây"}>
-            {q || status || ftype || meta ? "Thử bỏ bớt bộ lọc." : "hoặc dùng nút “Mới” để tải PDF, ảnh scan lên knowledge base này."}
+            {q || status || ftype || meta ? "Thử bỏ bớt bộ lọc." : "hoặc dùng nút “Mới” để tải PDF, ảnh scan lên thư viện này."}
             {!(q || status || ftype || meta) && (
               <div>
                 <button className="btn btn-primary mt-5" onClick={() => setUpload([])}>

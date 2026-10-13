@@ -1,7 +1,7 @@
-// Package sheets builds the case sheets of U43/U44/U47/U48 (§6.9.6): one
-// sub-table per document type, fields as columns and one row per reviewed
-// document (segment) of the case; confirmed values are reused, the missing
-// ones are extracted by one agent turn per bundle. Users edit the values on
+// Package sheets builds the case sheets (§6.9.6): one sub-table per document
+// type of the KB, its fields as columns and one row per document (segment) of
+// that type in the case. The values are fields of the case, extracted when a
+// sheet is built and reused by every later sheet (§6.9.3, U80). Users edit the values on
 // the sheet page or in the downloaded .xlsx, and every value they change from
 // the AI's is recorded as a correction.
 package sheets
@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -25,17 +25,17 @@ import (
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
-// Runner runs the hidden agent turn that extracts the missing cells of a
-// sheet, in a session bound to the case; it returns the agent's reply.
-type Runner interface {
-	RunSheet(ctx context.Context, user types.User, caseID, sheetID uuid.UUID, text string) (string, error)
+// Extractor asks the agent for the fields of tables that the documents of a
+// file still need (§6.9.3) and returns how many it stored. Building a sheet
+// is the only time fields are extracted (U80).
+type Extractor interface {
+	Extract(ctx context.Context, doc uuid.UUID, tables []types.SheetTable) (int, error)
 }
 
 // Errors the HTTP layer maps to status codes.
 var (
 	ErrNotFound    = errors.New("sheet not found")
-	ErrNotSheet    = errors.New("template is not a published sheet template")
-	ErrNoTables    = errors.New("choose at least one table of the template")
+	ErrNoTables    = errors.New("no document type with fields to build: add fields to the document types of the knowledge base")
 	ErrBadFile     = errors.New("the file is not a sheet exported from this page")
 	ErrUnknownKey  = errors.New("unknown cell")
 	ErrNotFinished = errors.New("the sheet is still being built")
@@ -43,24 +43,22 @@ var (
 
 // Deps are the service's collaborators.
 type Deps struct {
-	Store    *postgres.Store
-	Queue    queue.Enqueuer
-	Cases    interfaces.CaseService
-	Searcher interfaces.Searcher // refs d<n> of the case files
-	Runner   Runner
-	Config   *config.Config
-	Log      *slog.Logger
+	Store     *postgres.Store
+	Queue     queue.Enqueuer
+	Cases     interfaces.CaseService
+	Extractor Extractor
+	Config    *config.Config
+	Log       *slog.Logger
 }
 
 // Service implements the sheet use cases.
 type Service struct {
-	st       *postgres.Store
-	q        queue.Enqueuer
-	cases    interfaces.CaseService
-	searcher interfaces.Searcher
-	runner   Runner
-	cfg      *config.Config
-	log      *slog.Logger
+	st        *postgres.Store
+	q         queue.Enqueuer
+	cases     interfaces.CaseService
+	extractor Extractor
+	cfg       *config.Config
+	log       *slog.Logger
 }
 
 // New builds the service.
@@ -69,7 +67,7 @@ func New(d Deps) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{st: d.Store, q: d.Queue, cases: d.Cases, searcher: d.Searcher, runner: d.Runner, cfg: d.Config, log: log}
+	return &Service{st: d.Store, q: d.Queue, cases: d.Cases, extractor: d.Extractor, cfg: d.Config, log: log}
 }
 
 // Handlers returns the task handlers.
@@ -77,15 +75,15 @@ func (s *Service) Handlers() map[string]queue.Handler {
 	return map[string]queue.Handler{types.TaskCaseSheet: s.handleBuild}
 }
 
-// chosen returns the sub-tables of a template whose label is in labels, in
-// template order; nil labels means all.
-func chosen(t types.PromptTemplate, labels []string) []types.SheetTable {
+// chosen returns the sub-tables whose label is in labels, in order; nil
+// labels means all.
+func chosen(all []types.SheetTable, labels []string) []types.SheetTable {
 	want := map[string]bool{}
 	for _, l := range labels {
 		want[l] = true
 	}
 	var out []types.SheetTable
-	for _, tb := range t.Tables {
+	for _, tb := range all {
 		if labels == nil || want[tb.Label] {
 			out = append(out, tb)
 		}
@@ -93,21 +91,18 @@ func chosen(t types.PromptTemplate, labels []string) []types.SheetTable {
 	return out
 }
 
-// Create starts a sheet of a case from a published sheet template, with the
-// chosen sub-tables (nil = all of them).
-func (s *Service) Create(ctx context.Context, user types.User, caseID, templateID uuid.UUID, tables []string) (types.Sheet, error) {
+// Create starts a sheet of a case: one sub-table per chosen document type of
+// the KB that has fields (nil = all of them).
+func (s *Service) Create(ctx context.Context, user types.User, caseID uuid.UUID, tables []string) (types.Sheet, error) {
 	c, err := s.cases.GetCaseOwned(ctx, user.ID, caseID)
 	if err != nil {
 		return types.Sheet{}, err
 	}
-	t, err := s.st.Templates.Get(ctx, templateID, 0)
-	if err != nil || t.Kind != types.TemplateSheet || t.Status != types.TemplatePublished || len(t.Tables) == 0 {
-		return types.Sheet{}, ErrNotSheet
+	kb, err := s.st.KBs.Get(ctx, c.KBID)
+	if err != nil {
+		return types.Sheet{}, err
 	}
-	if t.CaseType != "" && t.CaseType != c.CaseType {
-		return types.Sheet{}, ErrNotSheet
-	}
-	picked := chosen(t, tables)
+	picked := chosen(kb.Config.SheetTables(), tables)
 	if len(picked) == 0 {
 		return types.Sheet{}, ErrNoTables
 	}
@@ -115,8 +110,7 @@ func (s *Service) Create(ctx context.Context, user types.User, caseID, templateI
 	for _, tb := range picked {
 		labels = append(labels, tb.Label)
 	}
-	sh, err := s.st.Sheets.Create(ctx, types.Sheet{CaseID: c.ID, TemplateID: t.ID, TemplateVersion: t.CurrentVersion,
-		Name: t.Name, Tables: labels, CreatedBy: user.ID})
+	sh, err := s.st.Sheets.Create(ctx, types.Sheet{CaseID: c.ID, Name: "Bảng tổng hợp", Tables: labels, Columns: picked, CreatedBy: user.ID})
 	if err != nil {
 		return types.Sheet{}, err
 	}
@@ -134,6 +128,16 @@ func (s *Service) List(ctx context.Context, owner, caseID uuid.UUID) ([]types.Sh
 		return nil, err
 	}
 	return s.st.Sheets.ListByCase(ctx, caseID)
+}
+
+// Delete removes a sheet of a case the user owns. A sheet still being built
+// can be deleted too: its task ends when it no longer finds the sheet.
+func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
+	sh, _, err := s.owned(ctx, owner, id)
+	if err != nil {
+		return err
+	}
+	return s.st.Sheets.Delete(ctx, sh.ID)
 }
 
 // owned loads a sheet whose case the user owns.
@@ -156,8 +160,9 @@ type slot struct {
 }
 
 // fieldKey is the key the field of a cell is stored under: the column key,
-// prefixed with the sub-table's label on a file row of a labelled sub-table,
-// so two such sub-tables keep their own values for the same file.
+// prefixed with the sub-table's label on a file row of a labelled sub-table
+// (sheets made before 0.25), so two such sub-tables keep their own values for
+// the same file.
 func fieldKey(r types.SheetRow, key string) string {
 	if r.Table != "" && r.SegmentID == nil {
 		return r.Table + "." + key
@@ -174,32 +179,57 @@ func slotOf(r types.SheetRow, key string) slot {
 	return sl
 }
 
-// rowsOf lays out the rows of the chosen sub-tables (§6.9.6): one per
-// indexed file for each sub-table. A sheet does not use the classification of
-// the case (U67): the agent reads the file and finds the documents of the
-// sub-table's type in it.
-func (s *Service) rowsOf(ctx context.Context, owner, caseID uuid.UUID, tables []types.SheetTable) ([]types.SheetRow, map[uuid.UUID]string, error) {
+// rowsOf lays out the rows of the sub-tables (§6.9.6): one per document
+// (segment) of the sub-table's type in the indexed files of the case, by
+// bundle, then file in case order, then page.
+func (s *Service) rowsOf(ctx context.Context, caseID uuid.UUID, tables []types.SheetTable) ([]types.SheetRow, error) {
 	docs, err := s.st.Segments.SplitDocs(ctx, caseID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	refs := map[uuid.UUID]string{}
-	if s.searcher != nil {
-		if m, err := s.searcher.CaseRefs(ctx, owner, caseID); err == nil {
-			for ref, id := range m {
-				refs[id] = ref
-			}
+	segs, err := s.st.Segments.ByCase(ctx, caseID)
+	if err != nil {
+		return nil, err
+	}
+	names := map[uuid.UUID]string{}
+	order := map[uuid.UUID]int{}
+	for i, d := range docs {
+		if d.Seq > 0 {
+			names[d.ID] = d.FileName
+			order[d.ID] = i
 		}
+	}
+	// s<k> of a segment ref: its position among the file's documents.
+	segNo := map[uuid.UUID]int{}
+	perDoc := map[uuid.UUID]int{}
+	for _, g := range segs {
+		perDoc[g.DocumentID]++
+		segNo[g.ID] = perDoc[g.DocumentID]
 	}
 	var rows []types.SheetRow
 	for _, tb := range tables {
-		for _, d := range docs {
-			if d.Seq > 0 {
-				rows = append(rows, types.SheetRow{Table: tb.Label, DocumentID: d.ID, FileName: d.FileName, PageStart: 1, PageEnd: d.PageCount})
+		start := len(rows)
+		for _, g := range segs {
+			if _, indexed := order[g.DocumentID]; !indexed || g.Label != tb.Label {
+				continue
 			}
+			id := g.ID
+			rows = append(rows, types.SheetRow{Table: tb.Label, Bundle: g.BundleCode, SegmentID: &id, SegmentNo: segNo[g.ID],
+				DocumentID: g.DocumentID, FileName: names[g.DocumentID], PageStart: g.PageStart, PageEnd: g.PageEnd})
 		}
+		part := rows[start:]
+		sort.SliceStable(part, func(i, j int) bool {
+			a, b := part[i], part[j]
+			if a.Bundle != b.Bundle {
+				return a.Bundle < b.Bundle
+			}
+			if order[a.DocumentID] != order[b.DocumentID] {
+				return order[a.DocumentID] < order[b.DocumentID]
+			}
+			return a.PageStart < b.PageStart
+		})
 	}
-	return rows, refs, nil
+	return rows, nil
 }
 
 // handleBuild is case:sheet (§6.9.6).
@@ -224,20 +254,11 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 		}
 		return err
 	}
-	t, err := s.st.Templates.Get(ctx, sh.TemplateID, sh.TemplateVersion)
-	if err != nil {
-		return fail(fmt.Errorf("%w: template: %v", queue.ErrSkipRetry, err))
-	}
-	user, err := s.st.Users.Get(ctx, p.UserID)
-	if err != nil {
-		return fail(fmt.Errorf("%w: user: %v", queue.ErrSkipRetry, err))
-	}
-	tables := chosen(t, sh.Tables)
 	byLabel := map[string]types.SheetTable{}
-	for _, tb := range tables {
+	for _, tb := range sh.Columns {
 		byLabel[tb.Label] = tb
 	}
-	rows, refs, err := s.rowsOf(ctx, user.ID, sh.CaseID, tables)
+	rows, err := s.rowsOf(ctx, sh.CaseID, sh.Columns)
 	if err != nil {
 		return fail(err)
 	}
@@ -253,7 +274,7 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 		n := 0
 		for _, r := range rows {
 			for _, f := range byLabel[r.Table].Fields {
-				if _, ok := best[slotOf(r, f.Key)]; ok {
+				if b, ok := best[slotOf(r, f.Key)]; ok && !notFound(b) {
 					n++
 				}
 			}
@@ -264,74 +285,56 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 		return err
 	}
 
-	// Missing cells, grouped by file: one agent turn per file.
-	type miss struct {
-		row    types.SheetRow
-		fields []types.SheetField
-	}
-	groups := map[uuid.UUID][]miss{}
-	var files []uuid.UUID
+	// The fields are extracted here, one file at a time, and only for the
+	// document types of this sheet. The extractor asks for what the case does
+	// not have yet, so a file whose fields are all there costs no model call.
+	seen := map[uuid.UUID]bool{}
 	for _, r := range rows {
-		var fs []types.SheetField
-		for _, f := range byLabel[r.Table].Fields {
-			if b, ok := best[slotOf(r, f.Key)]; !ok || b.Status != types.FieldConfirmed {
-				fs = append(fs, f)
-			}
-		}
-		if len(fs) == 0 {
+		if seen[r.DocumentID] {
 			continue
 		}
-		if _, ok := groups[r.DocumentID]; !ok {
-			files = append(files, r.DocumentID)
-		}
-		groups[r.DocumentID] = append(groups[r.DocumentID], miss{row: r, fields: fs})
-	}
-	notes := map[slot]string{}
-	for _, d := range files {
-		var items []promptItem
-		for _, m := range groups[d] {
-			items = append(items, promptItem{ref: rowRef(m.row, refs), title: tableTitle(byLabel[m.row.Table]), file: m.row.FileName,
-				pages: pageRange(m.row), fields: m.fields, row: m.row})
-		}
-		stop := s.watchProgress(ctx, sh.ID, count, total)
-		reply, err := s.runner.RunSheet(ctx, user, sh.CaseID, sh.ID, sheetPrompt(t.Body, items))
-		stop()
+		seen[r.DocumentID] = true
+		n, err := s.extractor.Extract(ctx, r.DocumentID, sh.Columns)
 		if err != nil {
 			return fail(err)
 		}
-		for k, v := range missingNotes(reply, items) {
-			notes[k] = v
+		if n == 0 {
+			continue
 		}
 		if best, err = s.bestFields(ctx, sh.CaseID); err != nil {
 			return fail(err)
 		}
 		_ = s.st.Sheets.SetProgress(ctx, sh.ID, types.SheetRunning, count(), total, nil, "")
 	}
-	// A file without any value for a sub-table of a document type has no
-	// document of that type: its row is left out.
-	kept := []types.SheetRow{}
-	total = 0
-	for _, r := range rows {
+	// Another sheet built at the same time may have stored the fields this one
+	// waited for.
+	if best, err = s.bestFields(ctx, sh.CaseID); err != nil {
+		return fail(err)
+	}
+	for i := range rows {
+		r := &rows[i]
 		r.Cells = map[string]types.SheetCell{}
-		found := r.Table == ""
 		for _, f := range byLabel[r.Table].Fields {
 			cell := types.SheetCell{}
-			if b, ok := best[slotOf(r, f.Key)]; ok {
+			if b, ok := best[slotOf(*r, f.Key)]; ok && !notFound(b) {
 				id := b.ID
 				cell.FieldID, cell.AIFieldID, cell.AIValueText = &id, &id, b.ValueText
-				found = true
-			} else {
-				cell.Note = notes[slotOf(r, f.Key)]
+			} else if ok {
+				cell.Note = b.Note
 			}
 			r.Cells[f.Key] = cell
 		}
-		if found {
-			kept = append(kept, r)
-			total += len(byLabel[r.Table].Fields)
-		}
 	}
-	rows = kept
+	if rows == nil {
+		rows = []types.SheetRow{}
+	}
 	return s.st.Sheets.SetProgress(ctx, sh.ID, types.SheetDone, count(), total, rows, "")
+}
+
+// notFound reports a field the extraction recorded without a value: the
+// document does not have it (§6.9.3).
+func notFound(f types.Field) bool {
+	return f.Source == types.FieldSourceAgent && f.ValueText == ""
 }
 
 // bestFields picks, per (document, segment, key), the field a cell shows:
@@ -363,116 +366,11 @@ func (s *Service) bestFields(ctx context.Context, caseID uuid.UUID) (map[slot]ty
 	return out, nil
 }
 
-// watchProgress updates the filled count while the agent works, so the
-// Studio shows "Đang bóc tách 31/48 ô".
-func (s *Service) watchProgress(ctx context.Context, id uuid.UUID, count func() int, total int) func() {
-	ctx, cancel := context.WithCancel(ctx)
-	go func() {
-		tick := time.NewTicker(2 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				_ = s.st.Sheets.SetProgress(ctx, id, types.SheetRunning, count(), total, nil, "")
-			}
-		}
-	}()
-	return cancel
-}
-
-// promptItem is one sub-table of a file with its missing fields.
-type promptItem struct {
-	ref, title, file, pages string
-	fields                  []types.SheetField
-	row                     types.SheetRow
-}
-
-// rowRef is how the agent names a row's file: its ref d<n>.
-func rowRef(r types.SheetRow, refs map[uuid.UUID]string) string {
-	d := refs[r.DocumentID]
-	if d == "" {
-		d = r.DocumentID.String()
-	}
-	return d
-}
-
 func tableTitle(t types.SheetTable) string {
 	if t.Title != "" {
 		return t.Title
 	}
 	return "Cả file"
-}
-
-func pageRange(r types.SheetRow) string {
-	if r.PageStart == r.PageEnd {
-		return fmt.Sprintf("tr. %d", r.PageStart)
-	}
-	return fmt.Sprintf("tr. %d–%d", r.PageStart, r.PageEnd)
-}
-
-// sheetPrompt is the message of one hidden turn: the template body (§8.4)
-// plus, for each sub-table of the file, the file's ref, the document type,
-// pages and the fields still missing.
-func sheetPrompt(body string, items []promptItem) string {
-	var b strings.Builder
-	b.WriteString(strings.TrimSpace(body))
-	b.WriteString("\n\nCác file và trường cần bóc tách (key · nhãn · kiểu):\n")
-	find := false
-	for _, it := range items {
-		title := it.title
-		if it.row.Table != "" && it.row.SegmentID == nil { // a document type: the agent finds it in the file
-			title += " (tìm trong file)"
-			find = true
-		}
-		fmt.Fprintf(&b, "\n[%s] %s · %s · %s\n", it.ref, title, it.file, it.pages)
-		for _, f := range it.fields {
-			vt := f.ValueType
-			if vt == "" {
-				vt = "string"
-			}
-			fmt.Fprintf(&b, "- %s · %s · %s\n", fieldKey(it.row, f.Key), f.Label, vt)
-		}
-	}
-	if find {
-		b.WriteString("\nMục ghi \"(tìm trong file)\" chưa được tách sẵn: tìm giấy tờ thuộc loại đó trong file rồi mới bóc tách; " +
-			"file không có loại giấy tờ đó thì không ghi và nêu lý do.\n")
-	}
-	b.WriteString("\nCách làm: đọc file, rồi gọi kb_save_fields ngay (một lần cho các trường của cùng một giấy tờ, " +
-		"truyền document_id là ref trong ngoặc vuông, ví dụ d2), " +
-		"mỗi giá trị kèm citation_id của dòng gốc và đúng key ở trên; không đợi tìm đủ mọi trường mới ghi. " +
-		"Trường nào đã tìm hai lần không thấy thì bỏ qua, không tìm tiếp. " +
-		"Cuối câu trả lời liệt kê mỗi trường không tìm thấy trên một dòng dạng `ref key: lý do`.")
-	return b.String()
-}
-
-// missingNotes reads the "ref key: reason" lines of the agent's reply for
-// the cells it did not fill; a line "key: reason" applies when only one
-// document asks for that key.
-func missingNotes(reply string, items []promptItem) map[slot]string {
-	out := map[slot]string{}
-	for _, line := range strings.Split(reply, "\n") {
-		line = strings.Trim(strings.TrimSpace(line), "-*• `")
-		for _, it := range items {
-			rest := line
-			if r, ok := strings.CutPrefix(line, it.ref+" "); ok {
-				rest = strings.TrimSpace(r)
-			} else if r, ok := strings.CutPrefix(line, "["+it.ref+"] "); ok {
-				rest = strings.TrimSpace(r)
-			} else if len(items) > 1 {
-				continue
-			}
-			for _, f := range it.fields {
-				if r, ok := strings.CutPrefix(rest, fieldKey(it.row, f.Key)); ok {
-					if reason := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(r), ":`")); reason != "" {
-						out[slotOf(it.row, f.Key)] = textutil.Truncate(reason, 300)
-					}
-				}
-			}
-		}
-	}
-	return out
 }
 
 // CellView is one cell as the page shows it; the grid shows only Value, the
@@ -521,10 +419,6 @@ func (s *Service) Get(ctx context.Context, owner, id uuid.UUID) (View, error) {
 
 func (s *Service) view(ctx context.Context, sh types.Sheet, c types.Case) (View, error) {
 	v := View{Sheet: sh, CaseCode: c.Code, TablesView: []TableView{}}
-	t, err := s.st.Templates.Get(ctx, sh.TemplateID, sh.TemplateVersion)
-	if err != nil {
-		return v, err
-	}
 	var ids []uuid.UUID
 	for _, r := range sh.Rows {
 		for _, cell := range r.Cells {
@@ -537,7 +431,7 @@ func (s *Service) view(ctx context.Context, sh types.Sheet, c types.Case) (View,
 	if err != nil {
 		return v, err
 	}
-	for _, tb := range chosen(t, sh.Tables) {
+	for _, tb := range sh.Columns {
 		tv := TableView{SheetTable: tb, Rows: []RowView{}}
 		for _, r := range sh.Rows {
 			if r.Table != tb.Label {
@@ -572,7 +466,7 @@ func (s *Service) view(ctx context.Context, sh types.Sheet, c types.Case) (View,
 }
 
 // EditInput is one cell the user saves: the row by its sub-table and
-// segment (or document, for a sub-table without label), and the key.
+// segment (or document, on a sheet with file rows), and the key.
 type EditInput struct {
 	Table      string     `json:"table"`
 	SegmentID  *uuid.UUID `json:"segment_id,omitempty"`
@@ -610,12 +504,8 @@ func (s *Service) SaveEdits(ctx context.Context, user types.User, id uuid.UUID, 
 	if sh.Status != types.SheetDone {
 		return View{}, ErrNotFinished
 	}
-	t, err := s.st.Templates.Get(ctx, sh.TemplateID, sh.TemplateVersion)
-	if err != nil {
-		return View{}, err
-	}
 	valueTypes := map[string]map[string]string{} // label → key → value type
-	for _, tb := range chosen(t, sh.Tables) {
+	for _, tb := range sh.Columns {
 		m := map[string]string{}
 		for _, f := range tb.Fields {
 			m[f.Key] = f.ValueType
@@ -692,10 +582,4 @@ func (s *Service) SaveEdits(ctx context.Context, user types.User, id uuid.UUID, 
 		return View{}, err
 	}
 	return s.view(ctx, sh, c)
-}
-
-// CorrectionStats is the AI error rate per sub-table and field of a
-// template (§6.9.6).
-func (s *Service) CorrectionStats(ctx context.Context, templateID uuid.UUID) ([]types.CorrectionStat, error) {
-	return s.st.Sheets.CorrectionStats(ctx, templateID)
 }

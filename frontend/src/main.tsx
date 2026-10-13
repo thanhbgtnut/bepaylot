@@ -6,6 +6,7 @@ import "./index.css";
 import { AppProvider } from "./components/AppContext";
 import { AuthProvider, RequireAuth } from "./components/AuthContext";
 import { Layout } from "./components/Layout";
+import { SettingsPage } from "./components/SettingsDialog";
 import { ToastProvider } from "./components/toast";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { CasePage } from "./pages/cases/CasePage";
@@ -36,6 +37,7 @@ const router = createBrowserRouter([
       { path: "cases/:caseId", element: <CasePage /> },
       { path: "cases/:caseId/sheets/:sheetId", element: <SheetPage /> },
       { path: "cases/:caseId/split", element: <SplitPage /> },
+      { path: "settings/:tab?", element: <SettingsPage /> },
       { path: "*", element: <Navigate to="/documents" replace /> },
     ],
   },

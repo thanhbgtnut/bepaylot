@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -24,23 +23,17 @@ var ErrSlugTaken = errors.New("template slug already exists")
 // published one unless the query joins another.
 const tplCols = `t.id, t.kind, t.slug, t.name, t.description, COALESCE(t.case_type, ''), t.status,
 	COALESCE(t.current_version, 0), (SELECT max(version) FROM prompt_template_versions WHERE template_id = t.id),
-	COALESCE(v.version, 0), COALESCE(v.body, ''), COALESCE(v.fields, '[]'), COALESCE(v.tables, '[]'), t.created_by, COALESCE(u.name, u.email, ''), t.created_at, t.updated_at`
+	COALESCE(v.version, 0), COALESCE(v.body, ''), t.created_by, COALESCE(u.name, u.email, ''), t.created_at, t.updated_at`
 
 func scanTemplate(row pgx.Row) (types.PromptTemplate, error) {
 	var t types.PromptTemplate
-	var fields, tables []byte
 	err := row.Scan(&t.ID, &t.Kind, &t.Slug, &t.Name, &t.Description, &t.CaseType, &t.Status, &t.CurrentVersion, &t.LatestVersion,
-		&t.Version, &t.Body, &fields, &tables, &t.CreatedBy, &t.CreatedByName, &t.CreatedAt, &t.UpdatedAt)
+		&t.Version, &t.Body, &t.CreatedBy, &t.CreatedByName, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, ErrNotFound
 	}
 	if err != nil {
 		return t, err
-	}
-	_ = json.Unmarshal(fields, &t.Fields)
-	_ = json.Unmarshal(tables, &t.Tables)
-	if len(t.Tables) == 0 && len(t.Fields) > 0 { // a 0.16 template: one sub-table, one row per file
-		t.Tables = []types.SheetTable{{Title: "Tổng hợp", Fields: t.Fields}}
 	}
 	return t, nil
 }
@@ -84,8 +77,6 @@ func (r *TemplatesRepo) Get(ctx context.Context, id uuid.UUID, version int) (typ
 type TemplateDraft struct {
 	Kind, Slug, Name, Description, CaseType string
 	Body                                    string
-	Fields                                  []types.SheetField
-	Tables                                  []types.SheetTable
 	By                                      uuid.UUID
 }
 
@@ -120,18 +111,8 @@ func (r *TemplatesRepo) Create(ctx context.Context, d TemplateDraft) (types.Prom
 }
 
 func insertVersion(ctx context.Context, tx pgx.Tx, id uuid.UUID, version int, d TemplateDraft) error {
-	if len(d.Tables) == 0 && len(d.Fields) > 0 {
-		d.Tables = []types.SheetTable{{Title: "Tổng hợp", Fields: d.Fields}}
-	}
-	if d.Tables == nil {
-		d.Tables = []types.SheetTable{}
-	}
-	tables, err := cleanJSON(d.Tables)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO prompt_template_versions (template_id, version, body, tables, created_by) VALUES ($1, $2, $3, $4, $5)`,
-		id, version, cleanText(d.Body), tables, d.By)
+	_, err := tx.Exec(ctx, `INSERT INTO prompt_template_versions (template_id, version, body, created_by) VALUES ($1, $2, $3, $4)`,
+		id, version, cleanText(d.Body), d.By)
 	return err
 }
 

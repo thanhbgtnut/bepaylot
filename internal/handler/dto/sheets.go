@@ -11,25 +11,14 @@ type TemplateList struct {
 	Data []types.PromptTemplate `json:"data"`
 }
 
-// TemplateRequest creates a template or a new version of one (§8.4).
+// TemplateRequest creates a chat template or a new version of one (§8.4).
 type TemplateRequest struct {
-	Kind        string             `json:"kind,omitempty" example:"sheet"`
-	Slug        string             `json:"slug,omitempty" example:"pa_vay_von"`
-	Name        string             `json:"name,omitempty" example:"Bảng tổng hợp phương án vay"`
-	Description string             `json:"description,omitempty"`
-	CaseType    string             `json:"case_type,omitempty" example:"tin_dung_dn"`
-	Body        string             `json:"body"`
-	Fields      []types.SheetField `json:"fields,omitempty"` // 0.16: one table, one row per file
-	Tables      []types.SheetTable `json:"tables,omitempty"`
-}
-
-// SheetTables returns the sub-tables of the request; fields alone make one
-// sub-table without label.
-func (r TemplateRequest) SheetTables() []types.SheetTable {
-	if len(r.Tables) == 0 && len(r.Fields) > 0 {
-		return []types.SheetTable{{Title: "Tổng hợp", Fields: r.Fields}}
-	}
-	return r.Tables
+	Kind        string `json:"kind,omitempty" example:"chat"`
+	Slug        string `json:"slug,omitempty" example:"tham_dinh"`
+	Name        string `json:"name,omitempty" example:"Thẩm định phương án vay"`
+	Description string `json:"description,omitempty"`
+	CaseType    string `json:"case_type,omitempty" example:"tin_dung_dn"`
+	Body        string `json:"body"`
 }
 
 // PublishTemplateRequest is the body of POST /v1/templates/{id}/publish.
@@ -37,15 +26,10 @@ type PublishTemplateRequest struct {
 	Version int `json:"version" example:"2"`
 }
 
-// CorrectionStats is the body of GET /v1/templates/{id}/corrections.
-type CorrectionStats struct {
-	Data []types.CorrectionStat `json:"data"`
-}
-
 // CreateSheetRequest is the body of POST /v1/cases/{id}/sheets.
 type CreateSheetRequest struct {
-	TemplateID string `json:"template_id" format:"uuid"`
-	// Tables are the labels of the sub-tables to build; omitted = all.
+	// Tables are the codes of the document types to build; omitted = every
+	// document type of the KB that has fields.
 	Tables []string `json:"tables,omitempty" example:"hop_dong,hoa_don"`
 }
 

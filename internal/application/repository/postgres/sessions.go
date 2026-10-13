@@ -107,7 +107,7 @@ func (r *SessionsRepo) ListByCase(ctx context.Context, userID, caseID uuid.UUID,
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `SELECT `+sessCols+` FROM sessions
-		WHERE user_id = $1 AND case_id = $2 AND deleted_at IS NULL AND NOT metadata ? 'sheet_id' ORDER BY updated_at DESC LIMIT $3`, userID, caseID, limit)
+		WHERE user_id = $1 AND case_id = $2 AND deleted_at IS NULL AND NOT metadata ?| array['sheet_id','extract_document_id'] ORDER BY updated_at DESC LIMIT $3`, userID, caseID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (r *SessionsRepo) ListByUser(ctx context.Context, userID uuid.UUID, before 
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+sessCols+`
 		FROM sessions
-		WHERE user_id = $1 AND deleted_at IS NULL AND updated_at < $2 AND NOT metadata ? 'sheet_id'
+		WHERE user_id = $1 AND deleted_at IS NULL AND updated_at < $2 AND NOT metadata ?| array['sheet_id','extract_document_id']
 		ORDER BY updated_at DESC
 		LIMIT $3`, userID, before, limit)
 	if err != nil {

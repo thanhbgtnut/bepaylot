@@ -1,7 +1,6 @@
 package sheets
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,9 +8,9 @@ import (
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 
-// A sub-table of a document type has file rows: its fields are stored under
-// "<label>.<key>", so two sub-tables do not share a value on the same file,
-// and the agent is told to find the document.
+// A file row of a labelled sub-table (sheets made before 0.25) keeps its
+// fields under "<label>.<key>", so two sub-tables do not share a value on the
+// same file; a document (segment) row uses the column key.
 func TestFileRowOfLabelledTable(t *testing.T) {
 	doc, seg := uuid.New(), uuid.New()
 	file := types.SheetRow{Table: "hoa_don", DocumentID: doc}
@@ -27,18 +26,5 @@ func TestFileRowOfLabelledTable(t *testing.T) {
 	}
 	if slotOf(file, "so") == slotOf(other, "so") {
 		t.Fatal("two labelled sub-tables share a slot on the same file")
-	}
-
-	fields := []types.SheetField{{Key: "so", Label: "Số"}}
-	items := []promptItem{{ref: "d1", title: "Hoá đơn", file: "a.pdf", pages: "tr. 1–3", fields: fields, row: file}}
-	p := sheetPrompt("Bóc tách.", items)
-	if !strings.Contains(p, "[d1] Hoá đơn (tìm trong file)") || !strings.Contains(p, "- hoa_don.so · Số · string") {
-		t.Fatalf("prompt:\n%s", p)
-	}
-	if strings.Contains(sheetPrompt("Bóc tách.", []promptItem{{ref: "d1", title: "Cả file", fields: fields, row: whole}}), "tìm trong file") {
-		t.Fatal("a sub-table without type has nothing to find")
-	}
-	if n := missingNotes("d1 hoa_don.so: file không có hoá đơn", items); n[slotOf(file, "so")] != "file không có hoá đơn" {
-		t.Fatalf("notes = %v", n)
 	}
 }

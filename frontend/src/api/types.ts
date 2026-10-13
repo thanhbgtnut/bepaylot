@@ -10,7 +10,12 @@ export interface BBox {
 export interface KBConfig {
   parser_engine?: string;
   /** Loại giấy tờ của KB: trang của file được phân loại theo ảnh vào các loại này. */
-  doc_types?: ClassLabel[];
+  doc_types?: DocType[];
+}
+
+/** Loại giấy tờ của KB kèm các trường bóc tách từ mỗi giấy tờ loại đó (§6.9.3); cũng là cột của bảng Excel. */
+export interface DocType extends ClassLabel {
+  fields?: SheetField[];
 }
 
 export interface MetadataField {
@@ -315,11 +320,13 @@ export interface SheetField {
   key: string;
   label: string;
   value_type?: string;
+  // guides the agent when it extracts the field
+  description?: string;
 }
 
 export interface PromptTemplate {
   id: string;
-  kind: "chat" | "sheet";
+  kind: "chat";
   slug: string;
   name: string;
   description: string;
@@ -329,8 +336,6 @@ export interface PromptTemplate {
   latest_version: number;
   version: number;
   body?: string;
-  fields?: SheetField[];
-  tables?: SheetTable[];
   created_by_name?: string;
   updated_at: string;
 }
@@ -346,11 +351,12 @@ export interface Evidence {
   citation_id: string;
 }
 
-// One sub-table of a sheet template (U48): the fields of one document type;
-// label "" = one row per file.
+// One sub-table of a sheet (§6.9.6): the fields of one document type of the
+// KB; label "" = the single table of an old sheet (one row per file).
 export interface SheetTable {
   label: string;
   title: string;
+  description?: string;
   fields: SheetField[];
 }
 
@@ -361,7 +367,7 @@ export interface SheetCell {
   note?: string;
 }
 
-// One row = one document (a reviewed segment) of a sub-table (§6.9.6).
+// One row = one document (a segment of a file) of a sub-table (§6.9.6).
 export interface SheetRow {
   table: string;
   bundle?: string;
@@ -377,14 +383,12 @@ export interface SheetRow {
 export interface Sheet {
   id: string;
   case_id: string;
-  template_id: string;
-  template_version: number;
-  template_name?: string;
   name: string;
   status: "pending" | "running" | "done" | "failed";
   filled: number;
   total: number;
   tables: string[];
+  columns: SheetTable[];
   rows: SheetRow[];
   error?: string;
   created_at: string;
@@ -504,14 +508,4 @@ export interface LLMKeyView {
   masked_key: string;
   overridden: boolean;
   models: string[];
-}
-
-export interface CorrectionStat {
-  label: string;
-  key: string;
-  version: number;
-  sheets: number;
-  edited: number;
-  rate: number;
-  examples?: string[];
 }

@@ -615,13 +615,6 @@ definitions:
       queued:
         type: integer
     type: object
-  dto.CorrectionStats:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/types.CorrectionStat'
-        type: array
-    type: object
   dto.CreateAPIKeyRequest:
     properties:
       name:
@@ -1877,25 +1870,6 @@ definitions:
       min_confidence:
         type: number
     type: object
-  types.CorrectionStat:
-    properties:
-      edited:
-        type: integer
-      examples:
-        items:
-          type: string
-        type: array
-      key:
-        type: string
-      label:
-        type: string
-      rate:
-        type: number
-      sheets:
-        type: integer
-      version:
-        type: integer
-    type: object
   types.Document:
     properties:
       batch_id:
@@ -2443,6 +2417,9 @@ definitions:
     type: object
   types.SheetField:
     properties:
+      description:
+        description: Description guides the agent when it extracts the field (U81).
+        type: string
       key:
         type: string
       label:
@@ -5149,6 +5126,32 @@ paths:
       tags:
       - Sessions
   /v1/sheets/{id}:
+    delete:
+      description: Removes the sheet and its corrections; the fields extracted from
+        the files stay, so a new sheet shows the same values.
+      parameters:
+      - description: Sheet id
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OK'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a sheet
+      tags:
+      - Sheets
     get:
       parameters:
       - description: Sheet id
@@ -5405,31 +5408,6 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: One template at a version (prompt editors)
-      tags:
-      - Templates
-  /v1/templates/{id}/corrections:
-    get:
-      parameters:
-      - description: Template id
-        format: uuid
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.CorrectionStats'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - ApiKeyAuth: []
-      summary: AI error rate per field of a sheet template (§6.9.6)
       tags:
       - Templates
   /v1/templates/{id}/publish:

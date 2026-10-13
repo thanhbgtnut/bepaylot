@@ -17,11 +17,9 @@ import type {
   UploadResult,
   CaseTOC,
   AdminUser,
-  CorrectionStat,
   LLMKeyView,
   PromptTemplate,
   Sheet,
-  SheetTable,
   SheetImport,
   SheetView,
   SplitView,
@@ -146,23 +144,21 @@ export const setSessionTemplate = (id: string, templateId: string) =>
 
 // ---- prompt templates (§8.4)
 
-export const listTemplates = (kind: "chat" | "sheet", caseType?: string, drafts = false) =>
+export const listTemplates = (kind: "chat", caseType?: string, drafts = false) =>
   request<{ data: PromptTemplate[] }>("/templates" + q({ kind, case_type: caseType, drafts: drafts ? 1 : undefined })).then((r) => r.data ?? []);
 export const getTemplate = (id: string, version?: number) => request<PromptTemplate>(`/templates/${id}` + q({ version }));
-export const createTemplate = (body: { kind: "chat" | "sheet"; slug: string; name: string; description?: string; case_type?: string; body: string; tables?: SheetTable[] }) =>
+export const createTemplate = (body: { kind: "chat"; slug: string; name: string; description?: string; case_type?: string; body: string }) =>
   request<PromptTemplate>("/templates", { body });
-export const addTemplateVersion = (id: string, body: { name?: string; description?: string; body: string; tables?: SheetTable[] }) =>
+export const addTemplateVersion = (id: string, body: { name?: string; description?: string; body: string }) =>
   request<PromptTemplate>(`/templates/${id}/versions`, { body });
 export const publishTemplate = (id: string, version: number) => request<PromptTemplate>(`/templates/${id}/publish`, { body: { version } });
-export const templateCorrections = (id: string) =>
-  request<{ data: CorrectionStat[] }>(`/templates/${id}/corrections`).then((r) => r.data ?? []);
 
 // ---- case sheets (§6.9.6)
 
-export const createSheet = (caseId: string, templateId: string, tables?: string[]) =>
-  request<Sheet>(`/cases/${caseId}/sheets`, { body: { template_id: templateId, tables } });
+export const createSheet = (caseId: string, tables?: string[]) => request<Sheet>(`/cases/${caseId}/sheets`, { body: { tables } });
 export const listSheets = (caseId: string) => request<{ data: Sheet[] }>(`/cases/${caseId}/sheets`).then((r) => r.data ?? []);
 export const getSheet = (id: string) => request<SheetView>(`/sheets/${id}`);
+export const deleteSheet = (id: string) => request(`/sheets/${id}`, { method: "DELETE" });
 export interface SheetEditInput {
   table: string;
   segment_id?: string;

@@ -73,6 +73,11 @@ type RunInput struct {
 	State       json.RawMessage      // AG-UI `state`: client state folded into the prompt, read-only
 	ClientTools []ClientTool         // AG-UI `tools`: client-executed tools bound for this turn only
 
+	// Tools, when not nil, are the only tools of the turn (built-in names):
+	// no case tools, no skills, no deferred (MCP) tools. The extraction turns
+	// of the pipeline run with the arithmetic and JSON tools only (§6.9.3).
+	Tools []string
+
 	// preSaved is a user message that is already stored (one accepted while a
 	// turn was running); the turn answers it instead of storing it again.
 	preSaved *types.Message
@@ -270,10 +275,16 @@ func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink ev
 
 	// 3. Retrieve skills relevant to the conversation (not just this message).
 	retrievalQuery := strings.TrimSpace(in.UserText + "\n" + sess.Summary)
-	matches := a.skills.Retrieve(ctx, retrievalQuery, a.acfg.SkillTopK)
+	var matches []postgres.SkillMatch
+	if in.Tools == nil {
+		matches = a.skills.Retrieve(ctx, retrievalQuery, a.acfg.SkillTopK)
+	}
 	skillRefs := make([]prompt.SkillRef, 0, len(matches))
 	skillSlugs := make([]string, 0, len(matches))
 	toolSess := a.tools.NewSession()
+	if in.Tools != nil {
+		toolSess.Only(in.Tools...)
+	}
 	// Tools an earlier turn loaded via tool_search stay loaded; a retrieved
 	// skill's allowed_tools are loaded up front, no search needed.
 	toolSess.Restore(einoHistory)
@@ -298,7 +309,7 @@ func (a *Agent) runTurn(ctx context.Context, ar *activeRun, in RunInput, sink ev
 		}
 	}
 	var caseInfo *prompt.CaseInfo
-	if scope, ok := sessionCaseScope(sess, in.User.ID); ok && a.knowledge != nil {
+	if scope, ok := sessionCaseScope(sess, in.User.ID); ok && a.knowledge != nil && in.Tools == nil {
 		// The case tools are bound even when the case was deleted meanwhile:
 		// they then answer that the case no longer exists (§8.1).
 		caseInfo = a.knowledge.DescribeCase(ctx, in.User.ID, scope.CaseID)
@@ -523,12 +534,13 @@ func runDetail(stopReason string, maxTokens int, temperature *float32, blocks []
 }
 
 // turnCaller attributes the model calls of a turn (§8.5): to the user, the
-// session's case, and kind sheet for the hidden turn that fills a case sheet.
+// session's case, and kind parse for the hidden turn that extracts the fields
+// of a document while its file is processed.
 func turnCaller(in RunInput) llm.Caller {
 	uid := in.User.ID
 	c := llm.Caller{UserID: &uid, CaseID: in.Session.CaseID, Kind: types.UsageChat}
-	if _, ok := in.Session.Metadata["sheet_id"]; ok {
-		c.Kind = types.UsageSheet
+	if _, ok := in.Session.Metadata[types.SessionExtract]; ok {
+		c.Kind = types.UsageParse
 	}
 	return c
 }

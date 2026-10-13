@@ -17,14 +17,14 @@ import (
 // SheetsRepo persists case sheets and the corrections made on them (§6.9.6).
 type SheetsRepo struct{ pool *pgxpool.Pool }
 
-const sheetCols = `s.id, s.case_id, s.template_id, s.template_version, COALESCE(t.name, ''), s.name, s.status, s.filled, s.total,
-	s.rows, s.error, s.created_by, s.created_at, s.updated_at, s.tables`
+const sheetCols = `s.id, s.case_id, s.name, s.status, s.filled, s.total,
+	s.rows, s.error, s.created_by, s.created_at, s.updated_at, s.tables, s.columns`
 
 func scanSheet(row pgx.Row) (types.Sheet, error) {
 	var s types.Sheet
-	var rows []byte
-	err := row.Scan(&s.ID, &s.CaseID, &s.TemplateID, &s.TemplateVersion, &s.TemplateName, &s.Name, &s.Status, &s.Filled, &s.Total,
-		&rows, &s.Error, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &s.Tables)
+	var rows, cols []byte
+	err := row.Scan(&s.ID, &s.CaseID, &s.Name, &s.Status, &s.Filled, &s.Total,
+		&rows, &s.Error, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &s.Tables, &cols)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -34,6 +34,20 @@ func scanSheet(row pgx.Row) (types.Sheet, error) {
 	s.Rows = decodeRows(rows)
 	if len(s.Tables) == 0 {
 		s.Tables = []string{""} // a 0.16 sheet: one sub-table without label
+	}
+	// The sub-tables of the sheet, in order; a sheet made from a template
+	// carries every table of the template and keeps the chosen ones.
+	var all []types.SheetTable
+	_ = json.Unmarshal(cols, &all)
+	want := map[string]bool{}
+	for _, l := range s.Tables {
+		want[l] = true
+	}
+	s.Columns = []types.SheetTable{}
+	for _, t := range all {
+		if want[t.Label] {
+			s.Columns = append(s.Columns, t)
+		}
 	}
 	return s, nil
 }
@@ -74,8 +88,12 @@ func (r *SheetsRepo) Create(ctx context.Context, s types.Sheet) (types.Sheet, er
 	if s.Tables == nil {
 		s.Tables = []string{}
 	}
-	err := r.pool.QueryRow(ctx, `INSERT INTO case_sheets (case_id, template_id, template_version, name, total, created_by, tables)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, s.CaseID, s.TemplateID, s.TemplateVersion, cleanText(s.Name), s.Total, s.CreatedBy, s.Tables).Scan(&id)
+	cols, err := cleanJSON(s.Columns)
+	if err != nil {
+		return types.Sheet{}, err
+	}
+	err = r.pool.QueryRow(ctx, `INSERT INTO case_sheets (case_id, name, total, created_by, tables, columns)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, s.CaseID, cleanText(s.Name), s.Total, s.CreatedBy, s.Tables, cols).Scan(&id)
 	if err != nil {
 		return types.Sheet{}, fmt.Errorf("sheets.Create: %w", err)
 	}
@@ -84,14 +102,12 @@ func (r *SheetsRepo) Create(ctx context.Context, s types.Sheet) (types.Sheet, er
 
 // Get returns a sheet.
 func (r *SheetsRepo) Get(ctx context.Context, id uuid.UUID) (types.Sheet, error) {
-	return scanSheet(r.pool.QueryRow(ctx, `SELECT `+sheetCols+` FROM case_sheets s
-		LEFT JOIN prompt_templates t ON t.id = s.template_id WHERE s.id = $1`, id))
+	return scanSheet(r.pool.QueryRow(ctx, `SELECT `+sheetCols+` FROM case_sheets s WHERE s.id = $1`, id))
 }
 
 // ListByCase returns the sheets of a case, newest first.
 func (r *SheetsRepo) ListByCase(ctx context.Context, caseID uuid.UUID) ([]types.Sheet, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+sheetCols+` FROM case_sheets s
-		LEFT JOIN prompt_templates t ON t.id = s.template_id WHERE s.case_id = $1 ORDER BY s.created_at DESC`, caseID)
+	rows, err := r.pool.Query(ctx, `SELECT `+sheetCols+` FROM case_sheets s WHERE s.case_id = $1 ORDER BY s.created_at DESC`, caseID)
 	if err != nil {
 		return nil, fmt.Errorf("sheets.ListByCase: %w", err)
 	}
@@ -129,6 +145,13 @@ func (r *SheetsRepo) SetProgress(ctx context.Context, id uuid.UUID, status strin
 	return err
 }
 
+// Delete removes one sheet; its corrections go with it (cascade). The
+// extracted fields belong to the case and stay.
+func (r *SheetsRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM case_sheets WHERE id = $1`, id)
+	return err
+}
+
 // DeleteByCase removes the sheets of a deleted case.
 func (r *SheetsRepo) DeleteByCase(ctx context.Context, caseID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM case_sheets WHERE case_id = $1`, caseID)
@@ -139,7 +162,7 @@ func (r *SheetsRepo) DeleteByCase(ctx context.Context, caseID uuid.UUID) error {
 // the value differs from the AI's, the correction to record.
 type SheetEdit struct {
 	Row        int    // index in Sheet.Rows
-	Key        string // column key of the cell (Field.Key may carry the sub-table's label)
+	Key        string // column key of the cell (Field.Key carries the sub-table's label on a file row)
 	Field      FieldWrite
 	Correction *types.Correction
 }
@@ -153,8 +176,7 @@ func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []S
 		return types.Sheet{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	sh, err := scanSheet(tx.QueryRow(ctx, `SELECT `+sheetCols+` FROM case_sheets s
-		LEFT JOIN prompt_templates t ON t.id = s.template_id WHERE s.id = $1 FOR UPDATE OF s`, sheetID))
+	sh, err := scanSheet(tx.QueryRow(ctx, `SELECT `+sheetCols+` FROM case_sheets s WHERE s.id = $1 FOR UPDATE OF s`, sheetID))
 	if err != nil {
 		return types.Sheet{}, err
 	}
@@ -181,9 +203,9 @@ func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []S
 		}
 		if c := e.Correction; c != nil {
 			id := f.ID
-			if _, err := tx.Exec(ctx, `INSERT INTO field_corrections (sheet_id, template_id, template_version, key, ai_field_id, user_field_id,
-				ai_value_text, user_value_text, origin, user_id, label, segment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-				sheetID, sh.TemplateID, sh.TemplateVersion, key, c.AIFieldID, &id, cleanText(c.AIValueText), cleanText(c.UserValueText), c.Origin, c.UserID,
+			if _, err := tx.Exec(ctx, `INSERT INTO field_corrections (sheet_id, key, ai_field_id, user_field_id,
+				ai_value_text, user_value_text, origin, user_id, label, segment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+				sheetID, key, c.AIFieldID, &id, cleanText(c.AIValueText), cleanText(c.UserValueText), c.Origin, c.UserID,
 				label, e.Field.SegmentID); err != nil {
 				return types.Sheet{}, fmt.Errorf("sheets.SaveEdits correction: %w", err)
 			}
@@ -200,40 +222,6 @@ func (r *SheetsRepo) SaveEdits(ctx context.Context, sheetID uuid.UUID, edits []S
 		return types.Sheet{}, err
 	}
 	return r.Get(ctx, sheetID)
-}
-
-// CorrectionStats counts, per sub-table, field and template version, how many
-// documents had the field and how many of them users corrected (§6.9.6).
-func (r *SheetsRepo) CorrectionStats(ctx context.Context, templateID uuid.UUID) ([]types.CorrectionStat, error) {
-	rows, err := r.pool.Query(ctx, `
-		WITH used AS (
-			SELECT s.template_version AS version, COALESCE(r->>'table', '') AS label, c.key, count(*) AS docs
-			FROM case_sheets s, jsonb_array_elements(s.rows) r, jsonb_object_keys(COALESCE(r->'cells', '{}')) c(key)
-			WHERE s.template_id = $1 AND s.status = 'done' GROUP BY 1, 2, 3
-		), fixed AS (
-			SELECT template_version AS version, label, key, count(DISTINCT (sheet_id, segment_id)) AS edited,
-			       (array_agg(ai_value_text || ' → ' || user_value_text ORDER BY created_at DESC))[1:3] AS examples
-			FROM field_corrections WHERE template_id = $1 AND NOT reverted GROUP BY 1, 2, 3
-		)
-		SELECT u.label, u.key, u.version, u.docs, COALESCE(f.edited, 0), COALESCE(f.examples, '{}')
-		FROM used u LEFT JOIN fixed f ON f.version = u.version AND f.label = u.label AND f.key = u.key
-		ORDER BY u.version DESC, COALESCE(f.edited, 0)::float / u.docs DESC, u.label, u.key`, templateID)
-	if err != nil {
-		return nil, fmt.Errorf("sheets.CorrectionStats: %w", err)
-	}
-	defer rows.Close()
-	out := []types.CorrectionStat{}
-	for rows.Next() {
-		var s types.CorrectionStat
-		if err := rows.Scan(&s.Label, &s.Key, &s.Version, &s.Sheets, &s.Edited, &s.Examples); err != nil {
-			return nil, err
-		}
-		if s.Sheets > 0 {
-			s.Rate = float64(s.Edited) / float64(s.Sheets)
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
 }
 
 // UsageRepo records the cost of model calls (§8.5).

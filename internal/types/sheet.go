@@ -78,50 +78,51 @@ type FieldInput struct {
 
 // Prompt template kinds and statuses (§8.4).
 const (
-	TemplateChat  = "chat"
-	TemplateSheet = "sheet"
+	TemplateChat = "chat"
 
 	TemplateDraft     = "draft"
 	TemplatePublished = "published"
 	TemplateArchived  = "archived"
 )
 
-// SheetField is one column of a sheet sub-table.
+// SheetField is one field of a document type (§6.9.3): a value the pipeline
+// extracts and one column of the type's sheet.
 type SheetField struct {
 	Key       string `json:"key"`
 	Label     string `json:"label"`
 	ValueType string `json:"value_type,omitempty"`
+	// Description guides the agent when it extracts the field (U81).
+	Description string `json:"description,omitempty"`
 }
 
-// SheetTable is one sub-table of a sheet template (U48): the fields of one
-// document type. Label is a classification label; "" means one row per file.
+// SheetTable is one sub-table of a sheet (§6.9.6): the fields of one document
+// type of the KB. Label is the code of the type; "" is the single table of a
+// sheet made before 0.17 (one row per file).
 type SheetTable struct {
-	Label  string       `json:"label"`
-	Title  string       `json:"title"`
-	Fields []SheetField `json:"fields"`
+	Label       string       `json:"label"`
+	Title       string       `json:"title"`
+	Description string       `json:"description,omitempty"`
+	Fields      []SheetField `json:"fields"`
 }
 
-// PromptTemplate is a prompt preset (kind chat) or a sheet template (kind
-// sheet). Body and Fields are those of the version asked for (the published
-// one unless said otherwise).
+// PromptTemplate is a chat prompt preset (§8.4). Body is that of the version
+// asked for (the published one unless said otherwise).
 type PromptTemplate struct {
-	ID             uuid.UUID    `json:"id"`
-	Kind           string       `json:"kind"`
-	Slug           string       `json:"slug"`
-	Name           string       `json:"name"`
-	Description    string       `json:"description"`
-	CaseType       string       `json:"case_type,omitempty"`
-	Status         string       `json:"status"`
-	CurrentVersion int          `json:"current_version"`
-	LatestVersion  int          `json:"latest_version"`
-	Version        int          `json:"version"`
-	Body           string       `json:"body,omitempty"`
-	Fields         []SheetField `json:"fields,omitempty"` // 0.16 templates; Tables supersedes it
-	Tables         []SheetTable `json:"tables,omitempty"`
-	CreatedBy      uuid.UUID    `json:"created_by"`
-	CreatedByName  string       `json:"created_by_name,omitempty"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	ID             uuid.UUID `json:"id"`
+	Kind           string    `json:"kind"`
+	Slug           string    `json:"slug"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	CaseType       string    `json:"case_type,omitempty"`
+	Status         string    `json:"status"`
+	CurrentVersion int       `json:"current_version"`
+	LatestVersion  int       `json:"latest_version"`
+	Version        int       `json:"version"`
+	Body           string    `json:"body,omitempty"`
+	CreatedBy      uuid.UUID `json:"created_by"`
+	CreatedByName  string    `json:"created_by_name,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Sheet statuses (§6.9.6).
@@ -133,8 +134,8 @@ const (
 )
 
 // SheetRow is one row of a sheet sub-table as captured when the sheet was
-// built: one document (a reviewed segment, or a whole file for a sub-table
-// without label), its bundle and one cell per field of the sub-table.
+// built: one document (a segment of a file; a whole file on sheets made
+// before 0.25), its bundle and one cell per field of the sub-table.
 type SheetRow struct {
 	Table      string               `json:"table"`
 	Bundle     string               `json:"bundle,omitempty"`
@@ -156,58 +157,44 @@ type SheetCell struct {
 	Note        string     `json:"note,omitempty"`
 }
 
-// Sheet is a case sheet (§6.9.6).
+// Sheet is a case sheet (§6.9.6). Columns are the document types and fields
+// of the KB as they were when the sheet was made, one per chosen sub-table.
 type Sheet struct {
-	ID              uuid.UUID  `json:"id"`
-	CaseID          uuid.UUID  `json:"case_id"`
-	TemplateID      uuid.UUID  `json:"template_id"`
-	TemplateVersion int        `json:"template_version"`
-	TemplateName    string     `json:"template_name,omitempty"`
-	Name            string     `json:"name"`
-	Status          string     `json:"status"`
-	Filled          int        `json:"filled"`
-	Total           int        `json:"total"`
-	Tables          []string   `json:"tables"`
-	Rows            []SheetRow `json:"rows"`
-	Error           string     `json:"error,omitempty"`
-	CreatedBy       uuid.UUID  `json:"created_by"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID        uuid.UUID    `json:"id"`
+	CaseID    uuid.UUID    `json:"case_id"`
+	Name      string       `json:"name"`
+	Status    string       `json:"status"`
+	Filled    int          `json:"filled"`
+	Total     int          `json:"total"`
+	Tables    []string     `json:"tables"`
+	Columns   []SheetTable `json:"columns"`
+	Rows      []SheetRow   `json:"rows"`
+	Error     string       `json:"error,omitempty"`
+	CreatedBy uuid.UUID    `json:"created_by"`
+	CreatedAt time.Time    `json:"created_at"`
+	UpdatedAt time.Time    `json:"updated_at"`
 }
 
 // Correction is one AI value a user changed on a sheet (§6.9.6).
 type Correction struct {
-	SheetID         uuid.UUID
-	TemplateID      uuid.UUID
-	TemplateVersion int
-	Label           string
-	SegmentID       *uuid.UUID
-	Key             string
-	AIFieldID       *uuid.UUID
-	UserFieldID     *uuid.UUID
-	AIValueText     string
-	UserValueText   string
-	Origin          string // page | xlsx
-	UserID          uuid.UUID
+	AIFieldID     *uuid.UUID
+	AIValueText   string
+	UserValueText string
+	Origin        string // page | xlsx
+	UserID        uuid.UUID
 }
 
-// CorrectionStat is the error rate of one field of a template version.
-type CorrectionStat struct {
-	Label    string   `json:"label"`
-	Key      string   `json:"key"`
-	Version  int      `json:"version"`
-	Sheets   int      `json:"sheets"`
-	Edited   int      `json:"edited"`
-	Rate     float64  `json:"rate"`
-	Examples []string `json:"examples,omitempty"`
-}
-
-// Usage kinds (§8.5).
+// Usage kinds (§8.5). UsageSheet is only on events recorded before 0.25,
+// when a sheet ran its own agent turns.
 const (
 	UsageChat  = "chat"
 	UsageSheet = "sheet"
 	UsageParse = "parse"
 )
+
+// SessionExtract is the metadata key of the hidden session of an extraction
+// turn (§6.9.3); its value is the document id.
+const SessionExtract = "extract_document_id"
 
 // UsageEvent is the cost of one model call.
 type UsageEvent struct {

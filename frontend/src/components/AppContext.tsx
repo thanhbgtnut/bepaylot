@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { settings } from "../api/client";
 import { createKB, listCases, listEngines, listKBs, updateKB } from "../api/endpoints";
-import type { Case, ClassLabel, EngineInfo, KnowledgeBase } from "../api/types";
+import type { Case, ClassLabel, DocType, EngineInfo, KnowledgeBase } from "../api/types";
 import { SettingsDialog, type SettingsTab } from "./SettingsDialog";
 import { useToast } from "./toast";
 import { toCode, uniqueCode } from "../lib/format";
@@ -23,7 +24,8 @@ interface AppState {
   selectCase: (id: string) => void;
   reloadCases: () => Promise<Case[]>;
   updateKBLocal: (kb: KnowledgeBase) => void;
-  // Settings opens on a tab: account, keys (key & cost), users (admin), server.
+  // account and keys (key & cost) open the "Thông tin" dialog; doctypes and
+  // users (admin) open that tab of the "Cài đặt" page.
   openSettings: (tab?: SettingsTab) => void;
   openCreateKB: () => void;
   openEditKB: (kb: KnowledgeBase) => void;
@@ -34,12 +36,13 @@ export const useApp = () => useContext(Ctx);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const { fail } = useToast();
+  const nav = useNavigate();
   const [kbs, setKBs] = useState<KnowledgeBase[]>([]);
   const [kbId, setKbId] = useState(settings.kb);
   const [loadingKBs, setLoading] = useState(true);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [connError, setConnError] = useState("");
-  const [showSettings, setShowSettings] = useState<SettingsTab | null>(null);
+  const [showSettings, setShowSettings] = useState<"account" | "keys" | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editKB, setEditKB] = useState<KnowledgeBase | null>(null);
 
@@ -109,7 +112,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectCase: setCaseId,
     reloadCases,
     updateKBLocal: (kb) => setKBs((xs) => xs.map((x) => (x.id === kb.id ? kb : x))),
-    openSettings: (tab) => setShowSettings(tab ?? "account"),
+    openSettings: (tab = "account") => (tab === "account" || tab === "keys" ? setShowSettings(tab) : nav("/settings/" + tab)),
     openCreateKB: () => setShowCreate(true),
     openEditKB: setEditKB,
   };
@@ -118,14 +121,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       {showSettings && (
-        <SettingsDialog
-          tab={showSettings}
-          onClose={() => setShowSettings(null)}
-          onSaved={() => {
-            setShowSettings(null);
-            reloadKBs();
-          }}
-        />
+        <SettingsDialog tab={showSettings} onClose={() => setShowSettings(null)} />
       )}
       {showCreate && (
         <KBDialog
@@ -172,19 +168,23 @@ function KBDialog({
   const [engine, setEngine] = useState(kb?.config.parser_engine ?? "");
   // auto: a type added here, whose code follows its name (U65); a saved type
   // keeps its code, the pages already classified carry it.
-  const [docTypes, setDocTypes] = useState<(ClassLabel & { auto?: boolean })[]>(kb?.config.doc_types ?? []);
+  const [docTypes, setDocTypes] = useState<(DocType & { auto?: boolean })[]>(kb?.config.doc_types ?? []);
   const [busy, setBusy] = useState(false);
   // A second click lands before `busy` disables the button; the ref stops it
   // from sending the request twice.
   const sending = useRef(false);
-  const setType = (i: number, patch: Partial<ClassLabel>) => setDocTypes((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+  // The list always ends with one empty row (i === docTypes.length): typing
+  // in it adds the type and the next empty row appears, so there is no "add"
+  // button.
+  const withRow = (xs: (DocType & { auto?: boolean })[], i: number) => (i >= xs.length ? [...xs, { name: "", title: "", auto: true }] : xs);
+  const setType = (i: number, patch: Partial<ClassLabel>) => setDocTypes((xs) => withRow(xs, i).map((x, k) => (k === i ? { ...x, ...patch } : x)));
   const setTitle = (i: number, title: string) =>
     setDocTypes((xs) =>
-      xs.map((x, k) => {
+      withRow(xs, i).map((x, k, all) => {
         if (k !== i) return x;
         if (!x.auto) return { ...x, title };
         const c = toCode(title);
-        const taken = ["other", "unknown", ...xs.filter((_, j) => j !== i).map((y) => y.name)];
+        const taken = ["other", "unknown", ...all.filter((_, j) => j !== i).map((y) => y.name)];
         return { ...x, title, name: c ? uniqueCode(c, taken) : "" };
       }),
     );
@@ -192,9 +192,9 @@ function KBDialog({
     listEngines().then(setEngines, () => {});
   }, []);
   const submit = async () => {
-    if (!name.trim()) return onError(new Error("Nhập tên knowledge base"));
+    if (!name.trim()) return onError(new Error("Nhập tên thư viện"));
     const types = docTypes
-      .map((t) => ({ name: t.name.trim(), title: t.title.trim(), description: t.description?.trim() || undefined }))
+      .map((t) => ({ name: t.name.trim(), title: t.title.trim(), description: t.description?.trim() || undefined, fields: t.fields }))
       .filter((t) => t.name || t.title);
     if (types.some((t) => !/^[a-z0-9_][a-z0-9_-]*$/.test(t.name) || !t.title))
       return onError(new Error("Mỗi loại giấy tờ cần tên có chữ hoặc số (mã tự sinh từ tên)"));
@@ -214,7 +214,7 @@ function KBDialog({
   };
   return (
     <Modal
-      title={kb ? "Sửa knowledge base" : "Knowledge base mới"}
+      title={kb ? "Sửa thư viện" : "Thư viện mới"}
       icon={kb ? "edit" : "create_new_folder"}
       onClose={onClose}
       footer={
@@ -255,21 +255,24 @@ function KBDialog({
           Mỗi trang của file được phân loại theo ảnh vào các loại này; trang liền nhau cùng loại gom thành một giấy tờ trên cây hồ sơ.
           {kb && " Thay đổi áp dụng cho file tải lên hoặc xử lý lại sau khi lưu."}
         </span>
-        {docTypes.map((t, i) => (
+        {[...docTypes, null].map((t, i) => (
           <div key={i} className="flex items-center gap-2">
-            <input className="input w-36" value={t.title} onChange={(e) => setTitle(i, e.target.value)} placeholder="Tên, vd Hợp đồng" />
+            <input
+              className="input w-36"
+              value={t?.title ?? ""}
+              onChange={(e) => setTitle(i, e.target.value)}
+              placeholder={t ? "Tên loại" : docTypes.length ? "Loại tiếp theo…" : "Tên, vd Hợp đồng"}
+              aria-label={t ? `Tên loại giấy tờ ${i + 1}` : "Tên loại giấy tờ mới"}
+            />
             <span className="w-32 flex-none truncate font-mono text-xs text-muted" title="Mã tự sinh từ tên">
-              {t.name || "mã tự sinh"}
+              {t?.name || "mã tự sinh"}
             </span>
-            <input className="input min-w-0 flex-1" value={t.description ?? ""} onChange={(e) => setType(i, { description: e.target.value })} placeholder="Mô tả (tuỳ chọn)" />
-            <button className="btn-icon" title="Xoá loại" onClick={() => setDocTypes((xs) => xs.filter((_, k) => k !== i))}>
+            <input className="input min-w-0 flex-1" value={t?.description ?? ""} onChange={(e) => setType(i, { description: e.target.value })} placeholder="Mô tả (tuỳ chọn)" aria-label="Mô tả loại giấy tờ" />
+            <button className={"btn-icon " + (t ? "" : "invisible")} tabIndex={-1} title="Xoá loại" onClick={() => setDocTypes((xs) => xs.filter((_, k) => k !== i))}>
               <Icon name="close" size={18} />
             </button>
           </div>
         ))}
-        <button className="btn btn-text self-start" onClick={() => setDocTypes((xs) => [...xs, { name: "", title: "", auto: true }])}>
-          <Icon name="add" size={18} /> Thêm loại giấy tờ
-        </button>
       </div>
     </Modal>
   );

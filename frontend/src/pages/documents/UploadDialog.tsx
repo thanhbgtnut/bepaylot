@@ -105,7 +105,7 @@ export function UploadDialog({
       }
     >
       <p className="text-sm">
-        Vào knowledge base <b className="font-medium text-fg">{kb.name}</b>
+        Vào thư viện <b className="font-medium text-fg">{kb.name}</b>
       </p>
       <div className="grid grid-cols-[1.4fr_1fr] gap-2">
         <label className="field">

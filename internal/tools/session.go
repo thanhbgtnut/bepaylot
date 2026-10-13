@@ -77,6 +77,25 @@ func (s *Session) Pin(names ...string) {
 	}
 }
 
+// Only restricts the turn to the named built-in tools: nothing else is bound,
+// no deferred tool can be searched for and the case tools stay off. The
+// extraction turns of a sheet build use it (§6.9.3).
+func (s *Session) Only(names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keep := make(map[string]*Entry, len(names))
+	for _, n := range names {
+		if e, ok := s.builtin[n]; ok {
+			keep[n] = e
+		}
+	}
+	s.builtin, s.catalog, s.knowledge = keep, map[string]*Entry{}, map[string]*Entry{}
+	s.visible = make(map[string]struct{}, len(keep))
+	for n := range keep {
+		s.visible[n] = struct{}{}
+	}
+}
+
 // Discover makes deferred tools visible and returns the names that were
 // actually in the catalog.
 func (s *Session) Discover(names ...string) []string {
