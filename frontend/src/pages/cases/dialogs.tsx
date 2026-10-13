@@ -343,7 +343,7 @@ export function SheetTemplateDialog({
                   Xoá bảng con
                 </button>
               </div>
-              <div className="overflow-x-auto rounded-xl border border-line">
+              <div className="shrink-0 overflow-x-auto rounded-xl border border-line">
                 <table className="w-full min-w-130 text-[13px]">
                   <thead>
                     <tr className="bg-surface-2 text-left text-xs">
