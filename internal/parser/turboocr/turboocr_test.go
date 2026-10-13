@@ -59,11 +59,11 @@ func TestParsePageStreamsBodyAndQuery(t *testing.T) {
 	c := New(Config{BaseURL: srv.URL, Timeout: 5 * time.Second})
 	img := []byte("jpeg-bytes")
 	p, err := c.ParsePage(context.Background(), parser.PageImage{Body: bytes.NewReader(img), Size: int64(len(img)), Width: 10, Height: 20},
-		parser.PageOptions{Layout: true, ReadingOrder: true, Tables: true})
+		parser.PageOptions{Autorotate: true, Layout: true, ReadingOrder: true, Tables: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotQuery != "layout=1&reading_order=1&tables=1" || gotType != "application/octet-stream" || string(gotBody) != "jpeg-bytes" {
+	if gotQuery != "autorotate=1&layout=1&reading_order=1&tables=1" || gotType != "application/octet-stream" || string(gotBody) != "jpeg-bytes" {
 		t.Fatalf("query=%q type=%q body=%q", gotQuery, gotType, gotBody)
 	}
 	if p.Width != 10 || len(p.Lines) != 54 {

@@ -28,6 +28,9 @@ type PageImage struct {
 // PageOptions toggles optional engine features.
 type PageOptions struct {
 	Layout, ReadingOrder, Tables, Formulas bool
+	// Autorotate asks the OCR engine to turn a 90/180/270° page upright
+	// before reading it.
+	Autorotate bool
 	// Refine lets a refining engine (turboocr_vlm) transcribe layout regions
 	// with a VLM. The pipeline turns it off for pages whose PDF text layer is
 	// already good enough.

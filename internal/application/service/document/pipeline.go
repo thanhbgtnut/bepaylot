@@ -327,7 +327,7 @@ func (s *Service) renderImage(path string, opt pdf.RenderOptions, emit func(pdf.
 func (s *Service) engineOptions(refine bool) parser.PageOptions {
 	o := s.cfg.Parser.Engines.TurboOCR.Options
 	on := func(p *bool) bool { return p == nil || *p }
-	return parser.PageOptions{Layout: on(o.Layout), ReadingOrder: on(o.ReadingOrder), Tables: on(o.Tables), Formulas: o.Formulas, Refine: refine}
+	return parser.PageOptions{Autorotate: on(o.Autorotate), Layout: on(o.Layout), ReadingOrder: on(o.ReadingOrder), Tables: on(o.Tables), Formulas: o.Formulas, Refine: refine}
 }
 
 // ocr runs the OCR engine on one rendered page, merges the text layer and

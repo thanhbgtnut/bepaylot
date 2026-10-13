@@ -100,6 +100,7 @@ func (c *Client) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 			q.Set(k, "1")
 		}
 	}
+	flag("autorotate", opt.Autorotate)
 	flag("layout", opt.Layout)
 	flag("reading_order", opt.ReadingOrder)
 	flag("tables", opt.Tables)

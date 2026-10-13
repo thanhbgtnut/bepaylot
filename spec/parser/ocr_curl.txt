@@ -12,3 +12,12 @@ formulas	1	Nhận diện công thức → LaTeX (cần FORMULA_BACKEND đã load
 curl -X POST 'http://10.215.122.20:30189/ocr/raw?layout=1&reading_order=1&tables=1&formulas=1' \
   -H 'Content-Type: application/octet-stream' \
   --data-binary "@/path/to/image.jpg"
+
+
+Thông tin param truyền sang nếu dùng tích năng tương ứng. Nếu sử dụng tính năng thì giá trị =1, còn thì =0
+Các tham số tính năng (query param, mặc định đều = 0 / tắt)
+autorotate=1: tự xoay ảnh về đúng chiềuTrước khi OCR, model doc-orientation xác định trang đang lệch 0/90/180/270° rồi xoay lại cho thẳng để det + rec đọc đúng. API không trả về góc xoay, chỉ trả về kết quả OCR của ảnh đã xoay. 
+layout=1: phân tích bố cục trangChạy thêm model layout để nhận diện các vùng trên trang (tiêu đề, đoạn văn, bảng, công thức, hình, header/footer…). Response có thêm mảng layout gồm box và loại vùng. Nếu không bật thì chỉ có danh sách dòng chữ.
+reading_order=1: sắp xếp thứ tự đọcDựa vào các vùng layout để xếp chữ theo đúng thứ tự người đọc, ví dụ đọc hết cột trái rồi mới sang cột phải, thay vì chỉ sắp từ trên xuống, trái sang phải. Response có thêm mảng reading_order. Bật tham số này thì layout cũng tự bật theo.
+tables=1: nhận dạng bảngVới các vùng layout được xác định là bảng, hệ thống dựng lại cấu trúc hàng/cột/ô gộp và trả về bảng dạng HTML trong trường tables. Bật tham số này thì layout tự bật theo.
+formulas=1: nhận dạng công thức toánVới các vùng được xác định là công thức, hệ thống chuyển công thức sang LaTeX và trả về trong trường formulas. Bật tham số này thì layout tự bật theo.

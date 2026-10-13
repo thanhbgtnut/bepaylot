@@ -174,6 +174,7 @@ type TurboOCR struct {
 	BaseURL string        `yaml:"base_url"`
 	Timeout time.Duration `yaml:"timeout"`
 	Options struct {
+		Autorotate   *bool `yaml:"autorotate"`
 		Layout       *bool `yaml:"layout"`
 		ReadingOrder *bool `yaml:"reading_order"`
 		Tables       *bool `yaml:"tables"`

@@ -7,6 +7,8 @@
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
 >
+> Thay đổi trong 0.21 (U61): **parser tự xoay ảnh trang bị xoay**: request TurboOCR có thêm `autorotate=1` (bật mặc định, `parser.engines.turboocr.options.autorotate`), TurboOCR tự xoay trang lệch 90/180/270° về đúng chiều rồi mới đọc (§5.2).
+>
 > Thay đổi trong 0.21 (U59): **cột đầu của bảng Excel là loại tài liệu, cột theo cấu hình**
 > - Trên trang bảng và trong `.xlsx`, bảng con của một loại giấy tờ có **cột A = loại tài liệu** (tên loại đã phân loại), **cột B = Bộ**, từ cột C là các trường của mẫu bảng. Vẫn mỗi loại một sheet. Bảng con không có nhãn (loại case không phân loại) giữ cột A là File (§6.9.6, §7.6).
 > - **Không còn danh sách trường viết cứng** ở giao diện: mẫu bảng mới mở ra với một bảng con cho **mỗi loại tài liệu của case** (`doc_types` của KB, không có thì `classification.labels`), chưa có trường nào; cột do người soạn mẫu nhập. Trước đây KB có loại riêng (không trùng `hop_dong`/`hoa_don`/`bb_ban_giao`) nhận mẫu "phương án vay" một dòng mỗi file với cột đầu là tên file (§7.7).
@@ -146,6 +148,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U58 | Sửa phần **xử lý ngắt trang**: trong request Decision API phân loại thêm biến **`is_break`** (ví dụ `"page_role": {"type": "choice", "options": ["FIRST", "CONTINUATION", ...]}`) để xác định trang cần ngắt hay trang tiếp tục, đưa vào logic phân bộ. Mục đích: **một PDF nhiều trang cùng loại liên tục cũng được ngắt thành từng bộ tài liệu riêng biệt** | còn hiệu lực; làm rõ U50 (thay câu "hai giấy tờ cùng loại liền nhau ra một segment" của §6.9.4 bản 0.19) | §6.9.4, §9.2 (migration `0024`), §12 (N51) |
 | U59 | Sửa phần **xuất Excel**: **cột đầu tiên là loại tài liệu đã được phân loại**, các cột tiếp theo là trường thông tin, không phải cột đầu là tên file; **các cột theo cấu hình, không fix cứng**. (Chốt khi hỏi lại: cấu hình cột là **mẫu bảng** hiện có; vẫn **mỗi loại một sheet**; cột **Bộ chuyển sang cột B**) | còn hiệu lực; sửa U47, U48 (cột đầu); làm rõ U45 (mẫu bảng là nơi cấu hình cột) | §6.9.6, §7.6, §7.7, §12 (N52) |
 | U60 | Người quản trị **tạo mẫu Excel không phụ thuộc vào knowledge base** (lỗi gốc: tạo mẫu ở loại case `default` báo `table label "packing" is not a classification label of case type default`) | còn hiệu lực; làm rõ U45, U59 (nhãn bảng con của mẫu không còn bị đối chiếu với loại case/KB) | §6.9.6 |
+| U61 | Khi gọi parser, **tự động xử lý ảnh bị xoay** để đọc được thông tin (theo tham số `autorotate` trong `spec/parser/ocr_curl.txt`) | còn hiệu lực | §5.2, §11 |
 
 ## 1. Yêu cầu chung
 
@@ -511,10 +514,12 @@ Chuyển file (PDF, ảnh; giai đoạn 2 thêm DOCX/XLSX qua convert sang PDF) 
 Request (tham chiếu `spec/parser/ocr_curl.txt`):
 
 ```
-POST {turboocr.base_url}/ocr/raw?layout=1&reading_order=1&tables=1&formulas=1
+POST {turboocr.base_url}/ocr/raw?autorotate=1&layout=1&reading_order=1&tables=1&formulas=1
 Content-Type: application/octet-stream
 Body: <bytes ảnh trang, JPEG>
 ```
+
+`autorotate=1` (U61): TurboOCR tự xác định trang lệch 0/90/180/270° và xoay về đúng chiều trước khi đọc. API **không trả góc xoay**; text, bbox và layout trả về là của **ảnh đã xoay**, còn ảnh trang hệ thống lưu vẫn là ảnh gốc.
 
 Response (tham chiếu `spec/parser/output_example.json`):
 
@@ -820,7 +825,7 @@ Golden test: một PDF/A-2u mẫu gồm một trang sinh từ Word và một tra
 **Mục đích.** TurboOCR cho text, dòng, bbox và layout tốt, nhưng text có thể sai dấu, sai số hoặc dính chữ trên bản scan xấu. Một VLM chuyên OCR (mặc định `allenai/olmocr-2-7b`) đọc chính xác hơn nhưng không trả vị trí, và markdown nó trả có thể **sai hoặc thiếu**. Engine `turboocr_vlm` kết hợp cả hai: **vị trí lấy từ TurboOCR, nội dung lấy từ markdown của VLM, và text TurboOCR dùng để kiểm markdown**. Tra cứu theo trang/dòng/bbox vẫn tường minh (§5.6).
 
 **Hai bước, không gọi theo layout (U38).** Engine không cắt ảnh theo vùng, không ghép ảnh, không gọi riêng tiêu đề/bảng. Mỗi trang chỉ có:
-1. **Bóc tách bằng TurboOCR**: `POST /ocr/raw?layout=1&reading_order=1&tables=1` → dòng (text, confidence, box, `layout_id`), vùng layout, thứ tự đọc, HTML bảng.
+1. **Bóc tách bằng TurboOCR**: `POST /ocr/raw?autorotate=1&layout=1&reading_order=1&tables=1` → dòng (text, confidence, box, `layout_id`), vùng layout, thứ tự đọc, HTML bảng.
 2. **Một lần gọi VLM cho cả trang** để lấy markdown. Prompt gửi kèm **text TurboOCR của trang** làm ngữ cảnh kiểm tra.
 
 Số lần gọi VLM = số trang (trừ trang bỏ qua VLM vì có text layer tốt).
@@ -828,7 +833,7 @@ Số lần gọi VLM = số trang (trừ trang bỏ qua VLM vì có text layer t
 **Luồng một trang** (task `page:ocr`, package `internal/parser/vlm`):
 
 ```
-ảnh trang (S3) ──► (1) TurboOCR /ocr/raw?layout=1&reading_order=1&tables=1
+ảnh trang (S3) ──► (1) TurboOCR /ocr/raw?autorotate=1&layout=1&reading_order=1&tables=1
                      │  lines (text, conf, box) + regions (layout) + reading_order
                      ▼
                ngữ cảnh OCR: các dòng theo thứ tự đọc, dòng trống giữa hai vùng,
@@ -2613,7 +2618,7 @@ parser:
     turboocr:
       base_url: ${TURBOOCR_URL}     # vd http://10.215.122.20:30189
       timeout: 120s
-      options: { layout: true, reading_order: true, tables: true, formulas: false }
+      options: { autorotate: true, layout: true, reading_order: true, tables: true, formulas: false }
       breaker: { failures: 5, open_for: 30s }
     vlm:                            # engine turboocr_vlm (§5.9): TurboOCR rồi 1 lần gọi VLM/trang, qua agent, streaming
       provider: ${BEPAYLOT_VLM_PROVIDER}   # tên trong llm.providers; rỗng + llm.providers.vlm.base_url = "vlm"

@@ -219,7 +219,7 @@ parser:
     turboocr:
       base_url: ${TURBOOCR_URL}     # e.g. http://10.215.122.20:30189
       timeout: 120s
-      options: { layout: true, reading_order: true, tables: true, formulas: false }
+      options: { autorotate: true, layout: true, reading_order: true, tables: true, formulas: false }
       breaker: { failures: 5, open_for: 30s }
     # turboocr_vlm, two steps per page (§5.9): (1) TurboOCR reads lines,
     # boxes and layout; (2) ONE vision-model call per page (through the agent,
