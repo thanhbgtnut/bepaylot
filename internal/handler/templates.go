@@ -170,8 +170,13 @@ func (h *Handlers) CreateTemplate(ctx context.Context, c *app.RequestContext) {
 		h.unprocessable(c, msg)
 		return
 	}
-	t, err := h.Store.Templates.Create(ctx, postgres.TemplateDraft{Kind: req.Kind, Slug: req.Slug, Name: req.Name, Description: req.Description,
-		CaseType: req.CaseType, Body: req.Body, Tables: tables, By: u.ID})
+	draft := postgres.TemplateDraft{Kind: req.Kind, Slug: req.Slug, Name: req.Name, Description: req.Description,
+		CaseType: req.CaseType, Body: req.Body, Tables: tables, By: u.ID}
+	t, err := h.Store.Templates.Create(ctx, draft)
+	if errors.Is(err, postgres.ErrSlugTaken) { // templates are independent: a taken slug gets a suffix, it never blocks a new one
+		draft.Slug = req.Slug[:min(len(req.Slug), 54)] + "_" + uuid.NewString()[:8]
+		t, err = h.Store.Templates.Create(ctx, draft)
+	}
 	if errors.Is(err, postgres.ErrSlugTaken) {
 		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", err.Error()))
 		return

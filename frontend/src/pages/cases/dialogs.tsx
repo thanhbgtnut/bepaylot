@@ -5,25 +5,14 @@ import { canEditPrompts, type ClassLabel, type CorrectionStat, type PromptTempla
 import { useAuth } from "../../components/AuthContext";
 import { useToast } from "../../components/toast";
 import { Icon, Modal } from "../../components/ui";
+import { toCode, uniqueCode } from "../../lib/format";
 
 export interface ChatConfig {
   templateId: string; // "" = default agent
   custom?: string; // prompt editors only
 }
 
-const slug = (s: string) =>
-  (
-    s
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/đ/gi, "d")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, 40) || "mau"
-  ) +
-  "_" +
-  Math.random().toString(36).slice(2, 6);
+const slug = (s: string) => (toCode(s) || "mau") + "_" + Math.random().toString(36).slice(2, 6);
 
 const optCls = (on: boolean) => "flex cursor-pointer gap-3 rounded-xl border px-4 py-3 " + (on ? "border-accent bg-accent/5" : "border-line hover:bg-fg/4");
 
@@ -141,13 +130,23 @@ export function ChatConfigDialog({
   );
 }
 
-// Starting point for a first sheet template: one sub-table per document type
+// Starting point for a new sheet template: one sub-table per document type
 // of the case (the doc_types of its KB, else the labels of its case type),
-// else one table of a whole file. The columns are the template's own: no
+// else one table of a whole file. These are suggestions only: a template
+// names its own document types. The columns are the template's own: no
 // field is built in, the editor enters them.
 const DEFAULT_BODY =
   "Với mỗi giấy tờ được liệt kê (ref, loại, trang), bóc tách các trường còn thiếu. Đọc đúng các trang của giấy tờ, ghi bằng kb_save_fields với segment và citation_id của dòng gốc. Không tìm thấy thì không ghi và nêu lý do. Giá trị tính (tỷ lệ, tổng) phải ghi note cách tính.";
-const emptyField = (): SheetField => ({ key: "", label: "", value_type: "string" });
+// A field added in the dialog: its key follows the column label (U65). A
+// field of a saved version keeps its key, so the values already extracted
+// under it stay with the column.
+type NewField = SheetField & { auto?: boolean };
+const emptyField = (): NewField => ({ key: "", label: "", value_type: "string", auto: true });
+// Field keys need two characters or more.
+const keyOf = (label: string, taken: string[]) => {
+  const k = toCode(label);
+  return k ? uniqueCode(k.length < 2 ? k + "_1" : k, taken) : "";
+};
 function defaultSheet(labels: ClassLabel[]): { name: string; tables: SheetTable[] } {
   if (labels.length) return { name: "Bộ chứng từ", tables: labels.map((l) => ({ label: l.name, title: l.title, fields: [emptyField()] })) };
   return { name: "Bảng tổng hợp", tables: [{ label: "", title: "Tổng hợp", fields: [emptyField()] }] };
@@ -186,6 +185,7 @@ export function SheetTemplateDialog({
   const [active, setActive] = useState(0);
   const [stats, setStats] = useState<CorrectionStat[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [newType, setNewType] = useState("");
   const labelKey = labels.map((l) => l.name).join(",");
 
   useEffect(() => {
@@ -204,16 +204,48 @@ export function SheetTemplateDialog({
   const titleOf = (l: string) => labels.find((x) => x.name === l)?.title ?? (l ? l : "Cả file");
   const setFields = (fn: (fs: SheetField[]) => SheetField[]) => setTables((ts) => ts.map((t, i) => (i === active ? { ...t, fields: fn(t.fields) } : t)));
   const setField = (i: number, f: Partial<SheetField>) => setFields((xs) => xs.map((x, j) => (j === i ? { ...x, ...f } : x)));
+  const setLabel = (i: number, label: string) =>
+    setFields((xs) =>
+      xs.map((x: NewField, j) =>
+        j === i
+          ? {
+              ...x,
+              label,
+              key: x.auto
+                ? keyOf(
+                    label,
+                    xs.filter((_, k) => k !== i).map((y) => y.key),
+                  )
+                : x.key,
+            }
+          : x,
+      ),
+    );
   const unused = [...labels.map((l) => l.name), ""].filter((l) => !tables.some((t) => t.label === l));
-  const addTable = (l: string) => {
-    setTables((ts) => [...ts, { label: l, title: titleOf(l), fields: [{ key: "", label: "", value_type: "string" }] }]);
+  const addTable = (l: string, title = titleOf(l)) => {
+    setTables((ts) => [...ts, { label: l, title, fields: [emptyField()] }]);
     setActive(tables.length);
+  };
+  // A document type of the template's own: its code comes from the name. One
+  // the case also has (same code) uses the reviewed documents of that type.
+  const addType = () => {
+    const title = newType.trim();
+    let l = toCode(title) || "loai";
+    if (l === "other" || l === "unknown") l += "_1";
+    addTable(
+      uniqueCode(
+        l,
+        tables.map((t) => t.label),
+      ),
+      title,
+    );
+    setNewType("");
   };
   const publish = async () => {
     setBusy(true);
     try {
       const clean = tables
-        .map((t) => ({ ...t, fields: t.fields.filter((f) => f.key.trim() && f.label.trim()).map((f) => ({ ...f, key: f.key.trim() })) }))
+        .map((t) => ({ ...t, fields: t.fields.filter((f) => f.key && f.label.trim()).map((f) => ({ key: f.key, label: f.label.trim(), value_type: f.value_type })) }))
         .filter((t) => t.fields.length);
       let t: PromptTemplate;
       if (creating) t = await createTemplate({ kind: "sheet", slug: slug(name), name: name.trim(), case_type: caseType, body, tables: clean });
@@ -244,7 +276,7 @@ export function SheetTemplateDialog({
             Huỷ
           </button>
           {editor && (
-            <button className="btn" onClick={publish} disabled={busy || !name.trim() || !body.trim() || !tables.some((t) => t.fields.some((f) => f.key.trim()))}>
+            <button className="btn" onClick={publish} disabled={busy || !name.trim() || !body.trim() || !tables.some((t) => t.fields.some((f) => f.key))}>
               {creating ? "Tạo & phát hành" : `Lưu & phát hành v${(cur?.latest_version ?? 0) + 1}`}
             </button>
           )}
@@ -325,6 +357,19 @@ export function SheetTemplateDialog({
                 ))}
               </select>
             )}
+            <input
+              className="chip w-44"
+              value={newType}
+              onChange={(e) => setNewType(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && newType.trim() && addType()}
+              placeholder="+ Loại giấy tờ khác…"
+              aria-label="Thêm bảng con cho loại giấy tờ khác"
+            />
+            {newType.trim() && (
+              <button className="btn btn-text btn-sm" onClick={addType}>
+                Thêm
+              </button>
+            )}
           </div>
           {table && (
             <>
@@ -348,8 +393,8 @@ export function SheetTemplateDialog({
                   <thead>
                     <tr className="bg-surface-2 text-left text-xs">
                       <th className="px-3 py-2 font-medium">Cột</th>
-                      <th className="px-3 py-2 font-medium">Key</th>
-                      <th className="px-3 py-2 font-medium">Nhãn cột</th>
+                      <th className="px-3 py-2 font-medium">Tên cột</th>
+                      <th className="px-3 py-2 font-medium">Key (tự sinh)</th>
                       <th className="px-3 py-2 font-medium">Kiểu</th>
                       <th />
                     </tr>
@@ -359,11 +404,9 @@ export function SheetTemplateDialog({
                       <tr key={i} className="border-t border-line">
                         <td className="px-3 py-1 font-mono text-xs">{String.fromCharCode(66 + i)}</td>
                         <td className="px-2 py-1">
-                          <input className="w-full bg-transparent px-1 py-1 font-mono text-xs text-fg outline-none focus:bg-surface-2" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} />
+                          <input className="w-full bg-transparent px-1 py-1 text-fg outline-none focus:bg-surface-2" value={f.label} onChange={(e) => setLabel(i, e.target.value)} placeholder="VD: Số hoá đơn" />
                         </td>
-                        <td className="px-2 py-1">
-                          <input className="w-full bg-transparent px-1 py-1 text-fg outline-none focus:bg-surface-2" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} />
-                        </td>
+                        <td className="px-3 py-1 font-mono text-xs text-muted">{f.key || "—"}</td>
                         <td className="px-2 py-1">
                           <select className="bg-transparent text-fg" value={f.value_type || "string"} onChange={(e) => setField(i, { value_type: e.target.value })}>
                             {TYPES.map((t) => (
@@ -390,7 +433,7 @@ export function SheetTemplateDialog({
                           </>
                         )}{" "}
                         ·{" "}
-                        <button className="text-accent" onClick={() => setFields((xs) => [...xs, { key: "", label: "", value_type: "string" }])}>
+                        <button className="text-accent" onClick={() => setFields((xs) => [...xs, emptyField()])}>
                           + Thêm trường
                         </button>
                       </td>

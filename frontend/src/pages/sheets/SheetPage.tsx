@@ -395,7 +395,7 @@ function Grid({
               <td className={"sticky left-10 z-1 px-2.5 py-1.5 whitespace-nowrap text-fg " + td + rule + (table.label ? " " + typeCol : "")} title={`${row.file_name ?? ""} · ${pages(row.page_start, row.page_end)}`}>
                 {table.label ? table.title : row.file_name}
               </td>
-              {table.label && <td className={"sticky left-42 z-1 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg " + td + rule}>{row.bundle}</td>}
+              {table.label && <td className={"sticky left-42 z-1 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg " + td + rule}>{row.bundle || row.file_name}</td>}
               {table.fields.map((f) => {
                 const c = cells.get(cellId(table.label, rowId, f.key))!;
                 const cv = c.cv;

@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1
+#
+# Base build image for bepaylot. Built ONCE on a machine WITH internet access, then pushed
+# to the internal Harbor; the CI build (cicd/tanzu-dev/Dockerfile) starts FROM it and needs
+# no apt / npm / GitHub access — only the internal Nexus Go proxy for modules added later.
+#
+# Contents:
+#   - Go toolchain (version of go.mod) + gcc + pkg-config   (from the official golang image)
+#   - Node.js + npm                                          (to build frontend/)
+#   - libpdfium + headers + pdfium.pc in /opt/pdfium         (cgo pdfium-worker)
+#   - Go module cache pre-filled from go.mod / go.sum
+#   - frontend node_modules in /opt/frontend                 (from package-lock.json)
+#
+# Build from the repository root (linux/amd64, also on an ARM Mac):
+#   docker build --platform linux/amd64 -f cicd/tanzu-dev/Dockerfile.base \
+#     -t k8sdev.mbbank.com.vn/cicd-common/bepaylot-base:1.0.0 .
+#   docker push k8sdev.mbbank.com.vn/cicd-common/bepaylot-base:1.0.0
+#
+# Rebuild (and bump the tag) when: the Go version in go.mod changes, PDFIUM_VERSION changes,
+# or frontend/package-lock.json changes. New Go modules alone do not need a rebuild.
+
+ARG GO_IMAGE=golang:1.26-bookworm
+ARG NODE_IMAGE=node:22-bookworm-slim
+
+FROM ${NODE_IMAGE} AS node
+
+FROM ${GO_IMAGE}
+
+ARG PDFIUM_VERSION=chromium/7350
+ARG TARGETARCH
+
+# Node.js + npm, copied from the official image (no apt needed).
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && node --version && npm --version
+
+# libpdfium + pkg-config file, for the cgo pdfium-worker (prebuilt bblanchon/pdfium-binaries).
+RUN set -eux; \
+    case "$TARGETARCH" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) echo "unsupported arch $TARGETARCH"; exit 1 ;; esac; \
+    mkdir -p /opt/pdfium; \
+    curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_VERSION}/pdfium-linux-${arch}.tgz" | tar -xz -C /opt/pdfium; \
+    mkdir -p /usr/lib/pkgconfig; \
+    printf 'prefix=/opt/pdfium\nlibdir=/opt/pdfium/lib\nincludedir=/opt/pdfium/include\n\nName: PDFium\nDescription: PDFium\nVersion: 1\nLibs: -L/opt/pdfium/lib -lpdfium\nCflags: -I/opt/pdfium/include\n' > /usr/lib/pkgconfig/pdfium.pc; \
+    pkg-config --libs pdfium
+
+# Never try to download another Go toolchain in CI.
+ENV GOTOOLCHAIN=local
+
+# Go module cache.
+WORKDIR /opt/gomod
+COPY go.mod go.sum ./
+COPY docpipe/go.mod docpipe/go.sum ./docpipe/
+RUN go mod download
+
+# Frontend dependencies (the lock file is kept to detect drift in the CI build).
+WORKDIR /opt/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci && npm cache clean --force
+
+WORKDIR /

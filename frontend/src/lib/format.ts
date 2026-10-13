@@ -110,3 +110,25 @@ export function fmtMoney(n: number, currency = "VND") {
 }
 
 export const ROLE_LABEL: Record<string, string> = { admin: "Quản trị", prompt_editor: "Được đặt prompt", user: "Người dùng" };
+
+// Code of a Vietnamese name (U65): no diacritics, lower case, anything that is
+// not a letter or digit becomes one "_" ("Số hoá đơn" → "so_hoa_don"). Field
+// keys and document type codes are made this way, never typed.
+export const toCode = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40)
+    .replace(/_+$/, "");
+
+// toCode made unique among taken: so_hd, so_hd_2, so_hd_3…
+export const uniqueCode = (base: string, taken: string[]) => {
+  let c = base;
+  for (let i = 2; taken.includes(c); i++) c = base + "_" + i;
+  return c;
+};
+

@@ -109,6 +109,8 @@ func (s *Service) XLSX(ctx context.Context, owner, id uuid.UUID, tables []string
 			vals := []any{title, r.Bundle}
 			if tv.Label == "" {
 				vals = []any{r.FileName}
+			} else if r.SegmentID == nil { // a file row: no bundle, the file tells the rows apart
+				vals = []any{title, r.FileName}
 			}
 			for _, fd := range tv.Fields {
 				vals = append(vals, r.CellsView[fd.Key].Value)

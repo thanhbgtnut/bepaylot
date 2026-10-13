@@ -128,11 +128,12 @@ func (s *Service) Create(ctx context.Context, user types.User, caseID, templateI
 	if len(picked) == 0 {
 		return types.Sheet{}, ErrNoTables
 	}
+	known := s.knownLabels(ctx, c)
 	labels := make([]string, 0, len(picked))
 	needSplit := false
 	for _, tb := range picked {
 		labels = append(labels, tb.Label)
-		needSplit = needSplit || tb.Label != ""
+		needSplit = needSplit || known[tb.Label]
 	}
 	if needSplit && s.split != nil {
 		files, err := s.split.Unreviewed(ctx, c.ID)
@@ -177,13 +178,36 @@ func (s *Service) owned(ctx context.Context, owner, id uuid.UUID) (types.Sheet, 
 	return sh, c, nil
 }
 
+// knownLabels are the document types the case classifies its pages into (the
+// doc_types of its KB, else the labels of its case type). A sub-table of
+// another document type does not depend on them: it has one row per file and
+// the agent finds the document in the file (§6.9.6).
+func (s *Service) knownLabels(ctx context.Context, c types.Case) map[string]bool {
+	known := map[string]bool{}
+	for _, l := range s.cases.Classification(ctx, c).Labels {
+		known[l.Name] = true
+	}
+	return known
+}
+
 // slot identifies the field a cell shows: (document, segment, key).
 type slot struct {
 	doc, seg uuid.UUID
 	key      string
 }
 
+// fieldKey is the key the field of a cell is stored under: the column key,
+// prefixed with the sub-table's label on a file row of a labelled sub-table,
+// so two such sub-tables keep their own values for the same file.
+func fieldKey(r types.SheetRow, key string) string {
+	if r.Table != "" && r.SegmentID == nil {
+		return r.Table + "." + key
+	}
+	return key
+}
+
 func slotOf(r types.SheetRow, key string) slot {
+	key = fieldKey(r, key)
 	sl := slot{doc: r.DocumentID, key: key}
 	if r.SegmentID != nil {
 		sl.seg = *r.SegmentID
@@ -193,8 +217,9 @@ func slotOf(r types.SheetRow, key string) slot {
 
 // rowsOf lays out the rows of the chosen sub-tables (§6.9.6): one per
 // reviewed segment with the sub-table's label, by bundle then case order; a
-// sub-table without label has one row per indexed file.
-func (s *Service) rowsOf(ctx context.Context, owner, caseID uuid.UUID, tables []types.SheetTable) ([]types.SheetRow, map[uuid.UUID]string, error) {
+// sub-table without label, or of a document type the case does not classify
+// (not in known), has one row per indexed file.
+func (s *Service) rowsOf(ctx context.Context, owner, caseID uuid.UUID, tables []types.SheetTable, known map[string]bool) ([]types.SheetRow, map[uuid.UUID]string, error) {
 	docs, err := s.st.Segments.SplitDocs(ctx, caseID)
 	if err != nil {
 		return nil, nil, err
@@ -227,10 +252,10 @@ func (s *Service) rowsOf(ctx context.Context, owner, caseID uuid.UUID, tables []
 	var rows []types.SheetRow
 	for _, tb := range tables {
 		start := len(rows)
-		if tb.Label == "" {
+		if !known[tb.Label] {
 			for _, d := range docs {
 				if d.Seq > 0 {
-					rows = append(rows, types.SheetRow{Table: "", DocumentID: d.ID, FileName: d.FileName, PageStart: 1, PageEnd: d.PageCount})
+					rows = append(rows, types.SheetRow{Table: tb.Label, DocumentID: d.ID, FileName: d.FileName, PageStart: 1, PageEnd: d.PageCount})
 				}
 			}
 			continue
@@ -293,7 +318,11 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 	for _, tb := range tables {
 		byLabel[tb.Label] = tb
 	}
-	rows, refs, err := s.rowsOf(ctx, user.ID, sh.CaseID, tables)
+	c, err := s.st.Cases.Get(ctx, sh.CaseID)
+	if err != nil {
+		return fail(err)
+	}
+	rows, refs, err := s.rowsOf(ctx, user.ID, sh.CaseID, tables, s.knownLabels(ctx, c))
 	if err != nil {
 		return fail(err)
 	}
@@ -477,15 +506,25 @@ func sheetPrompt(body, bundle string, items []promptItem) string {
 	} else {
 		b.WriteString("\n\nCác file và trường cần bóc tách (key · nhãn · kiểu):\n")
 	}
+	find := false
 	for _, it := range items {
-		fmt.Fprintf(&b, "\n[%s] %s · %s · %s\n", it.ref, it.title, it.file, it.pages)
+		title := it.title
+		if it.row.Table != "" && it.row.SegmentID == nil { // a document type the case does not classify
+			title += " (tìm trong file)"
+			find = true
+		}
+		fmt.Fprintf(&b, "\n[%s] %s · %s · %s\n", it.ref, title, it.file, it.pages)
 		for _, f := range it.fields {
 			vt := f.ValueType
 			if vt == "" {
 				vt = "string"
 			}
-			fmt.Fprintf(&b, "- %s · %s · %s\n", f.Key, f.Label, vt)
+			fmt.Fprintf(&b, "- %s · %s · %s\n", fieldKey(it.row, f.Key), f.Label, vt)
 		}
+	}
+	if find {
+		b.WriteString("\nMục ghi \"(tìm trong file)\" chưa được tách sẵn: tìm giấy tờ thuộc loại đó trong file rồi mới bóc tách; " +
+			"file không có loại giấy tờ đó thì không ghi và nêu lý do.\n")
 	}
 	b.WriteString("\nCách làm: đọc đúng các trang của từng giấy tờ, rồi gọi kb_save_fields ngay (một lần cho các trường của cùng một giấy tờ, " +
 		"truyền segment là ref trong ngoặc vuông, ví dụ d2.s3; ref dạng d<n> là cả file thì truyền document_id), " +
@@ -512,7 +551,7 @@ func missingNotes(reply string, items []promptItem) map[slot]string {
 				continue
 			}
 			for _, f := range it.fields {
-				if r, ok := strings.CutPrefix(rest, f.Key); ok {
+				if r, ok := strings.CutPrefix(rest, fieldKey(it.row, f.Key)); ok {
 					if reason := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(r), ":`")); reason != "" {
 						out[slotOf(it.row, f.Key)] = textutil.Truncate(reason, 300)
 					}
@@ -711,7 +750,7 @@ func (s *Service) SaveEdits(ctx context.Context, user types.User, id uuid.UUID, 
 		if vt == "" {
 			vt = "string"
 		}
-		w := postgres.FieldWrite{CaseID: sh.CaseID, DocumentID: doc, SegmentID: seg, Key: e.Key, Value: value, ValueType: vt, ValueText: value,
+		w := postgres.FieldWrite{CaseID: sh.CaseID, DocumentID: doc, SegmentID: seg, Key: fieldKey(row, e.Key), Value: value, ValueType: vt, ValueText: value,
 			Confidence: 1, Status: types.FieldConfirmed, Source: types.FieldSourceUser, CreatedBy: &user.ID}
 		if cur != nil {
 			w.Evidence = cur.Evidence

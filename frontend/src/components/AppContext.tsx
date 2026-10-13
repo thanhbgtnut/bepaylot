@@ -5,6 +5,7 @@ import { createKB, listCases, listEngines, listKBs, updateKB } from "../api/endp
 import type { Case, ClassLabel, EngineInfo, KnowledgeBase } from "../api/types";
 import { SettingsDialog, type SettingsTab } from "./SettingsDialog";
 import { useToast } from "./toast";
+import { toCode, uniqueCode } from "../lib/format";
 import { Icon, Modal } from "./ui";
 
 interface AppState {
@@ -169,12 +170,24 @@ function KBDialog({
   const [name, setName] = useState(kb?.name ?? "");
   const [desc, setDesc] = useState(kb?.description ?? "");
   const [engine, setEngine] = useState(kb?.config.parser_engine ?? "");
-  const [docTypes, setDocTypes] = useState<ClassLabel[]>(kb?.config.doc_types ?? []);
+  // auto: a type added here, whose code follows its name (U65); a saved type
+  // keeps its code, the pages already classified carry it.
+  const [docTypes, setDocTypes] = useState<(ClassLabel & { auto?: boolean })[]>(kb?.config.doc_types ?? []);
   const [busy, setBusy] = useState(false);
   // A second click lands before `busy` disables the button; the ref stops it
   // from sending the request twice.
   const sending = useRef(false);
   const setType = (i: number, patch: Partial<ClassLabel>) => setDocTypes((xs) => xs.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+  const setTitle = (i: number, title: string) =>
+    setDocTypes((xs) =>
+      xs.map((x, k) => {
+        if (k !== i) return x;
+        if (!x.auto) return { ...x, title };
+        const c = toCode(title);
+        const taken = ["other", "unknown", ...xs.filter((_, j) => j !== i).map((y) => y.name)];
+        return { ...x, title, name: c ? uniqueCode(c, taken) : "" };
+      }),
+    );
   useEffect(() => {
     listEngines().then(setEngines, () => {});
   }, []);
@@ -184,7 +197,7 @@ function KBDialog({
       .map((t) => ({ name: t.name.trim(), title: t.title.trim(), description: t.description?.trim() || undefined }))
       .filter((t) => t.name || t.title);
     if (types.some((t) => !/^[a-z0-9_][a-z0-9_-]*$/.test(t.name) || !t.title))
-      return onError(new Error("Mỗi loại giấy tờ cần mã (chữ thường, số, _ hoặc -) và tên"));
+      return onError(new Error("Mỗi loại giấy tờ cần tên có chữ hoặc số (mã tự sinh từ tên)"));
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
@@ -244,15 +257,17 @@ function KBDialog({
         </span>
         {docTypes.map((t, i) => (
           <div key={i} className="flex items-center gap-2">
-            <input className="input w-32" value={t.name} onChange={(e) => setType(i, { name: e.target.value })} placeholder="Mã, vd hop_dong" />
-            <input className="input w-36" value={t.title} onChange={(e) => setType(i, { title: e.target.value })} placeholder="Tên, vd Hợp đồng" />
+            <input className="input w-36" value={t.title} onChange={(e) => setTitle(i, e.target.value)} placeholder="Tên, vd Hợp đồng" />
+            <span className="w-32 flex-none truncate font-mono text-xs text-muted" title="Mã tự sinh từ tên">
+              {t.name || "mã tự sinh"}
+            </span>
             <input className="input min-w-0 flex-1" value={t.description ?? ""} onChange={(e) => setType(i, { description: e.target.value })} placeholder="Mô tả (tuỳ chọn)" />
             <button className="btn-icon" title="Xoá loại" onClick={() => setDocTypes((xs) => xs.filter((_, k) => k !== i))}>
               <Icon name="close" size={18} />
             </button>
           </div>
         ))}
-        <button className="btn btn-text self-start" onClick={() => setDocTypes((xs) => [...xs, { name: "", title: "" }])}>
+        <button className="btn btn-text self-start" onClick={() => setDocTypes((xs) => [...xs, { name: "", title: "", auto: true }])}>
           <Icon name="add" size={18} /> Thêm loại giấy tờ
         </button>
       </div>
