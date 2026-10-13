@@ -20,18 +20,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser"
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf"
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf/pdftest"
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/llm"
-	"github.com/thanhenti/bepaylot/internal/parser"
-	"github.com/thanhenti/bepaylot/internal/parser/pdf"
-	"github.com/thanhenti/bepaylot/internal/parser/pdf/pdftest"
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/storage"
-	"github.com/thanhenti/bepaylot/internal/textutil"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
@@ -59,8 +59,10 @@ type Harness struct {
 type PageTypes struct {
 	mu     sync.Mutex
 	Labels []string
-	// Breaks[i] answers is_break for the i-th page (past the end = false).
-	Breaks []bool
+	// FirstPages[i] answers is_first_page for the i-th page (past the end =
+	// false). nil = a page is a first page when its type differs from the
+	// page classified before it.
+	FirstPages []bool
 	// Seen is the sha256 of every image asked about, in call order.
 	Seen  []string
 	calls int
@@ -75,7 +77,11 @@ func (p *PageTypes) ClassifyPage(_ context.Context, _ []types.ClassLabel, image 
 	if p.calls > len(p.Labels) || p.Labels[p.calls-1] == "" {
 		return "", 0, false, errors.New("decision api: scripted failure")
 	}
-	return p.Labels[p.calls-1], 0.95, p.calls <= len(p.Breaks) && p.Breaks[p.calls-1], nil
+	first := p.calls <= len(p.FirstPages) && p.FirstPages[p.calls-1]
+	if p.FirstPages == nil {
+		first = p.calls == 1 || p.Labels[p.calls-1] != p.Labels[p.calls-2]
+	}
+	return p.Labels[p.calls-1], 0.95, first, nil
 }
 
 var (

@@ -357,10 +357,10 @@ function Grid({
   const lead = table.label ? 2 : 1;
   const typeCol = "w-32 max-w-32 min-w-32 truncate";
   const widths = table.fields.map((f) =>
-    Math.min(34, Math.max(12, f.label.length + 2, ...table.rows.map((r) => (r.cells_view[f.key]?.value ?? "").length + 3))),
+    Math.min(60, Math.max(16, f.label.length + 2, ...table.rows.map((r) => (r.cells_view[f.key]?.value ?? "").length + 3))),
   );
   return (
-    <table className="border-separate border-spacing-0 text-[13px]">
+    <table className="w-max border-separate border-spacing-0 text-[13px]">
       <thead>
         <tr>
           <th className={head + " sticky left-0 z-3 w-10 min-w-10"} />

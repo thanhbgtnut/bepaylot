@@ -16,9 +16,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/metadata"
-	"github.com/thanhenti/bepaylot/internal/parser/pdf"
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"

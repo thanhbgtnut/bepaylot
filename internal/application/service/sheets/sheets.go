@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/queue"
-	"github.com/thanhenti/bepaylot/internal/textutil"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )

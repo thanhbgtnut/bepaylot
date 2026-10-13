@@ -16,10 +16,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/queue"
-	"github.com/thanhenti/bepaylot/internal/textutil"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
@@ -218,17 +218,12 @@ func (s *Service) buildTree(ctx context.Context, d types.Document) (*node, []typ
 	pageCount := d.PageCount
 	firstLines := map[int]string{}
 	results := map[int]*pageResult{}
-	blank, opens := map[int]bool{}, map[int]bool{}
 	for _, p := range pages {
 		pageCount = max(pageCount, p.PageNo)
 		firstLines[p.PageNo] = firstLine(p.Markdown)
 		results[p.PageNo] = draftResult(PageGroups(p, cfg.MinNodeTokens), cfg.SummaryWords)
-		blank[p.PageNo] = p.IsBlank
-		for _, n := range results[p.PageNo].nodes {
-			opens[p.PageNo] = opens[p.PageNo] || n.level == 1
-		}
 	}
-	spans, err := s.spansOf(ctx, d, pageCount, blank, opens)
+	spans, err := s.spansOf(ctx, d, pageCount)
 	if err != nil {
 		return nil, nil, nil, err
 	}

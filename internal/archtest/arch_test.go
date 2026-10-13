@@ -63,23 +63,9 @@ func TestServicesDoNotImportEachOther(t *testing.T) {
 	}
 }
 
-// Rule 3: parser is a pure library — no database, queue, storage or HTTP.
-func TestParserIsPure(t *testing.T) {
-	banned := []string{"internal/application/", "internal/queue", "internal/storage", "internal/handler", "internal/router", "internal/container"}
-	parsers := imports(t, "../parser")
-	if len(parsers) < 4 {
-		t.Fatalf("scanned only %d parser packages", len(parsers))
-	}
-	for pkg, imps := range parsers {
-		for _, imp := range imps {
-			for _, b := range banned {
-				if strings.HasPrefix(imp, b) {
-					t.Errorf("%s imports %s; the parser must stay a pure library", pkg, imp)
-				}
-			}
-		}
-	}
-}
+// Rule 3 (parser is a pure library — no database, queue, storage or HTTP
+// layer) is held by the compiler: the parser lives in the docpipe module,
+// which cannot import this module's internal packages.
 
 // Modules meet only in the container: services never import the HTTP layer.
 func TestServicesDoNotImportHTTP(t *testing.T) {

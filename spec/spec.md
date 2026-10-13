@@ -1,11 +1,15 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.21 · Ngày: 2026-10-12 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15; U50–U51 (phân loại trang theo ảnh bằng Decision API, loại giấy tờ khai báo ở KB, node giấy tờ trên cây hồ sơ) đã triển khai (P18, 11/10/2026), xem §15; U52–U57 (OCR và phân loại đồng thời, tách & gom tự động, không nạp hai model cùng lúc, trang trắng/Khác và dải ảnh nhỏ ngắt theo giấy tờ, lưu kết quả gọi model, sửa loại giấy tờ của KB) đã triển khai (P19, 12/10/2026), xem §15; U58 (câu hỏi `is_break` trong request Decision API, ngắt các giấy tờ cùng loại nằm liền nhau) đã triển khai (P20, 12/10/2026), xem §15; U59 (cột đầu của bảng và `.xlsx` là loại tài liệu, cột theo mẫu bảng, bỏ danh sách trường viết cứng) đã triển khai (P21, 12/10/2026), xem §15
+> Phiên bản: 0.22 · Ngày: 2026-10-13 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15; U50–U51 (phân loại trang theo ảnh bằng Decision API, loại giấy tờ khai báo ở KB, node giấy tờ trên cây hồ sơ) đã triển khai (P18, 11/10/2026), xem §15; U52–U57 (OCR và phân loại đồng thời, tách & gom tự động, không nạp hai model cùng lúc, trang trắng/Khác và dải ảnh nhỏ ngắt theo giấy tờ, lưu kết quả gọi model, sửa loại giấy tờ của KB) đã triển khai (P19, 12/10/2026), xem §15; U58 (câu hỏi `is_break` trong request Decision API, ngắt các giấy tờ cùng loại nằm liền nhau) đã triển khai (P20, 12/10/2026), xem §15; U59 (cột đầu của bảng và `.xlsx` là loại tài liệu, cột theo mẫu bảng, bỏ danh sách trường viết cứng) đã triển khai (P21, 12/10/2026), xem §15; U61–U63 (`autorotate` khi gọi OCR, câu hỏi `is_first_page` và gom tài liệu chỉ theo trang đầu, module `docpipe` dùng lại được ở project khác) đã triển khai (P22, P23, 13/10/2026), xem §15
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
+>
+> Thay đổi trong 0.22 (U62, U63):
+> - **`is_break` thành `is_first_page`** (U62): câu hỏi thứ hai của request Decision API là `is_first_page` (kiểu `choice`: `YES` / `NO`), lưu ở `document_pages.is_first_page` (migration `0025` đổi tên cột). **Gom tài liệu chỉ theo trang đầu:** trang `is_first_page` mở giấy tờ mới, các trang sau nối vào cho tới trang đầu kế tiếp; loại của giấy tờ lấy theo trang đầu. Bỏ các quy tắc cũ: cắt khi đổi loại, trang trắng là `other`, trang `other` có tiêu đề, trang dưới ngưỡng (§6.9.4).
+> - **Module `docpipe`** (U63): luồng PDF → ảnh trang → phân loại → gom theo trang đầu → OCR `/ocr/raw` → VLM nằm ở thư mục `docpipe/`, là **Go module riêng** (`github.com/thanhenti/bepaylot/docpipe`), không phụ thuộc Postgres, S3, queue hay agent, project khác `go get` về dùng. bepaylot dùng lại chính các package đó (`replace` trong `go.mod`). Kèm client VLM kiểu OpenAI (`vlm.NewOpenAI`); bepaylot vẫn gọi VLM qua agent (§3.4).
 >
 > Thay đổi trong 0.21 (U61): **parser tự xoay ảnh trang bị xoay**: request TurboOCR có thêm `autorotate=1` (bật mặc định, `parser.engines.turboocr.options.autorotate`), TurboOCR tự xoay trang lệch 90/180/270° về đúng chiều rồi mới đọc (§5.2).
 >
@@ -145,10 +149,12 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U55 | Upload file nhiều trang phải hoạt động tốt: có **uỷ nhiệm chi, giấy chứng nhận, một số trang trắng, trang "other" khác**. Trình xem PDF: các **ảnh nhỏ của từng trang ở bên trái break theo loại tài liệu** cho dễ nhìn | còn hiệu lực; làm rõ U50 | §6.9.4, §7.3, §12 (N48) |
 | U56 | **Hạn chế gọi lại model LM Studio** vì rất tốn thời gian; **gọi thành công thì lưu lại kết quả để dùng luôn** | còn hiệu lực | §5.9, §6.9.4, §9.2 (migration `0023`), §16.2 |
 | U57 | Tạo knowledge base rồi thì phải **thêm/sửa được loại tài liệu** của KB (tính năng edit loại tài liệu) | còn hiệu lực; bổ sung U50 | §7.10, §10.1 |
-| U58 | Sửa phần **xử lý ngắt trang**: trong request Decision API phân loại thêm biến **`is_break`** (ví dụ `"page_role": {"type": "choice", "options": ["FIRST", "CONTINUATION", ...]}`) để xác định trang cần ngắt hay trang tiếp tục, đưa vào logic phân bộ. Mục đích: **một PDF nhiều trang cùng loại liên tục cũng được ngắt thành từng bộ tài liệu riêng biệt** | còn hiệu lực; làm rõ U50 (thay câu "hai giấy tờ cùng loại liền nhau ra một segment" của §6.9.4 bản 0.19) | §6.9.4, §9.2 (migration `0024`), §12 (N51) |
+| U58 | Sửa phần **xử lý ngắt trang**: trong request Decision API phân loại thêm biến **`is_break`** (ví dụ `"page_role": {"type": "choice", "options": ["FIRST", "CONTINUATION", ...]}`) để xác định trang cần ngắt hay trang tiếp tục, đưa vào logic phân bộ. Mục đích: **một PDF nhiều trang cùng loại liên tục cũng được ngắt thành từng bộ tài liệu riêng biệt** | **sửa bởi U62** (tên câu hỏi, dạng trả lời và quy tắc gom); làm rõ U50 (thay câu "hai giấy tờ cùng loại liền nhau ra một segment" của §6.9.4 bản 0.19) | §6.9.4, §9.2 (migration `0024`), §12 (N51) |
 | U59 | Sửa phần **xuất Excel**: **cột đầu tiên là loại tài liệu đã được phân loại**, các cột tiếp theo là trường thông tin, không phải cột đầu là tên file; **các cột theo cấu hình, không fix cứng**. (Chốt khi hỏi lại: cấu hình cột là **mẫu bảng** hiện có; vẫn **mỗi loại một sheet**; cột **Bộ chuyển sang cột B**) | còn hiệu lực; sửa U47, U48 (cột đầu); làm rõ U45 (mẫu bảng là nơi cấu hình cột) | §6.9.6, §7.6, §7.7, §12 (N52) |
 | U60 | Người quản trị **tạo mẫu Excel không phụ thuộc vào knowledge base** (lỗi gốc: tạo mẫu ở loại case `default` báo `table label "packing" is not a classification label of case type default`) | còn hiệu lực; làm rõ U45, U59 (nhãn bảng con của mẫu không còn bị đối chiếu với loại case/KB) | §6.9.6 |
 | U61 | Khi gọi parser, **tự động xử lý ảnh bị xoay** để đọc được thông tin (theo tham số `autorotate` trong `spec/parser/ocr_curl.txt`) | còn hiệu lực | §5.2, §11 |
+| U62 | Sửa `is_break` thành **`is_first_page`**: trả về trang có phải **trang đầu của tài liệu** không, rồi **break trang và gom theo break đó**. (Chốt khi hỏi lại: **chỉ cắt ở trang đầu**, loại của tài liệu lấy theo trang đầu, đổi loại giữa chừng không cắt; trả lời dạng **`YES` / `NO`**) | còn hiệu lực; sửa U58, U50 (quy tắc break và group), U55 (trang trắng, trang `other`) | §6.9.4, §9.2 (migration `0025`), §12 (N51) |
+| U63 | **Đóng gói** luồng nhận PDF, chuyển ảnh, gọi model phân loại, gom tài liệu theo trang đầu, phân loại, gọi OCR `/raw` và VLM thành **một module dùng được cho project khác**. (Chốt khi hỏi lại: **Go module riêng trong repo**; bước VLM là **interface kèm client mặc định** kiểu OpenAI) | còn hiệu lực | §3.1, §3.3, §3.4, §12 (N53) |
 
 ## 1. Yêu cầu chung
 
@@ -176,15 +182,16 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | R21 | Chi phí theo user, một key LLM chung | `usage_events` ghi mọi lần gọi model ở hook của agent; đơn giá `usage.prices`; giới hạn tháng theo user; hiển thị ở Cài đặt (§7.8, §8.5) |
 | R22 | Bảng theo loại giấy tờ, trường là cột | Mẫu bảng gồm nhiều bảng theo nhãn; mỗi dòng là một segment đã duyệt (một giấy tờ), cột A là loại tài liệu, cột B là Bộ (R32); chọn bảng khi tạo/xuất; nguồn, tin cậy, lịch sử chỉ ở panel phải thu gọn (§6.9.6, §7.6) |
 | R23 | Tách file nhiều giấy tờ và gom thành bộ | Segment do Classification `titles` đề xuất + điểm cắt theo số trang (code); bộ gom bằng code theo `bundles.opens_with`; lưu thành segment `source=user` + `case_bundles`. KB có `doc_types` (U50, U53): tách từ phân loại ảnh và **tự xác nhận** sau khi index; KB khác: người dùng duyệt ở màn Tách & gom (§6.9.4, §6.9.7, §7.9) |
-| R24 | Phân loại trang theo loại giấy tờ của KB, break và group theo loại | `knowledge_bases.config.doc_types`; trong `page:ocr` gọi Decision API với ảnh trang, lưu `document_pages.doc_type`; `index:tree` gom trang liền nhau cùng loại thành segment (cắt ở trang `is_break`, R31) `source=pipeline, mode=image` (§6.9.4) |
+| R24 | Phân loại trang theo loại giấy tờ của KB, break và group theo trang đầu | `knowledge_bases.config.doc_types`; trong `page:ocr` gọi Decision API với ảnh trang, lưu `document_pages.doc_type`, `is_first_page`; `index:tree` gom trang thành segment theo trang đầu (R31) `source=pipeline, mode=image` (§6.9.4) |
 | R25 | Cây hồ sơ chỉ rõ loại giấy tờ nào ở trang nào; đọc theo giấy tờ | Segment là node cấp 1 của cây file (`origin=doctype`, `doc_type`), in `[loại: <mã>]` trên cây; `kb_read_pages` theo node giấy tờ và nêu giấy tờ của các trang trả về (§6.5, §8.2) |
 | R26 | OCR và phân loại đồng thời; không nạp hai model cùng lúc khi máy yếu | Trong `page:ocr`, Decision API chạy song song với engine OCR; `classify.decision.serial: true` thì hai loại lần gọi chạy theo lượt qua một cổng chung trong process (§6.9.4, §11) |
 | R27 | Tách & gom tự động | `index:tree` gọi `AutoConfirm`: lưu cách tách đề xuất thành split đã duyệt của case; màn Tách & gom chỉ để sửa (§6.9.4, §6.9.7) |
-| R28 | Trang trắng, trang không thuộc loại nào; ảnh nhỏ ngắt theo giấy tờ | Lựa chọn `other` luôn có; trang trắng = `other`; trang `other` không tiêu đề nối vào giấy tờ trước; dải ảnh nhỏ của trình xem file có tiêu đề nhóm theo node giấy tờ (§6.9.4, §7.3) |
+| R28 | Trang trắng, trang không thuộc loại nào; ảnh nhỏ ngắt theo giấy tờ | Lựa chọn `other` luôn có; trang trắng hay trang `other` không phải trang đầu thì nối vào giấy tờ trước, là trang đầu thì mở giấy tờ riêng (U62 bỏ quy tắc riêng cho trang trắng và trang `other`); dải ảnh nhỏ của trình xem file có tiêu đề nhóm theo node giấy tờ (§6.9.4, §7.3) |
 | R29 | Không gọi lại model cho trang đã có kết quả | Bảng `model_cache` theo hash của request, bọc quanh Decision API và VLM ở `container` (§6.9.4, §9.2) |
 | R30 | Sửa loại giấy tờ của KB sau khi tạo | Hộp thoại "Sửa knowledge base" → `PATCH /kbs/:id` với `config.doc_types` (§7.10, §10.1) |
-| R31 | Ngắt các giấy tờ cùng loại nằm liền nhau trong một file | Câu hỏi `is_break` (`FIRST` / `CONTINUATION`) trong cùng request Decision API của trang, lưu `document_pages.is_break`; `SegmentsFromPages` mở segment mới ở trang `is_break` dù cùng loại với trang trước (§6.9.4) |
+| R31 | Mỗi trang đầu mở một giấy tờ, kể cả các giấy tờ cùng loại nằm liền nhau | Câu hỏi `is_first_page` (`YES` / `NO`) trong cùng request Decision API của trang, lưu `document_pages.is_first_page`; `docpipe.GroupByFirstPage` mở segment mới ở mỗi trang đầu, loại lấy theo trang đầu (§6.9.4) |
 | R32 | Cột đầu của bảng là loại tài liệu; cột theo cấu hình | Bảng con có nhãn: cột A loại tài liệu (`title` của bảng con), cột B Bộ, rồi các trường của mẫu bảng, trên trang bảng và trong `.xlsx`; giao diện không có trường viết cứng, mẫu mới lấy bảng con từ loại tài liệu của case (§6.9.6, §7.6, §7.7) |
+| R33 | Luồng PDF → ảnh → phân loại → gom → OCR → VLM dùng lại được ở project khác | Go module riêng `docpipe/`: `docpipe.Pipeline.Run(pdf)` trả ảnh trang, loại từng trang, tài liệu đã gom, dòng chữ và markdown; không DB, S3, queue (§3.4) |
 
 ### 1.1 Tech stack
 
@@ -282,17 +289,24 @@ internal/
       postgres/        repository thuần SQL (pgx)
       retriever/
         postgres/      lọc metadata + truy vấn FTS/trigram
+  storage/             ObjectStore trên S3 (aws-sdk-go-v2): upload/download stream, presign
+  queue/               asynq client, topology queue/pool, helper enqueue
+  agent/ llm/ tools/ skills/ mcp/ retrieval/    (giữ nguyên code hiện có)
+  logging/
+docpipe/               Go module riêng (go.mod riêng), dùng được ở project khác (U63, §3.4)
+  docpipe.go           Pipeline.Run: PDF → ảnh → phân loại → gom → OCR → VLM
+  group.go             GroupByFirstPage: gom trang thành tài liệu theo trang đầu
+  types/               mô hình trang đã parse (BBox, ParsedPage…), ClassLabel, PageDocType
+  decision/            client Decision API: document_type + is_first_page (§6.9.4)
   parser/              engine parse (không phụ thuộc DB)
     engine.go          interface Engine + registry
     turboocr/          client TurboOCR + ánh xạ response
+    vlm/               engine turboocr_vlm, interface Transcriber, client OpenAI mặc định
     pdf/               go-pdfium: probe, render batch, text layer, bookmark
+    imagefile/         chuẩn hoá file ảnh upload
     textlayer/         kiểm tra chất lượng + hợp nhất text layer với OCR (§5.8)
     assemble/          layout + lines → page model → markdown
-  storage/             ObjectStore trên S3 (aws-sdk-go-v2): upload/download stream, presign
-  queue/               asynq client, topology queue/pool, helper enqueue
-  decision/            client Decision API: phân loại ảnh trang theo doc_types của KB (U50, §6.9.4)
-  agent/ llm/ tools/ skills/ mcp/ retrieval/    (giữ nguyên code hiện có)
-  logging/
+  textutil/            chuẩn hoá và so khớp text
 deploy/
   docker-compose.yml   postgres(pgvector, dùng cho skill) + redis + minio (S3) + turboocr(optional)
   Dockerfile           kèm libpdfium (version cố định) + binary pdfium-worker
@@ -318,11 +332,24 @@ Việc chuyển code là refactor thuần: **không đổi hành vi, không đ�
 
 1. `service/<A>` **không import** `service/<B>`. Nếu cần gọi chéo thì phụ thuộc vào `types/interfaces.<B>Service`, được inject tại `container`.
 2. `handler` chỉ phụ thuộc `types/interfaces`, không phụ thuộc repository.
-3. `parser/*` là thư viện thuần: không biết DB, queue hay HTTP, nên test được bằng file mẫu.
+3. `docpipe/*` (parser, client Decision API) là thư viện thuần: không biết DB, queue hay HTTP của bepaylot, nên test được bằng file mẫu. Từ U63 đây là Go module riêng nên **trình biên dịch** chặn việc import `internal/` của bepaylot; test import graph chỉ còn kiểm quy tắc 1–2.
 4. Module sau **chỉ đọc** dữ liệu của module trước qua interface đọc (`DocumentReader`, `SectionReader`), không ghi chéo bảng.
    - Tool `kb_save_fields`/`kb_get_fields` của agent (Module 4) gọi `interfaces.DocModelService`, không ghi thẳng bảng. Search và tool giải citation qua `interfaces.CitationResolver` do `service/docmodel` cài đặt.
 5. Chuyển giai đoạn luôn đi qua **task** (không gọi đồng bộ), để mỗi giai đoạn retry và scale độc lập.
 6. CI chạy một test kiểm tra import graph (`go list -deps`) để chặn vi phạm quy tắc 1–3.
+
+---
+
+### 3.4 Module `docpipe` (U63)
+
+Luồng xử lý tài liệu được đóng gói thành Go module riêng `github.com/thanhenti/bepaylot/docpipe` (thư mục `docpipe/`, `go.mod` riêng) để project khác dùng. Hướng dẫn dùng ở `docpipe/README.md`.
+
+- **Một lần gọi:** `docpipe.New(Config).Run(ctx, đường dẫn PDF)` chạy ba bước nối tiếp: (1) render mọi trang thành JPEG; (2) phân loại mọi trang (`Classifier`: `document_type` + `is_first_page`) rồi gom thành tài liệu bằng `GroupByFirstPage` (quy tắc ở §6.9.4 bước 3); (3) đọc mọi trang bằng `parser.Engine` (TurboOCR `/ocr/raw`, hoặc `turboocr_vlm`) rồi `assemble` thành dòng, block và markdown. Phân loại và OCR không chạy cùng lúc, nên server chỉ nạp được một model vẫn dùng được; trong mỗi bước `Concurrency` trang chạy song song.
+- **Kết quả trong bộ nhớ:** `Result{Pages[], Documents[]}`: ảnh trang, loại của trang, `ParsedPage`, JSON gốc của engine, lỗi của riêng từng trang. Trang lỗi không làm hỏng lần chạy.
+- **Không phụ thuộc** Postgres, S3, queue, agent hay cấu hình của bepaylot. Không dùng text layer của PDF (bepaylot ghép text layer ở `service/document`).
+- **Thay được thành phần** qua interface: `docpipe.Classifier` (có sẵn `decision.Client`), `parser.Engine` (`turboocr.Client`, `vlm.Engine`), `vlm.Transcriber` (có sẵn `vlm.NewOpenAI`, gọi `POST {base_url}/chat/completions` với prompt và ảnh trang).
+- **bepaylot dùng lại các package của module** (`go.mod` có `replace github.com/thanhenti/bepaylot/docpipe => ./docpipe`): pipeline theo task (`page:ocr`, `index:tree`) vẫn ở `service/document` và `service/index` vì cần S3, Postgres và queue, nhưng render, OCR, VLM, phân loại và hàm gom là code của module. `internal/types` giữ tên cũ bằng type alias sang `docpipe/types`. bepaylot **không** dùng `vlm.NewOpenAI`: VLM vẫn đi qua agent (§5.9, §16.2).
+- **Phát hành:** tag dạng `docpipe/vX.Y.Z`. `make test` chạy test của cả hai module.
 
 ---
 
@@ -370,7 +397,7 @@ sequenceDiagram
   P->>Q: nếu done+failed = page_count → document:assemble (TaskID=assemble:{doc}:{gen})
   Q->>A: ghép markdown toàn văn + offset, status=indexing
   A->>Q: index:build
-  Q->>I: section + FTS → index:tree (gom trang cùng loại thành segment, dựng cây từ layout dưới các node giấy tờ, thẻ tài liệu bằng LLM, nối vào cây hồ sơ)
+  Q->>I: section + FTS → index:tree (gom trang thành segment theo trang đầu, dựng cây từ layout dưới các node giấy tờ, thẻ tài liệu bằng LLM, nối vào cây hồ sơ)
   I->>I: status=completed (search được)
   I->>Q: document:classify mode=titles (chỉ khi loại case bật classification.auto, §6.9.4)
 ```
@@ -558,7 +585,7 @@ Nhận xét từ file mẫu, bắt buộc xử lý:
 ### 5.4 Mô hình dữ liệu parse (Go)
 
 ```go
-// internal/types/parse.go
+// docpipe/types/parse.go
 type BBox struct { X0, Y0, X1, Y1 float64 }          // pixel trên ảnh trang
 type Quad [4][2]float64                                // tứ giác gốc từ OCR
 
@@ -642,7 +669,7 @@ Mã số hộ kinh doanh: 070082001498
 ### 5.5 Interface engine (cắm được engine khác)
 
 ```go
-// internal/parser/engine.go
+// docpipe/parser/engine.go
 type PageImage struct {
     DocumentID string
     PageNo     int
@@ -718,7 +745,7 @@ Kết quả `locate` đủ để UI tô sáng vùng trên ảnh trang: `GET /v1/
 
 Binary PDFium lấy từ bản build dựng sẵn (ví dụ `bblanchon/pdfium-binaries`), cố định version trong `Dockerfile`, build với `CGO_ENABLED=1` và tag `pdfium_experimental` nếu cần API thử nghiệm.
 
-**Package `internal/parser/pdf`**
+**Package `docpipe/parser/pdf`**
 
 ```go
 type Renderer interface {
@@ -830,7 +857,7 @@ Golden test: một PDF/A-2u mẫu gồm một trang sinh từ Word và một tra
 
 Số lần gọi VLM = số trang (trừ trang bỏ qua VLM vì có text layer tốt).
 
-**Luồng một trang** (task `page:ocr`, package `internal/parser/vlm`):
+**Luồng một trang** (task `page:ocr`, package `docpipe/parser/vlm`):
 
 ```
 ảnh trang (S3) ──► (1) TurboOCR /ocr/raw?autorotate=1&layout=1&reading_order=1&tables=1
@@ -926,13 +953,13 @@ Từ raw đo được token mỗi trang, mức khớp với OCR và đoạn nào
 - Unit `parser/vlm`: một lần gọi TurboOCR + một lần gọi VLM mỗi trang; prompt chứa text OCR, dòng confidence thấp có `[?]`, không còn `{ocr}`; markdown chia đúng vùng, dòng sửa giữ bbox OCR; dòng bị model bỏ sót được chèn lại; đoạn không được OCR xác nhận bị bỏ; dòng ngoài layout thành vùng mới; cắt ngữ cảnh ở `context_max_chars`; `max_concurrency` theo trang; `on_error`; `full_page`.
 - Unit `parser/assemble`: căn dòng, chống bịa, cắt text tràn, chèn lại dòng bị bỏ sót (trừ dòng low-confidence), dòng tổng hợp, render lại ổn định.
 - Tích hợp: `service/index` mô phỏng bộ hồ sơ scan 20 trang, VLM giả kiểm prompt có đủ dòng OCR và chỉ được gọi một lần mỗi trang.
-- Live: `VLM_BASE_URL=http://localhost:1234/v1 VLM_TEST_IMAGE=<ảnh> go test -run TestLiveVLM ./internal/parser/vlm`, dùng layout mẫu `spec/parser/output_example.json` (client HTTP tối giản chỉ có trong test).
+- Live: `VLM_BASE_URL=http://localhost:1234/v1 VLM_TEST_IMAGE=<ảnh> go test -run TestLiveVLM ./docpipe/parser/vlm`, dùng layout mẫu `spec/parser/output_example.json` (client HTTP tối giản chỉ có trong test).
 
 ### 5.10 Bảng có cấu trúc (Table)
 
 **Vì sao.** Trước 0.8, bảng chỉ là một element `type=table` với `html`. Ô bảng không có bbox hay confidence riêng, và các dòng trong ô có `md_start = -1`. Vì vậy một giá trị lấy từ ô bảng (số tiền, mã ngành) chỉ trích dẫn được theo dòng, không theo ô. Từ 0.8, mỗi element `table` có thêm một dòng `page_tables` và các dòng `table_cells`.
 
-**Mô hình (Go, `internal/types/parse.go`)**
+**Mô hình (Go, `docpipe/types/parse.go`)**
 
 ```go
 type ParsedTable struct {
@@ -1412,7 +1439,7 @@ Không có bước pipeline tự bóc tách field (xem Q21).
 **Nhãn.** Tập nhãn là **`config.doc_types` của KB** (U50: mỗi loại có `name` là mã, `title`, `description`; đặt khi tạo KB, sửa bằng `PATCH /kbs/:id`); KB không khai báo thì lấy từ `classification.labels` của loại case (§6.2). Mã theo `^[a-z0-9_][a-z0-9_-]{0,63}$`, không trùng, không là `other`/`unknown`. Cộng hai nhãn có sẵn: `unknown` (không đủ tin cậy) và `other` (không thuộc nhãn nào). Loại case không có `labels` thì không bao giờ phân loại (`documents.classify_status=skipped`).
 
 **Phân loại từng trang theo ảnh (Decision API, U50).** Chạy khi KB có `doc_types` **và** có `classify.decision.base_url`; không có một trong hai thì bỏ qua, pipeline như cũ.
-1. **Mỗi trang một lần gọi, ngay khi có ảnh trang** (PDF đã render, hoặc file ảnh upload), **chạy đồng thời với OCR** của trang đó trong task `page:ocr`: chỉ cần ảnh, không chờ và không phụ thuộc kết quả OCR; loại được lưu trước khi trang kết thúc, kể cả khi OCR lỗi. Tự động, không cần bấm nút. **Chế độ tuần tự** (`classify.decision.serial: true`): dùng khi model phân loại và model OCR cùng nằm trên một server local không đủ tài nguyên nạp hai model (LM Studio). Khi đó trong một process không bao giờ có lần gọi Decision API nào chạy cùng lúc với OCR của bất kỳ trang nào: mỗi trang phân loại trước rồi mới OCR, và một cổng chung cho các trang đang xử lý chạy theo lượt (các trang đang chờ được phân loại cùng nhau, rồi OCR cùng nhau), nên server chỉ đổi model một lần mỗi lượt thay vì mỗi trang. Request theo mẫu `spec/classification/test_image.py`: `POST <base_url>/v1/systemone` với `model`, `state: "Ảnh chứng từ:"`, `images: [base64 thuần của ảnh trang]`, `questions.document_type = {type: "choice", instructions, criteria}`; `criteria` là `{mã: "tên — mô tả"}` của các `doc_types`, **luôn cộng thêm `other`** ("Khác — trang trắng, hoặc giấy tờ không thuộc các loại trên"): không có nó model buộc phải chọn một loại và chọn sai với độ tin cậy cao (đo thật: biên bản họp → giấy chứng nhận 0.77, lá thư → uỷ nhiệm chi 0.85; có `other` thì cả hai ra `other` ≥ 0.88). Trả lời `answers.document_type.{choice, confidence, probabilities}`. **Cùng request đó có câu hỏi thứ hai `questions.is_break`** (U58) = `{type: "choice", instructions: "Trang này là trang đầu tiên của một tài liệu mới, hay là trang tiếp theo của tài liệu ở trang trước?", criteria: {FIRST: "trang đầu tiên của một tài liệu: có tiêu đề, số hiệu, ngày tháng hoặc phần mở đầu", CONTINUATION: "trang tiếp theo: nội dung nối tiếp trang trước, không có tiêu đề mở đầu"}}`; trả lời `answers.is_break.choice`. Trang là **trang ngắt** khi `choice = FIRST` (lấy lựa chọn có xác suất cao nhất, không so ngưỡng); không có câu trả lời `is_break` thì coi là trang tiếp theo, và không làm hỏng kết quả loại. Câu hỏi và tiêu chí cố định trong client, không cấu hình.
+1. **Mỗi trang một lần gọi, ngay khi có ảnh trang** (PDF đã render, hoặc file ảnh upload), **chạy đồng thời với OCR** của trang đó trong task `page:ocr`: chỉ cần ảnh, không chờ và không phụ thuộc kết quả OCR; loại được lưu trước khi trang kết thúc, kể cả khi OCR lỗi. Tự động, không cần bấm nút. **Chế độ tuần tự** (`classify.decision.serial: true`): dùng khi model phân loại và model OCR cùng nằm trên một server local không đủ tài nguyên nạp hai model (LM Studio). Khi đó trong một process không bao giờ có lần gọi Decision API nào chạy cùng lúc với OCR của bất kỳ trang nào: mỗi trang phân loại trước rồi mới OCR, và một cổng chung cho các trang đang xử lý chạy theo lượt (các trang đang chờ được phân loại cùng nhau, rồi OCR cùng nhau), nên server chỉ đổi model một lần mỗi lượt thay vì mỗi trang. Request theo mẫu `spec/classification/test_image.py`: `POST <base_url>/v1/systemone` với `model`, `state: "Ảnh chứng từ:"`, `images: [base64 thuần của ảnh trang]`, `questions.document_type = {type: "choice", instructions, criteria}`; `criteria` là `{mã: "tên — mô tả"}` của các `doc_types`, **luôn cộng thêm `other`** ("Khác — trang trắng, hoặc giấy tờ không thuộc các loại trên"): không có nó model buộc phải chọn một loại và chọn sai với độ tin cậy cao (đo thật: biên bản họp → giấy chứng nhận 0.77, lá thư → uỷ nhiệm chi 0.85; có `other` thì cả hai ra `other` ≥ 0.88). Trả lời `answers.document_type.{choice, confidence, probabilities}`. **Cùng request đó có câu hỏi thứ hai `questions.is_first_page`** (U62, thay `is_break` của U58) = `{type: "choice", instructions: "Trang này có phải là trang đầu tiên của một tài liệu không?", criteria: {YES: "là trang đầu tiên của một tài liệu: có tiêu đề, số hiệu, ngày tháng hoặc phần mở đầu", NO: "không phải trang đầu: nội dung nối tiếp trang trước, không có tiêu đề mở đầu"}}`; trả lời `answers.is_first_page.choice`. Trang là **trang đầu** khi `choice = YES` (lấy lựa chọn có xác suất cao nhất, không so ngưỡng); không có câu trả lời `is_first_page` thì coi là không phải trang đầu, và không làm hỏng kết quả loại. Câu hỏi và tiêu chí cố định trong client, không cấu hình.
    **Theo tài liệu System One của Ollama** (<https://docs.ollama.com/api/systemone>, `POST /v1/systemone`, Ollama ≥ 0.35.0):
    - `images` là mảng chuỗi **base64 thuần** của ảnh. **Không** gửi URL hay data URL: có tiền tố `data:image/...;base64,` thì server trả `400 {"error":"illegal base64 data at input byte 4"}` (byte 4 là dấu `:` của `data:`). Đây là lỗi đã gặp ngày 12/10/2026 khi client còn gửi data URL.
    - `state` là chuỗi không rỗng; `questions` có 1–64 câu; câu `choice` cần `criteria` là object `{mã: mô tả | null}` với 2–255 lựa chọn (luôn đủ vì có thêm `other`).
@@ -1421,9 +1448,9 @@ Không có bước pipeline tự bóc tách field (xem Q21).
    - `confidence` = 1 − H(p)/ln(N) (0 khi các lựa chọn ngang nhau, gần 1 khi một lựa chọn trội hẳn); không phải xác suất đúng đã hiệu chỉnh, chỉ dùng để so với `min_confidence`.
    - Ảnh có cạnh dài > `classify.decision.max_side` được thu nhỏ và mã hoá lại JPEG trước khi gửi.
    - Mẫu `spec/classification/test_image.py` gửi data URL là theo một server khác (LM Studio) và **không** đúng với tài liệu này.
-2. **Lưu trên trang:** `document_pages.doc_type`, `doc_type_confidence`, `is_break`. `choice` không thuộc `criteria`, HTTP lỗi hay timeout thì ghi log, trang để trống (chưa phân loại) và **không làm hỏng trang**. **Lưu kết quả để dùng lại:** câu trả lời thành công được lưu ở bảng `model_cache` theo hash của (bộ câu hỏi, model, instructions, danh sách loại, ảnh trang); câu trả lời lưu trước khi có `is_break` không được dùng lại; cùng trang đó (reparse, upload lại đúng file) lấy từ bảng, không gọi lại model. Lần gọi VLM của `turboocr_vlm` (§5.9) cũng được lưu theo hash của (model, prompt, ảnh), trừ kết quả bị cắt ở `max_tokens`. Trang đã có loại thì `page:ocr` chạy lại (retry OCR) **không gọi lại** Decision API. `GET /documents/:id/pages` trả `doc_type`, `doc_type_confidence` của từng trang, nên UI hiện loại ngay khi trang còn đang OCR.
-3. **Break và group (code, trong `index:tree`, khi file chưa có segment của `gen` hiện tại):** đi theo thứ tự trang; các trang liền nhau **cùng loại** là một segment, **đổi loại thì mở segment mới**. **Trang `is_break` cùng loại với giấy tờ đứng trước cũng mở segment mới** (U58): file gồm ba hợp đồng scan liền nhau ra ba segment `hop_dong`. `is_break` chỉ cắt giữa các trang có loại của KB: không tách dãy trang `other`, và không đổi các quy tắc dưới đây (trang dưới ngưỡng tin cậy, trang `other` không tiêu đề vẫn nối vào giấy tờ trước dù có `is_break`). **Trang trắng** (`is_blank`) luôn là `other`, bất kể model trả gì. Trang model xếp `other` mà **có nội dung nhưng không có tiêu đề giấy tờ của riêng nó** (không có node cấp 1 trên trang), đứng ngay sau một giấy tờ có loại, là **trang tiếp theo của giấy tờ đó** (trang 2 của giấy chứng nhận, hợp đồng); trang `other` có tiêu đề riêng (biên bản họp) thì mở segment `other`. Hệ quả đã biết: một tờ rời không có tiêu đề (lá thư) nằm ngay sau một giấy tờ có loại sẽ bị nối vào giấy tờ đó; sửa ở màn Tách & gom. Trang có độ tin cậy < `min_confidence` (của loại case, rồi `classify.min_confidence`) hoặc chưa phân loại **nối vào segment trước nó** (trang sau trang đầu của một giấy tờ thường không giống loại nào); nếu ở đầu file thì thành segment `unknown` (giữ loại model đoán ở `proposed_label`). Confidence của segment là trung bình các trang đủ tin cậy. Không trang nào được phân loại thì không có segment.
-4. **Ghi và tự xác nhận (U50: tách & gom tự động, không cần bấm nút):** segment được ghi `source=pipeline`, `mode=image`, `model` = `classify.decision.model`, `classify_status=done`; ngay sau khi cây của file được lưu, `index:tree` **tự xác nhận** cách tách & gom của case đúng như màn Tách & gom sẽ hiện nếu người dùng bấm "Xác nhận" mà không sửa gì: file đã duyệt giữ nguyên, file mới lấy segment đề xuất và bộ do code gom (§6.9.7), trang chưa rõ loại thành `other`; kết quả lưu thành segment `source=user` + `case_bundles`, file tính là đã duyệt (`split_reviewed_by` = người tạo case), nên bảng (§6.9.6) dùng được ngay. File không có đề xuất nào (Decision API lỗi mọi trang) được để nguyên, chưa duyệt. Tự xác nhận lỗi thì chỉ ghi log, đề xuất còn đó. Màn Tách & gom (§7.9) chỉ còn để **sửa** khi máy tách sai. Hai giấy tờ cùng loại nằm liền nhau (hai hợp đồng liên tiếp) được cắt ở trang `is_break` (bước 3); model trả lời sai thì người dùng cắt hoặc gộp ở màn Tách & gom, có dấu điểm cắt (dưới) gợi ý.
+2. **Lưu trên trang:** `document_pages.doc_type`, `doc_type_confidence`, `is_first_page`. `choice` không thuộc `criteria`, HTTP lỗi hay timeout thì ghi log, trang để trống (chưa phân loại) và **không làm hỏng trang**. **Lưu kết quả để dùng lại:** câu trả lời thành công được lưu ở bảng `model_cache` theo hash của (bộ câu hỏi, model, instructions, danh sách loại, ảnh trang); câu trả lời lưu cho bộ câu hỏi cũ (`is_break`) không được dùng lại; cùng trang đó (reparse, upload lại đúng file) lấy từ bảng, không gọi lại model. Lần gọi VLM của `turboocr_vlm` (§5.9) cũng được lưu theo hash của (model, prompt, ảnh), trừ kết quả bị cắt ở `max_tokens`. Trang đã có loại thì `page:ocr` chạy lại (retry OCR) **không gọi lại** Decision API. `GET /documents/:id/pages` trả `doc_type`, `doc_type_confidence` của từng trang, nên UI hiện loại ngay khi trang còn đang OCR.
+3. **Break và group (code, `docpipe.GroupByFirstPage`, gọi trong `index:tree` khi file chưa có segment của `gen` hiện tại; U62):** đi theo thứ tự trang; **trang `is_first_page` mở segment mới, mọi trang sau nối vào segment đó cho tới trang đầu kế tiếp**. Trang đầu của file luôn mở segment, dù model không đánh dấu. File gồm ba hợp đồng scan liền nhau ra ba segment `hop_dong`. **Loại và confidence của segment lấy theo trang đầu của nó**; trang đầu có độ tin cậy < `min_confidence` (của loại case, rồi `classify.min_confidence`) hoặc chưa phân loại thì segment là `unknown` (giữ loại model đoán ở `proposed_label`). **Đổi loại giữa chừng mà không phải trang đầu thì không cắt.** Trang lỗi phân loại không phải trang đầu nên nối vào segment trước. Không còn quy tắc riêng cho trang trắng, trang `other` có tiêu đề hay trang dưới ngưỡng (bản 0.19–0.21): cách tách chỉ phụ thuộc câu trả lời `is_first_page`, model trả lời sai thì sửa ở màn Tách & gom. Không trang nào được phân loại thì không có segment.
+4. **Ghi và tự xác nhận (U50: tách & gom tự động, không cần bấm nút):** segment được ghi `source=pipeline`, `mode=image`, `model` = `classify.decision.model`, `classify_status=done`; ngay sau khi cây của file được lưu, `index:tree` **tự xác nhận** cách tách & gom của case đúng như màn Tách & gom sẽ hiện nếu người dùng bấm "Xác nhận" mà không sửa gì: file đã duyệt giữ nguyên, file mới lấy segment đề xuất và bộ do code gom (§6.9.7), trang chưa rõ loại thành `other`; kết quả lưu thành segment `source=user` + `case_bundles`, file tính là đã duyệt (`split_reviewed_by` = người tạo case), nên bảng (§6.9.6) dùng được ngay. File không có đề xuất nào (Decision API lỗi mọi trang) được để nguyên, chưa duyệt. Tự xác nhận lỗi thì chỉ ghi log, đề xuất còn đó. Màn Tách & gom (§7.9) chỉ còn để **sửa** khi máy tách sai. Hai giấy tờ cùng loại nằm liền nhau (hai hợp đồng liên tiếp) được cắt ở trang `is_first_page` (bước 3); model trả lời sai thì người dùng cắt hoặc gộp ở màn Tách & gom, có dấu điểm cắt (dưới) gợi ý.
 5. Segment là node cấp 1 của cây file (§6.5 bước 3).
 
 **Phân loại bằng LLM: tuỳ chọn, mặc định không chạy (U31).** Đọc nội dung từng trang để phân loại tốn token mà độ chính xác không cao, nên pipeline không tự phân loại. Loại case có `labels` thì document ở `classify_status=none` (chưa ai yêu cầu). Task `document:classify` chỉ chạy khi:
@@ -2339,6 +2366,9 @@ CREATE TABLE model_cache (
 
 -- 0024_page_is_break.sql (U58; §6.9.4): Decision API đọc trang là trang đầu của một tài liệu (câu hỏi is_break)
 ALTER TABLE document_pages ADD COLUMN is_break boolean NOT NULL DEFAULT false;
+
+-- 0025_page_is_first_page.sql (U62; §6.9.4): câu hỏi is_break thành is_first_page
+ALTER TABLE document_pages RENAME COLUMN is_break TO is_first_page;
 ```
 
 Ghi chú:
@@ -2746,8 +2776,9 @@ fields:                             # Extracted Field (§6.9.3)
 | N48 | **File nhiều trang có trang trắng và trang Khác** (chạy thật 12/10/2026, Decision API `cloudflare_clef-flash` + olmOCR trên LM Studio, `serial: true`). KB có `uy_nhiem_chi`, `giay_chung_nhan`; file 8 trang: UNC, trang trắng, giấy chứng nhận 2 trang (trang 2 không tiêu đề), biên bản họp, trang trắng, UNC, lá thư không tiêu đề. Kết quả: Uỷ nhiệm chi tr. 1 · Khác tr. 2 · Giấy chứng nhận tr. 3–4 · Khác tr. 5–6 · Uỷ nhiệm chi tr. 7–8; file `reviewed` không cần bấm nút; mỗi thời điểm LM Studio chỉ nạp một model. Lá thư (tr. 8) bị nối vào UNC tr. 7 theo quy tắc trang tiếp theo: giới hạn đã biết (§6.9.4) |
 | N49 | **Không gọi lại model.** Cùng ảnh + cùng danh sách loại: Decision API được gọi đúng 1 lần cho 3 lần hỏi; ảnh khác hoặc danh sách loại khác thì gọi lại; lần gọi lỗi không được lưu. VLM: cùng ảnh + prompt gọi 1 lần; kết quả bị cắt (`truncated`) không được lưu. Reparse một file gửi **đúng cùng ảnh trang** (hash trùng) nên trúng `model_cache` |
 | N50 | **Sửa loại giấy tờ của KB.** `PATCH /kbs/:id` thêm một loại: KB trả về có đủ loại cũ và mới, `parser_engine` giữ nguyên; mã sai định dạng → `422`, danh sách cũ không đổi |
-| N51 | **Ngắt giấy tờ cùng loại liền nhau.** KB có `hop_dong`; file 3 trang đều là `hop_dong`, Decision API giả trả `is_break` = có, không, có: ra hai segment `hop_dong` tr. 1–2 và tr. 3. Request thật gửi hai câu hỏi `document_type` và `is_break` trong một lần gọi; trả lời `CONTINUATION` hoặc thiếu `is_break` thì không ngắt |
+| N51 | **Gom theo trang đầu.** KB có `hop_dong`; file 3 trang đều là `hop_dong`, Decision API giả trả `is_first_page` = có, không, có: ra hai segment `hop_dong` tr. 1–2 và tr. 3. Đổi loại mà không phải trang đầu thì không cắt; trang đầu dưới ngưỡng ra segment `unknown`. Request thật gửi hai câu hỏi `document_type` và `is_first_page` trong một lần gọi; trả lời `NO` hoặc thiếu `is_first_page` thì không phải trang đầu |
 | N52 | **Cột đầu là loại tài liệu.** Tải `.xlsx` của bảng có bảng con Hoá đơn (trường Số hoá đơn, Tổng thanh toán): dòng 1 là `Loại tài liệu \| Bộ \| Số hoá đơn \| Tổng thanh toán`, cột A mọi dòng là "Hoá đơn", cột B là mã bộ; sửa ô C2 rồi nhập lại file ra đúng một thay đổi của trường `so_hoa_don`. Tạo mẫu bảng mới ở KB có loại `uy_nhiem_chi`, `giay_chung_nhan`: hộp thoại có hai bảng con theo hai loại đó, chưa có trường nào |
+| N53 | **Module `docpipe` chạy độc lập.** `go test ./...` trong `docpipe/` không cần bepaylot: PDF 4 trang (hai hợp đồng liền nhau, một hoá đơn) qua `Pipeline.Run` với phân loại giả, server `/ocr/raw` giả và server VLM kiểu OpenAI giả ra 3 tài liệu (tr. 1–2, 3, 4), mỗi trang có ảnh, dòng chữ và markdown; query OCR là `autorotate=1&layout=1&reading_order=1&tables=1`; trang lỗi phân loại nối vào tài liệu trước; OCR sập thì lỗi nằm trên từng trang |
 
 Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `processing_spans`; `agent_runs` giữ như cũ; (tuỳ chọn) metrics Prometheus cho độ sâu queue, độ trễ OCR theo trang và tỉ lệ lỗi.
 
@@ -2775,10 +2806,12 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | **P15** | Trang phương án kiểu NotebookLM và xuất bảng (U43): `case_sheets`, task `case:sheet`, `excelize`, Studio, trang bảng. Cần **P8** | N38, N43 | ✅ xong (08/10/2026) |
 | **P16** | Chỉnh sửa và nhập lại (U44): `/sheets/:id/edits`, `/sheets/:id/import`, `field_corrections`, thống kê AI sai theo trường | N39, N40 | ✅ xong (08/10/2026) |
 | **P17** | Bảng theo loại giấy tờ, tách & gom bộ chứng từ (U47–U49): migration `0021`; dấu điểm cắt trong `document:classify`; đề xuất gom bộ (code) + `GET/PUT /cases/:id/split`; `segment` ở `kb_save_fields`/`kb_get_fields`; mẫu bảng `tables`; `case:sheet` theo bộ, `rows` theo giấy tờ; `.xlsx` mỗi bảng con một sheet, bỏ cột tin cậy/nguồn và sheet Nguồn; trang bảng có sheet theo bảng con và panel Nguồn & lịch sử thu gọn; màn Tách & gom. Cần P15, P16 | N44, N45, N46 | ✅ xong (08/10/2026); một phần của §6.9.4 chưa làm, xem §15.2 |
-| **P18** | Phân loại trang theo ảnh và node giấy tờ (U50, U51): `KBConfig.doc_types` + hộp thoại tạo KB; client `internal/decision`; bước phân loại trong `page:ocr`; migration `0022`; `SegmentsFromPages` + node `doctype` trong `BuildTree`; `RebuildTree` khi lưu split / classify; `[loại: …]` trên cây; `kb_read_pages` nêu giấy tờ | test N47 (dummy: Decision API giả, Postgres test) pass; gọi thử Decision API thật qua client bằng một ảnh trang | **xong** (11/10/2026) |
+| **P18** | Phân loại trang theo ảnh và node giấy tờ (U50, U51): `KBConfig.doc_types` + hộp thoại tạo KB; client `docpipe/decision`; bước phân loại trong `page:ocr`; migration `0022`; `SegmentsFromPages` + node `doctype` trong `BuildTree`; `RebuildTree` khi lưu split / classify; `[loại: …]` trên cây; `kb_read_pages` nêu giấy tờ | test N47 (dummy: Decision API giả, Postgres test) pass; gọi thử Decision API thật qua client bằng một ảnh trang | **xong** (11/10/2026) |
 | **P19** | Bổ sung cho P18 (U52–U57): phân loại song song với OCR + `classify.decision.serial` (`modelGate`); `AutoConfirm` sau `index:tree`; lựa chọn `other`, trang trắng, trang tiếp theo; `doc_type` của trang ở API trang + dải ảnh nhỏ ngắt theo giấy tờ; `model_cache` (migration `0023`) bọc Decision API và VLM; hộp thoại sửa KB; sửa `opens_with` null | N48 chạy thật; N49, N50 và các test dummy pass | **xong** (12/10/2026) |
-| **P20** | Ngắt giấy tờ cùng loại liền nhau (U58): câu hỏi `is_break` trong client `internal/decision`; `PageClassifier.ClassifyPage` trả thêm `isBreak`; migration `0024`; `SegmentsFromPages` cắt ở trang `is_break`; khoá `model_cache` của Decision API đổi theo bộ câu hỏi | N51 (dummy) pass: test đơn vị chạy; test tích hợp `TestIsBreakCutsSameTypePages` cần Postgres test; **chưa chạy với Decision API thật** | **xong** (12/10/2026) |
+| **P20** | Ngắt giấy tờ cùng loại liền nhau (U58): câu hỏi `is_break` trong client `docpipe/decision`; `PageClassifier.ClassifyPage` trả thêm `isBreak`; migration `0024`; `SegmentsFromPages` cắt ở trang `is_break`; khoá `model_cache` của Decision API đổi theo bộ câu hỏi | N51 (dummy) pass: test đơn vị chạy; test tích hợp `TestIsBreakCutsSameTypePages` cần Postgres test; **chưa chạy với Decision API thật** | **xong** (12/10/2026) |
 | **P21** | Cột đầu của bảng là loại tài liệu, cột theo mẫu (U59): `XLSX` ghi cột A loại tài liệu, cột B Bộ; lưới trang bảng và địa chỉ ô theo đó; bỏ `DEFAULT_FIELDS` ở hộp thoại mẫu bảng, mẫu mới lấy bảng con từ loại tài liệu của case | build, `tsc` pass; test tích hợp `.xlsx` (N52, `bundles_integration_test.go`) đã sửa nhưng **chưa chạy** (cần Postgres test); chưa kiểm trên trình duyệt | **xong** (12/10/2026) |
+| **P22** | `autorotate` khi gọi OCR (U61); `is_first_page` thay `is_break`, gom chỉ theo trang đầu (U62): câu hỏi `YES`/`NO` trong client Decision API, migration `0025`, `GroupByFirstPage`, bỏ `Blank`/`Opens` của `PageDocType`, khoá `model_cache` đổi theo bộ câu hỏi | test đơn vị pass (N51); test tích hợp `TestFirstPageCutsSameTypePages` cần Postgres test, **chưa chạy**; **chưa chạy với Decision API và TurboOCR thật** | **xong** (13/10/2026) |
+| **P23** | Module `docpipe` (U63): chuyển `docpipe/parser`, `docpipe/decision`, `docpipe/textutil`, `internal/types/parse.go` sang `docpipe/` (go.mod riêng), `internal/types` giữ alias; `Pipeline.Run`, `GroupByFirstPage`, `vlm.NewOpenAI`; `replace` trong `go.mod`, Dockerfile copy `docpipe/go.mod`, `make test` chạy cả hai module | build, vet, test đơn vị của cả hai module pass (N53); test tích hợp cần Postgres test **chưa chạy**; chưa build Docker image | **xong** (13/10/2026) |
 
 ---
 
@@ -2820,7 +2853,7 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Wiring, vai trò `-role api\|worker\|all`, housekeeping | `internal/container`, `cmd/server` |
 | Queue asynq theo pool, dead-letter, queue in-process khi không có Redis (chỉ dev) | `internal/queue` |
 | S3 (aws-sdk-go-v2 transfermanager), store in-memory (dev/test), cache file nguồn | `internal/storage` |
-| Parser: TurboOCR, engine `turboocr_vlm` (TurboOCR rồi VLM mỗi trang một lần gọi, kèm text OCR để kiểm, §5.9), assemble, text layer, go-pdfium, ảnh upload | `internal/parser/*` |
+| Parser: TurboOCR, engine `turboocr_vlm` (TurboOCR rồi VLM mỗi trang một lần gọi, kèm text OCR để kiểm, §5.9), assemble, text layer, go-pdfium, ảnh upload | `docpipe/parser/*` |
 | Bóc tách ảnh qua agent (`agent.Extract`, streaming trên `llm.providers`) cho engine `turboocr_vlm` | `internal/agent/extract.go`, `internal/container/vlm.go` |
 | Case và loại case (§6.2), `case:delete`, housekeeping case | `internal/application/service/cases`, `configs/case_types`, `repository/postgres/cases.go` |
 | Module 1–2 (upload theo case, cây mục lục, search) | `internal/application/service/{document,index,metadata}` |
@@ -2838,9 +2871,11 @@ Observability: `slog` có `request_id`, `document_id`, `task_id`; bảng `proces
 | Field + evidence, tool `kb_save_fields`/`kb_get_fields` (phần §6.9.3 cần cho bảng) | `internal/application/service/docmodel`, `internal/tools/fields.go`, `repository/postgres/fields.go` |
 | Bảng tổng hợp (U43, U44, §6.9.6): task `case:sheet`, chỉnh sửa, `field_corrections`, xuất/nhập `.xlsx` (excelize); từ U47/U48 mỗi loại giấy tờ một bảng con, dòng theo giấy tờ, mỗi bộ một lượt agent, `.xlsx` mỗi bảng con một sheet chỉ có dữ liệu | `internal/application/service/sheets`, `handler/sheets.go` |
 | Tách & gom bộ chứng từ (U48, U49, §6.9.4, §6.9.7): migration `0021`, `document_segments`, `case_bundles`, dấu điểm cắt bằng code, task `document:classify` (1 lần gọi LLM mỗi file qua `Completer`), đề xuất gom bộ bằng code, `POST /cases/:id/classify`, `GET/PUT /cases/:id/split`; field theo segment (`segment` ở `kb_save_fields`) | `internal/application/service/docmodel/split.go`, `repository/postgres/segments.go`, `handler/split.go`, `frontend/src/pages/cases/SplitPage.tsx` |
-| Phân loại trang theo ảnh và node giấy tờ (U50, U51, §6.5, §6.9.4): `KBConfig.doc_types` (kiểm mã khi tạo/sửa KB, hộp thoại tạo KB), client Decision API, bước phân loại trong `page:ocr`, migration `0022`, gom trang thành segment `mode=image`, node `doctype` của cây + dựng lại khi lưu split/classify, `[loại: …]` trên cây và mục lục hồ sơ, `kb_read_pages` nêu giấy tờ | `internal/decision`, `internal/application/service/document/pipeline.go` (`classifyPage`), `internal/application/service/index/doctypes.go`, `tree.go` (`BuildTree`), `service.go` (`RebuildTree`), `internal/application/service/cases` (`Classification`), `internal/tools/knowledge.go`, `frontend/src/components/AppContext.tsx` |
+| Phân loại trang theo ảnh và node giấy tờ (U50, U51, §6.5, §6.9.4): `KBConfig.doc_types` (kiểm mã khi tạo/sửa KB, hộp thoại tạo KB), client Decision API, bước phân loại trong `page:ocr`, migration `0022`, gom trang thành segment `mode=image`, node `doctype` của cây + dựng lại khi lưu split/classify, `[loại: …]` trên cây và mục lục hồ sơ, `kb_read_pages` nêu giấy tờ | `docpipe/decision`, `internal/application/service/document/pipeline.go` (`classifyPage`), `internal/application/service/index/doctypes.go`, `tree.go` (`BuildTree`), `service.go` (`RebuildTree`), `internal/application/service/cases` (`Classification`), `internal/tools/knowledge.go`, `frontend/src/components/AppContext.tsx` |
 | Bổ sung U52–U57: phân loại song song với OCR và chế độ tuần tự; tự xác nhận tách & gom; `other`/trang trắng/trang tiếp theo; dải ảnh nhỏ ngắt theo giấy tờ; `model_cache`; sửa loại giấy tờ của KB | `internal/application/service/document/pipeline.go` (`ocr`, `classifyPage`), `gate.go`; `internal/application/service/docmodel/split.go` (`AutoConfirm`); `internal/application/service/index/service.go` (`confirmSplit`), `doctypes.go`; `internal/container/modelcache.go`, `internal/application/repository/postgres/modelcache.go`, migration `0023`; `frontend/src/pages/documents/DocumentDetail.tsx`, `frontend/src/components/AppContext.tsx` (`KBDialog`), `Layout.tsx` |
-| Ngắt giấy tờ cùng loại liền nhau (U58, §6.9.4): câu hỏi `is_break` trong request Decision API, `document_pages.is_break` (migration `0024`), `SegmentsFromPages` cắt ở trang `is_break` | `internal/decision/decision.go`, `internal/container/modelcache.go`, `internal/application/service/document/pipeline.go` (`classifyPage`), `internal/application/repository/postgres/pages.go`, `internal/application/service/index/doctypes.go` |
+| Ngắt giấy tờ cùng loại liền nhau (U58, §6.9.4): câu hỏi `is_break` trong request Decision API, `document_pages.is_break` (migration `0024`), `SegmentsFromPages` cắt ở trang `is_break` | `docpipe/decision/decision.go`, `internal/container/modelcache.go`, `internal/application/service/document/pipeline.go` (`classifyPage`), `internal/application/repository/postgres/pages.go`, `internal/application/service/index/doctypes.go` |
+| Gom theo trang đầu (U62, §6.9.4): câu hỏi `is_first_page` (`YES`/`NO`), `document_pages.is_first_page` (migration `0025`), `GroupByFirstPage` | `docpipe/decision/decision.go`, `docpipe/group.go`, `internal/container/modelcache.go`, `internal/application/repository/postgres/pages.go`, `internal/application/service/index/doctypes.go` |
+| Module `docpipe` dùng lại được (U63, §3.4) | `docpipe/` (`docpipe.go`, `group.go`, `parser/vlm/openai.go`, `README.md`), `internal/types/parse.go` (alias), `go.mod` (`replace`) |
 | Cột đầu của bảng là loại tài liệu, cột theo mẫu bảng (U59, §6.9.6, §7.6, §7.7) | `internal/application/service/sheets/xlsx.go`, `frontend/src/pages/sheets/SheetPage.tsx`, `frontend/src/pages/cases/dialogs.tsx` |
 | Trang phương án kiểu NotebookLM, trang bảng, Cài đặt (Key & chi phí, Người dùng), hộp thoại cấu hình chat và mẫu bảng (§7.2, §7.6–§7.8) | `frontend/src/pages/cases/{CasePage,CaseChat,Studio,dialogs}.tsx`, `frontend/src/pages/sheets/SheetPage.tsx`, `frontend/src/components/SettingsDialog.tsx` |
 | Web app nhúng vào binary server (`embed.FS`, route không thuộc API trả `index.html`); Dockerfile có stage `ui` (Node) build `frontend/` | `internal/webui`, `frontend/vite.config.ts` (outDir), `deploy/Dockerfile`, `.dockerignore`, `make ui` / `make build-server` / `make docker` |
@@ -2920,7 +2955,7 @@ Mục này gom các quy tắc dễ làm sai khi code, rải ở nhiều mục ph
 - PageIndex: cây vừa `search.tree_token_budget` thì luôn nạp **nguyên khối** (search bước 2, `kb_document_tree`); chỉ cắt theo cấp khi vượt ngân sách. Không đưa cây từng cấp một khi đã vừa ngân sách (§6.5).
 - Mục lục hồ sơ dựng bằng code khi đọc, không lưu, không gọi LLM (§6.6).
 - Search: không có trường `reason` trong JSON của LLM; mỗi request tối đa `search.max_llm_calls` (§6.6).
-- **Phân loại theo ảnh (U50):** chỉ khi KB có `doc_types` và có `classify.decision.base_url`; mỗi trang đúng một lần gọi Decision API, hỏi cả loại (`document_type`) và trang ngắt (`is_break`, U58) (đồng thời với OCR, retry OCR không gọi lại; kết quả lưu ở `model_cache` nên reparse hay upload lại đúng file cũng không gọi lại), không gọi LLM. Lỗi của nó không bao giờ làm hỏng trang hay file. Decision API không phải chat model nên có client riêng (`internal/decision`), là ngoại lệ duy nhất của quy tắc "mọi lần gọi model đi qua agent".
+- **Phân loại theo ảnh (U50):** chỉ khi KB có `doc_types` và có `classify.decision.base_url`; mỗi trang đúng một lần gọi Decision API, hỏi cả loại (`document_type`) và trang đầu (`is_first_page`, U62) (đồng thời với OCR, retry OCR không gọi lại; kết quả lưu ở `model_cache` nên reparse hay upload lại đúng file cũng không gọi lại), không gọi LLM. Lỗi của nó không bao giờ làm hỏng trang hay file. Decision API không phải chat model nên có client riêng (`docpipe/decision`), là ngoại lệ duy nhất của quy tắc "mọi lần gọi model đi qua agent".
 - Phân loại bằng LLM: **mặc định không chạy**. Chỉ chạy khi loại case bật `classification.auto` (chế độ `titles`, chỉ gửi dòng tiêu đề) hoặc khi gọi API; chế độ `pages` chỉ qua API. File không có tiêu đề nào → không gọi LLM (§6.9.4).
 - **VLM của parser (§5.9):** chỉ hai bước: TurboOCR, rồi **một lần gọi VLM mỗi trang** với text OCR trong prompt. Không gọi VLM theo vùng layout, không ghép ảnh vùng. Markdown chỉ được dùng ở chỗ OCR xác nhận (căn từ); dòng OCR bị bỏ sót được chèn lại; `seal` gắn nhãn từ layout. Mọi lần gọi đi qua `agent.Extract` (không session, không lịch sử, không tool); không viết client HTTP riêng tới model trong `parser`.
 - Không có bước pipeline tự bóc tách field (Q21). Không có workflow nghiệp vụ, danh sách trường hay rule trong system prompt, config hoặc mô tả tool; mô tả tool chỉ nêu cách dùng tool (luồng duyệt cây) (§8.2). Danh sách trường chỉ đến từ tin nhắn hoặc từ mẫu do người có quyền soạn (U45, §8.4). Bảng (`case:sheet`) chỉ chạy khi người dùng bấm tạo và chỉ gửi agent các trường chưa `confirmed` (§6.9.6).

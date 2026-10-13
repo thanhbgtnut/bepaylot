@@ -74,13 +74,6 @@ type ClassificationRule struct {
 	MinConfidence float64      `json:"min_confidence,omitempty" yaml:"min_confidence"`
 }
 
-// ClassLabel is one allowed document type.
-type ClassLabel struct {
-	Name        string `json:"name" yaml:"name"`
-	Title       string `json:"title" yaml:"title"`
-	Description string `json:"description,omitempty" yaml:"description"`
-}
-
 // HasLabel reports whether name is a label of the rule or a built-in one.
 func (r ClassificationRule) HasLabel(name string) bool {
 	if name == LabelOther || name == LabelUnknown {
@@ -124,25 +117,6 @@ func ValidateLabels(labels []ClassLabel) error {
 }
 
 var labelNameRe = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]{0,63}$`)
-
-// PageDocType is the document type the Decision API gave one page (§6.9.4).
-type PageDocType struct {
-	PageNo     int
-	Label      string // "" = not classified
-	Confidence float64
-	// Break is the Decision API's is_break: the page is the first page of a
-	// document, not the continuation of the one before it.
-	Break bool
-	// Blank and Opens come from the parsed page: a page without content,
-	// and a page that starts with a document title.
-	Blank, Opens bool
-}
-
-// Built-in labels (§6.9.4).
-const (
-	LabelOther   = "other"
-	LabelUnknown = "unknown"
-)
 
 // BundleRule says which labels open a new bundle (§6.9.7).
 type BundleRule struct {

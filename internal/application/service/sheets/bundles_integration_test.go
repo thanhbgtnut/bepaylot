@@ -14,13 +14,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf/pdftest"
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
-	"github.com/thanhenti/bepaylot/internal/parser/pdf/pdftest"
 	"github.com/thanhenti/bepaylot/internal/testkit"
-	"github.com/thanhenti/bepaylot/internal/textutil"
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 

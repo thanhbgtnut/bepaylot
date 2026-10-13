@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/thanhenti/bepaylot/internal/parser/vlm"
+	"github.com/thanhenti/bepaylot/docpipe/parser/vlm"
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 
@@ -47,7 +47,7 @@ func TestCachedClassifier(t *testing.T) {
 	c := cachedClassifier{inner: inner, cache: memCache{}, scope: "m1", log: slog.Default()}
 	labels := []types.ClassLabel{{Name: "uy_nhiem_chi", Title: "Uỷ nhiệm chi"}}
 	for i := 0; i < 3; i++ {
-		if l, conf, isBreak, err := c.ClassifyPage(ctx, labels, []byte("img-1")); err != nil || l != "uy_nhiem_chi" || conf != 0.98 || !isBreak {
+		if l, conf, isFirstPage, err := c.ClassifyPage(ctx, labels, []byte("img-1")); err != nil || l != "uy_nhiem_chi" || conf != 0.98 || !isFirstPage {
 			t.Fatalf("got %q %v %v", l, conf, err)
 		}
 	}

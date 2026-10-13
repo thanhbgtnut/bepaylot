@@ -22,6 +22,7 @@ RUN mkdir -p ../internal/webui/dist && npm run build
 FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY docpipe/go.mod docpipe/go.sum ./docpipe/
 RUN go mod download
 COPY . .
 COPY --from=ui /src/internal/webui/dist/ ./internal/webui/dist/
@@ -42,6 +43,7 @@ RUN set -eux; \
     printf 'prefix=/opt/pdfium\nlibdir=/opt/pdfium/lib\nincludedir=/opt/pdfium/include\n\nName: PDFium\nDescription: PDFium\nVersion: 1\nLibs: -L/opt/pdfium/lib -lpdfium\nCflags: -I/opt/pdfium/include\n' > /usr/lib/pkgconfig/pdfium.pc
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY docpipe/go.mod docpipe/go.sum ./docpipe/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 go build -tags pdfium_cgo -trimpath -ldflags="-s -w" -o /out/pdfium-worker ./cmd/pdfium-worker

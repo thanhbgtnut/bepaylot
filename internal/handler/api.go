@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser"
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
@@ -21,7 +22,6 @@ import (
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
 	"github.com/thanhenti/bepaylot/internal/llm"
 	"github.com/thanhenti/bepaylot/internal/mcp"
-	"github.com/thanhenti/bepaylot/internal/parser"
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/skills"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"

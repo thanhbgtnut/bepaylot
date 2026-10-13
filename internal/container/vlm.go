@@ -4,9 +4,9 @@ import (
 	"context"
 	"regexp"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser/vlm"
 	"github.com/thanhenti/bepaylot/internal/agent"
 	"github.com/thanhenti/bepaylot/internal/llm"
-	"github.com/thanhenti/bepaylot/internal/parser/vlm"
 )
 
 // agentVLM is the Transcriber of engine turboocr_vlm: every page (image +

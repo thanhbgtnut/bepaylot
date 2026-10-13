@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/thanhenti/bepaylot/internal/parser/vlm"
+	"github.com/thanhenti/bepaylot/docpipe/parser/vlm"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
@@ -64,18 +64,18 @@ type cachedClassifier struct {
 type pageType struct {
 	Label      string  `json:"label"`
 	Confidence float64 `json:"confidence"`
-	IsBreak    bool    `json:"is_break"`
+	FirstPage  bool    `json:"is_first_page"`
 }
 
-// The key names the questions asked ("decision+is_break"): answers stored
-// before is_break was asked are not reused.
+// The key names the questions asked ("decision+is_first_page"): answers
+// stored for other questions (is_break) are not reused.
 func (c cachedClassifier) ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (string, float64, bool, error) {
 	lb, _ := json.Marshal(labels)
-	r, err := cached(ctx, c.cache, c.log, cacheKey([]byte("decision+is_break"), []byte(c.scope), lb, image), "decision", func() (pageType, error) {
-		label, conf, isBreak, err := c.inner.ClassifyPage(ctx, labels, image)
-		return pageType{label, conf, isBreak}, err
+	r, err := cached(ctx, c.cache, c.log, cacheKey([]byte("decision+is_first_page"), []byte(c.scope), lb, image), "decision", func() (pageType, error) {
+		label, conf, isFirstPage, err := c.inner.ClassifyPage(ctx, labels, image)
+		return pageType{label, conf, isFirstPage}, err
 	})
-	return r.Label, r.Confidence, r.IsBreak, err
+	return r.Label, r.Confidence, r.FirstPage, err
 }
 
 // cachedVLM keeps the VLM's transcription of a page: the same image with the

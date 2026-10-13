@@ -7,14 +7,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/thanhenti/bepaylot/internal/parser/assemble"
-	"github.com/thanhenti/bepaylot/internal/parser/turboocr"
+	"github.com/thanhenti/bepaylot/docpipe/parser/assemble"
+	"github.com/thanhenti/bepaylot/docpipe/parser/turboocr"
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 
 func samplePage(t *testing.T) *types.ParsedPage {
 	t.Helper()
-	body, err := os.ReadFile("../../../parser/assemble/testdata/output_example.json")
+	body, err := os.ReadFile("../../../../docpipe/parser/assemble/testdata/output_example.json")
 	if err != nil {
 		t.Fatal(err)
 	}

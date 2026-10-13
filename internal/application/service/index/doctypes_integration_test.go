@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf/pdftest"
 	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
-	"github.com/thanhenti/bepaylot/internal/parser/pdf/pdftest"
 	"github.com/thanhenti/bepaylot/internal/testkit"
 	"github.com/thanhenti/bepaylot/internal/types"
 )
@@ -117,12 +117,12 @@ func TestNoDocTypesNoClassification(t *testing.T) {
 }
 
 // One file with two contracts scanned one after the other: every page is a
-// contract, and the page the Decision API marks as a first page (is_break)
-// cuts them into two documents.
-func TestIsBreakCutsSameTypePages(t *testing.T) {
+// contract, and the page the Decision API marks as a first page
+// (is_first_page) cuts them into two documents.
+func TestFirstPageCutsSameTypePages(t *testing.T) {
 	h := testkit.New(t)
 	h.PageTypes.Labels = []string{"hop_dong", "hop_dong", "hop_dong"}
-	h.PageTypes.Breaks = []bool{true, false, true}
+	h.PageTypes.FirstPages = []bool{true, false, true}
 	kb := h.KB(types.KBConfig{DocTypes: []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}}}, nil)
 	doc := h.Upload(kb.ID, "hai-hop-dong.pdf", nil, []pdftest.Page{
 		{"HOP DONG MUA BAN", "So 01"},

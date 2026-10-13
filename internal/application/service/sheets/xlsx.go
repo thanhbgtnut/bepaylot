@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 
-	"github.com/thanhenti/bepaylot/internal/textutil"
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
 )
 
 // The hidden sheet of an exported workbook (§6.9.6) maps each value cell to

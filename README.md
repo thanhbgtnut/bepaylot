@@ -620,7 +620,7 @@ make vet
 - Thêm endpoint: viết handler có annotation swag, đăng ký route trong `internal/router`, rồi `make swag`. Test `TestRoutesMatchOpenAPISpec` fail nếu route thiếu tài liệu. Xem [docs/adding-endpoints.md](docs/adding-endpoints.md).
 - Quy tắc module (spec §3.3), được `internal/archtest` kiểm tra:
   - service không import service khác, mà đi qua `internal/types/interfaces`;
-  - `internal/parser` là thư viện thuần, không đụng DB, queue, storage hay HTTP.
+  - parser (`docpipe/parser`) là thư viện thuần, không đụng DB, queue, storage hay HTTP: nó nằm trong Go module riêng `docpipe/` (xem [docpipe/README.md](docpipe/README.md)) nên trình biên dịch chặn việc import `internal/`.
 - Test đầu-cuối dùng `internal/testkit`: gồm Postgres thật, storage trong RAM, queue in-process, OCR giả và LLM kịch bản.
 
 ---

@@ -37,6 +37,7 @@ vet: ## go vet
 .PHONY: test
 test: ## Run network-free tests (set TEST_DATABASE_URL to include DB tests)
 	go test ./...
+	cd docpipe && go test ./...
 
 TEST_DSN ?= postgres://bepaylot:bepaylot@localhost:$${BEPAYLOT_PG_PORT:-5433}/bepaylot_test?sslmode=disable
 
@@ -44,10 +45,11 @@ TEST_DSN ?= postgres://bepaylot:bepaylot@localhost:$${BEPAYLOT_PG_PORT:-5433}/be
 test-db: ## Run all tests, including integration tests, on a separate bepaylot_test database
 	-$(COMPOSE) exec -T postgres psql -U bepaylot -d bepaylot -c 'CREATE DATABASE bepaylot_test' >/dev/null 2>&1
 	TEST_DATABASE_URL="$(TEST_DSN)" go test ./... -count=1
+	cd docpipe && go test ./... -count=1
 
 .PHONY: bench-render
 bench-render: ## Benchmark PDF page rendering (N7a); BEPAYLOT_RENDER_MODE=multi_threaded for native PDFium
-	go test ./internal/parser/pdf/ -run xxx -bench BenchmarkRenderA4 -benchtime 50x
+	cd docpipe && go test ./parser/pdf/ -run xxx -bench BenchmarkRenderA4 -benchtime 50x
 
 .PHONY: run-api
 run-api: ## Run only the HTTP API (needs REDIS_ADDR)

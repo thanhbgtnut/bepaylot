@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/thanhenti/bepaylot/internal/parser/pdf/pdftest"
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf/pdftest"
 	"github.com/thanhenti/bepaylot/internal/testkit"
 	"github.com/thanhenti/bepaylot/internal/types"
 )

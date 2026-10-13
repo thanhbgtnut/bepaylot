@@ -17,14 +17,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/thanhenti/bepaylot/docpipe/parser"
+	"github.com/thanhenti/bepaylot/docpipe/parser/assemble"
+	"github.com/thanhenti/bepaylot/docpipe/parser/imagefile"
+	"github.com/thanhenti/bepaylot/docpipe/parser/pdf"
+	"github.com/thanhenti/bepaylot/docpipe/parser/textlayer"
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
-	"github.com/thanhenti/bepaylot/internal/parser"
-	"github.com/thanhenti/bepaylot/internal/parser/assemble"
-	"github.com/thanhenti/bepaylot/internal/parser/imagefile"
-	"github.com/thanhenti/bepaylot/internal/parser/pdf"
-	"github.com/thanhenti/bepaylot/internal/parser/textlayer"
 	"github.com/thanhenti/bepaylot/internal/queue"
-	"github.com/thanhenti/bepaylot/internal/textutil"
 	"github.com/thanhenti/bepaylot/internal/types"
 	_ "golang.org/x/image/tiff"
 )
@@ -420,7 +420,7 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 }
 
 // classifyPage asks the Decision API which document type of the KB the page
-// image is, and whether the page starts a document (is_break), and keeps the
+// image is, and whether it is the first page of a document (is_first_page), and keeps the
 // answer on the page row (§6.9.4). It runs when the KB
 // has doc_types and a classifier is configured, once per page: a retry of
 // page:ocr keeps the type it has. A failure is logged and leaves the page
@@ -448,12 +448,12 @@ func (s *Service) classifyPage(ctx context.Context, d types.Document, row types.
 	// blank page, a letter) is forced into one of them, often confidently.
 	labels := append(append([]types.ClassLabel(nil), kb.Config.DocTypes...),
 		types.ClassLabel{Name: types.LabelOther, Title: "Khác", Description: "trang trắng, hoặc giấy tờ không thuộc các loại trên"})
-	label, conf, isBreak, err := s.classify.ClassifyPage(ctx, labels, img)
+	label, conf, isFirstPage, err := s.classify.ClassifyPage(ctx, labels, img)
 	if err != nil {
 		s.log.Warn("classify page failed", "doc", d.ID, "page", row.PageNo, "err", err)
 		return
 	}
-	if err := s.st.Pages.SetDocType(ctx, d.ID, d.Gen, row.PageNo, label, conf, isBreak); err != nil {
+	if err := s.st.Pages.SetDocType(ctx, d.ID, d.Gen, row.PageNo, label, conf, isFirstPage); err != nil {
 		s.log.Warn("classify page: save", "doc", d.ID, "page", row.PageNo, "err", err)
 	}
 }

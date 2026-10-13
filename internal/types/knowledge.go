@@ -40,17 +40,6 @@ const (
 	PageFailed    = "failed"
 )
 
-// Text sources for pages and lines (§5.8).
-const (
-	TextSourceOCR       = "ocr"
-	TextSourceLayer     = "layer"
-	TextSourceMerged    = "merged"
-	TextSourceLayerOnly = "layer_only"
-	// TextSourceVLM marks text transcribed by a vision-language model from a
-	// cropped layout region (engine turboocr_vlm, §5.9).
-	TextSourceVLM = "vlm"
-)
-
 // Searchable reports whether documents in this state can be searched.
 func Searchable(status string) bool {
 	switch status {

@@ -57,9 +57,9 @@ type CaseService interface {
 // (Decision API, §6.9.4).
 type PageClassifier interface {
 	// ClassifyPage returns one of labels with its confidence, and whether
-	// the page is the first page of a document (isBreak) rather than the
+	// the page is the first page of a document (isFirstPage) rather than the
 	// continuation of the one before it.
-	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (label string, confidence float64, isBreak bool, err error)
+	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (label string, confidence float64, isFirstPage bool, err error)
 }
 
 // SplitConfirmer stores the split the pipeline proposed for a case as its
