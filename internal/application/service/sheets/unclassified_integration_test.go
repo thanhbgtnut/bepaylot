@@ -111,3 +111,23 @@ func TestSheetOfUnclassifiedFiles(t *testing.T) {
 		t.Fatalf("invoices = %+v", inv)
 	}
 }
+
+// Saving an edited template adds a version: the query that numbers it locks
+// the template row (it failed with "FOR UPDATE is not allowed with GROUP BY").
+func TestTemplateAddVersion(t *testing.T) {
+	h := testkit.New(t)
+	draft := postgres.TemplateDraft{Kind: types.TemplateSheet, Slug: "ver_" + uuid.NewString()[:8], Name: "Mẫu", Body: "Bóc tách.",
+		Tables: []types.SheetTable{{Label: "hoa_don", Title: "Hoá đơn", Fields: []types.SheetField{{Key: "so_hoa_don", Label: "Số hoá đơn"}}}}, By: h.Owner.ID}
+	tpl, err := h.Store.Templates.Create(h.Ctx, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for want := 2; want <= 3; want++ {
+		if _, err := h.Store.Templates.AddVersion(h.Ctx, tpl.ID, draft); err != nil {
+			t.Fatalf("version %d: %v", want, err)
+		}
+		if _, err := h.Store.Templates.Get(h.Ctx, tpl.ID, want); err != nil {
+			t.Fatalf("get version %d: %v", want, err)
+		}
+	}
+}

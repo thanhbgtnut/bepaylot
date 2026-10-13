@@ -144,8 +144,9 @@ func (r *TemplatesRepo) AddVersion(ctx context.Context, id uuid.UUID, d Template
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var next int
-	err = tx.QueryRow(ctx, `SELECT COALESCE(max(v.version), 0) + 1 FROM prompt_templates t
-		LEFT JOIN prompt_template_versions v ON v.template_id = t.id WHERE t.id = $1 GROUP BY t.id FOR UPDATE OF t`, id).Scan(&next)
+	// The aggregate sits in a subquery: FOR UPDATE is not allowed with GROUP BY.
+	err = tx.QueryRow(ctx, `SELECT (SELECT COALESCE(max(version), 0) + 1 FROM prompt_template_versions WHERE template_id = t.id)
+		FROM prompt_templates t WHERE t.id = $1 FOR UPDATE`, id).Scan(&next)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return types.PromptTemplate{}, ErrNotFound
 	}
