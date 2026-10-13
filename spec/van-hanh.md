@@ -525,7 +525,7 @@ Khôi phục: dừng `api`/`worker` → `pg_restore -c -d "$DATABASE_URL" bepayl
 
 - Token đăng nhập hết hạn được tự xoá khi có người đăng nhập (sau 1 ngày quá hạn).
 - Dead-letter không tự xoá: sau khi xử lý, có thể xoá bản ghi cũ hơn 30 ngày: `DELETE FROM task_dead_letters WHERE failed_at < now() - interval '30 days';`
-- Cache ảnh PDF trên đĩa worker (`parser.render.cache_dir`, tối đa 20 GB) tự giới hạn; có thể xoá khi worker dừng.
+- Worker không cache file trên đĩa (U66): PDF gốc được tải từ S3 về thư mục tạm (`$TMPDIR/bepaylot-src-*`) khi task cần và xoá khi task xong; thư mục `bepaylot-src-*` còn sót sau khi process bị kill có thể xoá.
 - Không xoá trực tiếp bảng tài liệu/wiki bằng SQL: dùng API xoá tài liệu/hồ sơ để S3 và wiki được dọn cùng.
 
 ---

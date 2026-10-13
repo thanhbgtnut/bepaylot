@@ -7,6 +7,8 @@
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
 >
+> Thay đổi trong 0.23 (U66): **bỏ cache dữ liệu trên đĩa** cho triển khai k8s (pod ít dung lượng): worker không giữ bản sao PDF gốc; mỗi task tải file từ S3 về thư mục tạm rồi xoá khi xong (§5.7). Bỏ `parser.render.cache_dir` và `cache_max_bytes`.
+>
 > Thay đổi trong 0.23 (U65): **key và mã tự sinh từ tên tiếng Việt**
 > - **Key của cột** trong mẫu bảng không còn gõ tay: sinh từ **tên cột** theo quy tắc sinh mã (§7.7). **Mã loại giấy tờ** (bảng con của mẫu, `doc_types` của KB) cũng sinh từ tên loại theo cùng quy tắc (§7.7, §7.10).
 > - Quy tắc sinh mã: bỏ dấu tiếng Việt (`đ` → `d`), viết thường, mỗi dãy ký tự không phải chữ/số thành một dấu `_`, bỏ `_` ở đầu và cuối. Ví dụ "Số hoá đơn" → `so_hoa_don`, "Hợp đồng (bản chính)" → `hop_dong_ban_chinh`.
@@ -165,6 +167,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U63 | **Đóng gói** luồng nhận PDF, chuyển ảnh, gọi model phân loại, gom tài liệu theo trang đầu, phân loại, gọi OCR `/raw` và VLM thành **một module dùng được cho project khác**. (Chốt khi hỏi lại: **Go module riêng trong repo**; bước VLM là **interface kèm client mặc định** kiểu OpenAI) | còn hiệu lực | §3.1, §3.3, §3.4, §12 (N53) |
 | U64 | **Mỗi mẫu Excel là độc lập**: người dùng chọn được nhiều mẫu khác nhau **không phụ thuộc knowledge base**, tạo được nhiều mẫu với nhiều loại tài liệu khác nhau; đã có mẫu rồi tạo mẫu mới **không được báo trùng slug**; nút ở Studio chỉ **chọn đúng mẫu và tạo theo yêu cầu ứng với prompt**. (Lỗi gốc: mẫu do admin tạo, người dùng khác chọn thì nút báo "Tạo 0 bảng từ 1 bộ". Chốt khi hỏi lại: loại giấy tờ case không có thì **agent tự tìm theo prompt, mỗi file một dòng**; loại giấy tờ của bảng con **tự nhập, có gợi ý từ KB**) | còn hiệu lực; làm rõ U60, sửa U48/U59 (bảng con của loại case không phân loại vẫn có dòng) | §6.9.6, §7.2, §7.7, §10.8 |
 | U65 | Sửa phần nhập **cột key**: mọi key của cột **sinh ra từ tên cột viết bằng tiếng Việt có dấu**, theo nguyên tắc **chuyển thành không dấu, viết thường, ngăn bằng dấu gạch dưới (`_`)**. **Loại giấy tờ cũng vậy**: mã tự chuyển từ tên loại giấy tờ sang không dấu, viết thường, bỏ ký tự đặc biệt | còn hiệu lực; sửa U59 (key không còn do người soạn gõ), U50/U57 (mã loại của KB không còn gõ tay), làm rõ U64 | §7.7, §7.10 |
+| U66 | **Bỏ phần cache data** vì triển khai trên **k8s, pod không có nhiều dung lượng**; dữ liệu **đã lưu S3 thì dùng file đó** để thực hiện | còn hiệu lực; thay cache LRU 20 GB của §5.7 | §5.7, §9.1, §11 |
 
 ## 1. Yêu cầu chung
 
@@ -807,7 +810,7 @@ DPI thực tế = `min(DPI, MaxLongSide / cạnh_dài_inch, sqrt(MaxPixels / di�
 | Timeout mỗi trang | `render.page_timeout` (mặc định 30s). Quá hạn thì kill process con; trang đó được retry, sau đó đánh dấu `failed` (PDF độc hại hoặc lỗi) |
 | Mở document một lần mỗi batch | `page:render` xử lý `render.batch_pages` trang liên tiếp (mặc định 8) trên một lần `OpenDocument`, rồi `FPDF_CloseDocument` |
 | Pipeline trong batch | Render trang *n+1* chạy song song với upload S3 trang *n* (kênh có buffer 2) nên RAM phía Go ≤ ~3 JPEG mỗi worker |
-| File nguồn trên đĩa local | Worker tải PDF gốc từ S3 về `render.cache_dir` (tải song song theo range). Cache LRU giới hạn `render.cache_max_bytes` (mặc định 20 GB); file đang dùng được pin, không bị xoá |
+| File nguồn trên đĩa local | **Không cache trên đĩa** (U66): S3 là bản duy nhất. Task cần file gốc (`split`, `render`) tải PDF từ S3 về thư mục tạm của process (`$TMPDIR/bepaylot-src-*`, tải song song theo range), các task đang chạy trên cùng một file dùng chung một bản, task cuối xong thì **xoá ngay**. Đĩa chỉ chứa các file đang xử lý; thư mục tạm bị xoá khi process dừng. Không còn `render.cache_dir`, `render.cache_max_bytes` |
 | Giới hạn container | Deployment worker đặt `resources.limits` (cgroup), với `GOMEMLIMIT` ≈ 70% limit cho process Go chính |
 
 **File ảnh (không phải PDF)**: JPEG/PNG/TIFF được decode bằng thư viện chuẩn Go và `golang.org/x/image/tiff`, xoay theo EXIF orientation, thu nhỏ bằng `golang.org/x/image/draw` nếu vượt `MaxPixels`, rồi coi như PDF một trang. TIFF nhiều trang để P4, vì `x/image/tiff` chỉ đọc trang đầu.
@@ -1851,7 +1854,7 @@ Skill `tham-dinh-phuong-an` và các file trong `compare/` (trích xuất báo c
 
 **Quy tắc**
 - **Upload**: request multipart được stream thẳng vào `aws-sdk-go-v2/feature/s3/manager.Uploader` (`PartSize` 16 MB, `Concurrency` 4 → RAM ≤ 64 MB mỗi upload). Trên đường stream có `io.TeeReader` → sha256 + bộ quét PDF/A. Key đặt theo `doc_id`, không theo sha256. Nếu sau khi upload phát hiện trùng `(case_id, sha256)`, object mới bị xoá và API trả document đã có (`200`, `duplicate: true`).
-- **Worker đọc file gốc**: `manager.Downloader` tải song song theo range về cache đĩa local (§5.7). PDFium cần truy cập ngẫu nhiên nên không đọc trực tiếp từ S3.
+- **Worker đọc file gốc**: `manager.Downloader` tải song song theo range về file tạm, xoá khi task xong (§5.7, U66; không cache trên đĩa). PDFium cần truy cập ngẫu nhiên nên không đọc trực tiếp từ S3.
 - **Gửi ảnh cho OCR**: body của `GetObject` được stream thẳng vào request `POST /ocr/raw` (đặt `Content-Length` từ S3), không đệm ảnh trong RAM.
 - **Phục vụ ảnh cho client**: `GET /documents/:id/pages/:n/image` **stream ảnh qua API** (`Cache-Control: private, max-age=3600`; ảnh của một `gen` không đổi). Web app tải ảnh bằng `fetch` kèm header xác thực; nếu API trả `302` tới presigned URL của S3/MinIO (origin khác) thì trình duyệt coi là request cross-origin, S3 không có CORS nên bị chặn và báo lỗi không kết nối được (lỗi trước U36). Client ngoài có thể xin `?redirect=1` để nhận `302` tới presigned URL (TTL `storage.presign_ttl`, mặc định 15 phút), chỉ khi `storage.presign=true`.
 - **Xoá và reparse**: object của `gen` cũ được xoá bằng `DeleteObjects` theo lô 1.000 key trong task `maintenance`. Upload dang dở (multipart chưa hoàn tất) được dọn bằng lifecycle rule `AbortIncompleteMultipartUpload` sau 1 ngày.
@@ -2644,8 +2647,6 @@ parser:
     page_timeout: 30s
     recycle_after_pages: 500
     max_worker_rss_mb: 1024
-    cache_dir: /var/cache/bepaylot/pdf
-    cache_max_bytes: 21474836480    # 20 GB
   text_layer:
     enabled: all                    # all | pdfa_only | off
     min_chars: 20

@@ -39,7 +39,7 @@ var (
 type Deps struct {
 	Store    *postgres.Store
 	Objects  storage.ObjectStore
-	Files    *storage.FileCache
+	Files    *storage.TempFiles
 	Queue    queue.Enqueuer
 	Renderer Renderer
 	Engines  *parser.Registry
@@ -58,7 +58,7 @@ type Deps struct {
 type Service struct {
 	st       *postgres.Store
 	objects  storage.ObjectStore
-	files    *storage.FileCache
+	files    *storage.TempFiles
 	q        queue.Enqueuer
 	renderer Renderer
 	engines  *parser.Registry

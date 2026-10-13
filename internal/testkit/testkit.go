@@ -129,7 +129,7 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 		t.Fatal(rendererErr)
 	}
 	objects := storage.NewMemory()
-	files, err := storage.NewFileCache(t.TempDir(), 1<<30, objects)
+	files, err := storage.NewTempFiles(t.TempDir(), objects)
 	if err != nil {
 		t.Fatal(err)
 	}

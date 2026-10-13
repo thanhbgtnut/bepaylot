@@ -588,7 +588,6 @@ func (s *Service) purge(ctx context.Context, d types.Document, _ types.DocTaskPa
 	if _, err := s.objects.DeletePrefix(ctx, s.keys.Doc(d.KBID, d.ID)); err != nil {
 		return err
 	}
-	s.files.Forget(d.StorageKey)
 	return s.st.Documents.Purge(ctx, d.ID)
 }
 

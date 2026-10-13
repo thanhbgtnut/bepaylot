@@ -92,7 +92,7 @@ func setup(t *testing.T) (*Service, *queue.Inline, *postgres.Store, uuid.UUID, *
 	}
 	t.Cleanup(func() { r.Close() })
 	objects := storage.NewMemory()
-	files, err := storage.NewFileCache(t.TempDir(), 1<<30, objects)
+	files, err := storage.NewTempFiles(t.TempDir(), objects)
 	if err != nil {
 		t.Fatal(err)
 	}

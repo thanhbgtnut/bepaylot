@@ -107,8 +107,6 @@ type Render struct {
 	PageTimeout       time.Duration `yaml:"page_timeout"`
 	RecycleAfterPages int           `yaml:"recycle_after_pages"`
 	MaxWorkerRSSMB    int           `yaml:"max_worker_rss_mb"`
-	CacheDir          string        `yaml:"cache_dir"`
-	CacheMaxBytes     int64         `yaml:"cache_max_bytes"`
 }
 
 // TextLayer configures how a PDF's own text supplements OCR.
@@ -284,10 +282,6 @@ func (c *Config) applyPipelineDefaults() {
 	setDuration(&p.Render.PageTimeout, 30*time.Second)
 	setInt(&p.Render.RecycleAfterPages, 500)
 	setInt(&p.Render.MaxWorkerRSSMB, 1024)
-	setString(&p.Render.CacheDir, "data/cache/pdf")
-	if p.Render.CacheMaxBytes == 0 {
-		p.Render.CacheMaxBytes = 20 << 30
-	}
 	setString(&p.TextLayer.Enabled, "all")
 	setInt(&p.TextLayer.MinChars, 20)
 	if p.TextLayer.MaxBadCharRatio == 0 {

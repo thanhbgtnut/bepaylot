@@ -45,7 +45,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 ENV BEPAYLOT_RENDER_MODE=multi_threaded \
     BEPAYLOT_PDFIUM_WORKER=/app/pdfium-worker
 
-RUN mkdir -p /logs /app/data && touch /logs/app.log
+RUN mkdir /logs && touch /logs/app.log
 
 # Create a group and user
 RUN addgroup --gid 10000 appadmin && \

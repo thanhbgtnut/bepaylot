@@ -204,8 +204,6 @@ parser:
     page_timeout: 30s
     recycle_after_pages: 500
     max_worker_rss_mb: 1024
-    cache_dir: data/cache/pdf
-    cache_max_bytes: 21474836480    # 20 GB
   text_layer:
     enabled: all                    # all | pdfa_only | off
     min_chars: 20

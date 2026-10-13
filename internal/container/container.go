@@ -157,7 +157,14 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	} else {
 		return errors.New("storage.s3.bucket is required")
 	}
-	files, err := storage.NewFileCache(cfg.Parser.Render.CacheDir, cfg.Parser.Render.CacheMaxBytes, objects)
+	// Source files are not cached on disk: a task downloads the one it works
+	// on into the temp directory and removes it when done.
+	tmp, err := os.MkdirTemp("", "bepaylot-src-")
+	if err != nil {
+		return err
+	}
+	app.closers = append(app.closers, func() { os.RemoveAll(tmp) })
+	files, err := storage.NewTempFiles(tmp, objects)
 	if err != nil {
 		return err
 	}
