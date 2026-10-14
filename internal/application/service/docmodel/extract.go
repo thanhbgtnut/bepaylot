@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -21,7 +22,8 @@ import (
 // and JSON checking. The case tools (kb_*) and MCP tools are for chat.
 var ExtractTools = []string{"calculate", "json_validate"}
 
-// extractMaxChars caps the text of one document sent to the agent.
+// extractMaxChars caps the text of one document sent to the agent (lines and
+// markdown together).
 const extractMaxChars = 60000
 
 // ExtractRunner runs one extraction turn of the agent with ExtractTools, in a
@@ -116,7 +118,18 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 		if err != nil {
 			return saved, err
 		}
-		if len(lines) == 0 {
+		pages, err := e.st.Pages.List(ctx, d.ID, d.Gen, g.PageStart, g.PageEnd)
+		if err != nil {
+			return saved, err
+		}
+		md := map[int]string{}
+		for _, p := range pages {
+			if s := strings.TrimSpace(p.Markdown); s != "" {
+				md[p.PageNo] = s
+			}
+		}
+		if len(lines) == 0 && len(md) == 0 {
+			e.log.Warn("extract: document has no text", "doc", d.ID, "pages", fmt.Sprintf("%d-%d", g.PageStart, g.PageEnd))
 			continue // no text to read: asking would only record "not found"
 		}
 		if user == nil {
@@ -126,11 +139,15 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 			}
 			user = &u
 		}
-		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines))
+		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md))
 		if err != nil {
 			return saved, err
 		}
-		for _, w := range extractedFields(d, g, missing, lines, reply) {
+		writes := extractedFields(d, g, missing, lines, md, reply)
+		if len(writes) == 0 {
+			e.log.Warn("extract: the reply has no JSON, nothing stored", "doc", d.ID, "label", g.Label, "reply", textutil.Truncate(reply, 500))
+		}
+		for _, w := range writes {
 			if _, err := e.st.Fields.Save(ctx, w); err != nil {
 				e.log.Warn("extract: save field", "doc", d.ID, "key", w.Key, "err", err)
 				continue
@@ -143,8 +160,9 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 
 // extractPrompt is the message of one extraction turn: the document type, the
 // fields to find, each with the description that guides the agent (U81), and
-// the text of the document as numbered lines.
-func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine) string {
+// the text of the document, page by page, in two forms that complete each
+// other: the OCR lines, numbered, and the markdown of the page.
+func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bóc tách thông tin từ một giấy tờ thuộc loại: %s", t.Title)
 	if t.Description != "" {
@@ -162,42 +180,62 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString("\nNội dung giấy tờ, theo trang; mỗi dòng mở đầu bằng số dòng [L<n>] của trang đó:\n")
-	cur, size := -1, 0
+	b.WriteString("\nNội dung giấy tờ, theo trang, ở hai dạng của cùng một trang:\n" +
+		"- <lines>: chữ OCR theo từng dòng, mỗi dòng mở đầu bằng số dòng [L<n>] của trang đó;\n" +
+		"- <markdown>: bản markdown của trang, giữ bố cục (tiêu đề, bảng, cột).\n" +
+		"Dùng cả hai để bổ trợ và đối chiếu nhau: markdown cho biết giá trị thuộc ô, cột, mục nào; dòng [L] cho biết chữ gốc và vị trí. " +
+		"Khi hai dạng ghi khác nhau, chọn giá trị hợp với ngữ cảnh của giấy tờ và hạ confidence.\n")
+	byPage := map[int][]postgres.PageLine{}
+	var order []int
 	for _, l := range lines {
-		if strings.TrimSpace(l.Text) == "" {
-			continue
+		if _, ok := byPage[l.PageNo]; !ok {
+			order = append(order, l.PageNo)
 		}
-		if size += len(l.Text); size > extractMaxChars {
+		byPage[l.PageNo] = append(byPage[l.PageNo], l)
+	}
+	for p := range md {
+		if _, ok := byPage[p]; !ok {
+			order = append(order, p)
+		}
+	}
+	sort.Ints(order)
+	size := 0
+	for _, p := range order {
+		var pg strings.Builder
+		fmt.Fprintf(&pg, "<page n=\"%d\">\n", p)
+		if len(byPage[p]) > 0 {
+			pg.WriteString("<lines>\n")
+			for _, l := range byPage[p] {
+				if strings.TrimSpace(l.Text) != "" {
+					fmt.Fprintf(&pg, "[L%d] %s\n", l.LineNo, l.Text)
+				}
+			}
+			pg.WriteString("</lines>\n")
+		}
+		if md[p] != "" {
+			fmt.Fprintf(&pg, "<markdown>\n%s\n</markdown>\n", md[p])
+		}
+		pg.WriteString("</page>\n")
+		if size += pg.Len(); size > extractMaxChars && size > pg.Len() {
 			b.WriteString("[… phần sau của giấy tờ bị lược vì quá dài]\n")
 			break
 		}
-		if l.PageNo != cur {
-			if cur >= 0 {
-				b.WriteString("</page>\n")
-			}
-			cur = l.PageNo
-			fmt.Fprintf(&b, "<page n=\"%d\">\n", cur)
-		}
-		fmt.Fprintf(&b, "[L%d] %s\n", l.LineNo, l.Text)
-	}
-	if cur >= 0 {
-		b.WriteString("</page>\n")
+		b.WriteString(pg.String())
 	}
 	b.WriteString("\nChỉ dùng nội dung ở trên, không suy đoán. Giá trị phải tính (tổng, hiệu, tích, thương) thì gọi tool calculate " +
 		"và ghi cách tính vào note. Kiểu date viết YYYY-MM-DD; kiểu number và money viết số, không có dấu ngăn cách hàng nghìn.\n" +
 		"Trả lời đúng một JSON, không kèm lời giải thích:\n" +
 		`{"fields":[{"key":"<key>","value":<giá trị, hoặc null khi giấy tờ không có>,"confidence":<0-1>,` +
-		`"page":<số trang>,"line":<số dòng [L] chứa giá trị>,"note":"<cách tính, nếu có>"}]}`)
+		`"page":<số trang>,"line":<số dòng [L] chứa giá trị, hoặc null khi giá trị chỉ có trong markdown>,"note":"<cách tính, nếu có>"}]}`)
 	return b.String()
 }
 
 // extractedFields reads the agent's JSON reply into the fields to store: each
 // asked key with its value and the cited line as evidence when the line
-// exists. A key the reply has no value for is stored without a value: the
+// exists, else the page when its markdown has the value. A key the reply has no value for is stored without a value: the
 // document does not have it. A reply that is not JSON gives no field, so the
 // document is asked again by the next sheet.
-func extractedFields(d types.Document, g types.Segment, asked []types.SheetField, lines []postgres.PageLine, reply string) []postgres.FieldWrite {
+func extractedFields(d types.Document, g types.Segment, asked []types.SheetField, lines []postgres.PageLine, md map[int]string, reply string) []postgres.FieldWrite {
 	type item struct {
 		Key        string  `json:"key"`
 		Value      any     `json:"value"`
@@ -244,6 +282,13 @@ func extractedFields(d types.Document, g types.Segment, asked []types.SheetField
 					BBox: []float64{l.BBox.X0, l.BBox.Y0, l.BBox.X1, l.BBox.Y1}, Quote: l.Text,
 					CitationID: fmt.Sprintf("doc:%s:p%d:l%d-%d", d.ID, l.PageNo, l.LineNo, l.LineNo), Status: "valid"}}
 				w.ValueMatched = textutil.ValueIn(text, l.Text)
+			}
+		}
+		if !w.ValueMatched && textutil.ValueIn(text, md[f.Page]) {
+			w.ValueMatched = true
+			if len(w.Evidence) == 0 {
+				w.Evidence = []types.Evidence{{DocumentID: d.ID, FileName: d.FileName, PageNo: f.Page,
+					CitationID: fmt.Sprintf("doc:%s:p%d", d.ID, f.Page), Status: "valid"}}
 			}
 		}
 		res = append(res, w)

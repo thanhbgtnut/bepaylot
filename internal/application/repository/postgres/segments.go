@@ -86,7 +86,8 @@ func (r *SegmentsRepo) SetClassifyStatus(ctx context.Context, doc uuid.UUID, sta
 }
 
 // SaveProposals replaces the pipeline segments of a document's gen (§6.9.4).
-// Segments of the user are kept; proposals overlapping them are dropped.
+// Segments of the user in this gen are kept; proposals overlapping them are
+// dropped. Segments of older gens (before a reparse) go stale, the user's too.
 func (r *SegmentsRepo) SaveProposals(ctx context.Context, caseID, doc uuid.UUID, gen int, segs []types.Segment, mode, model string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -100,11 +101,15 @@ func (r *SegmentsRepo) SaveProposals(ctx context.Context, caseID, doc uuid.UUID,
 		WHERE document_id = $1 AND source = 'pipeline' AND status = 'active'`, doc); err != nil {
 		return fmt.Errorf("segments.SaveProposals stale: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `UPDATE document_segments SET status = 'stale', bundle_id = NULL
+		WHERE document_id = $1 AND gen <> $2 AND status = 'active'`, doc, gen); err != nil {
+		return fmt.Errorf("segments.SaveProposals old gens: %w", err)
+	}
 	for _, g := range segs {
 		if _, err := tx.Exec(ctx, `INSERT INTO document_segments (case_id, document_id, gen, page_start, page_end, label, proposed_label,
 			confidence, source, mode, model)
 			SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'pipeline', $9, $10
-			WHERE NOT EXISTS (SELECT 1 FROM document_segments u WHERE u.document_id = $2 AND u.source = 'user' AND u.status = 'active'
+			WHERE NOT EXISTS (SELECT 1 FROM document_segments u WHERE u.document_id = $2 AND u.gen = $3 AND u.source = 'user' AND u.status = 'active'
 			  AND u.page_start <= $5 AND u.page_end >= $4)`,
 			caseID, doc, gen, g.PageStart, g.PageEnd, g.Label, g.ProposedLabel, g.Confidence, mode, model); err != nil {
 			return fmt.Errorf("segments.SaveProposals insert: %w", err)

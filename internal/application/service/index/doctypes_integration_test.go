@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/thanhenti/bepaylot/docpipe/parser/pdf/pdftest"
+	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/testkit"
@@ -136,6 +139,29 @@ func TestFirstPageCutsSameTypePages(t *testing.T) {
 	}
 	if a, b := segs[0], segs[1]; a.Label != "hop_dong" || a.PageStart != 1 || a.PageEnd != 2 || b.Label != "hop_dong" || b.PageStart != 3 || b.PageEnd != 3 {
 		t.Fatalf("segments = %+v", segs)
+	}
+}
+
+// A reparse classifies the file again: the split the user reviewed on the old
+// generation does not hide the new documents (an empty sheet otherwise).
+func TestReparseReplacesReviewedSplit(t *testing.T) {
+	h := testkit.New(t)
+	h.PageTypes.Labels = []string{"hop_dong", "hop_dong"}
+	kb := h.KB(types.KBConfig{DocTypes: []types.DocType{{ClassLabel: types.ClassLabel{Name: "hop_dong", Title: "Hợp đồng"}}}}, nil)
+	doc := h.Upload(kb.ID, "a.pdf", nil, []pdftest.Page{{"HOP DONG MUA BAN", "Dieu 1"}})
+	h.Drain()
+	cs := h.Case(kb.ID, testkit.DefaultCase)
+	reviewed := [][]postgres.SplitSegment{{{DocumentID: doc, PageStart: 1, PageEnd: 1, Label: types.LabelOther}}}
+	if err := h.Store.Segments.SaveSplit(h.Ctx, cs.ID, h.Owner.ID, []uuid.UUID{doc}, reviewed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Docs.Reparse(h.Ctx, h.Owner.ID, doc, document.ReparseRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	h.Drain()
+	segs, err := h.Store.Segments.ByCase(h.Ctx, cs.ID)
+	if err != nil || len(segs) != 1 || segs[0].Label != "hop_dong" || segs[0].Source != types.SegmentPipeline {
+		t.Fatalf("segments after reparse = %+v %v", segs, err)
 	}
 }
 
