@@ -74,6 +74,8 @@ export function SheetPage() {
   const [imported, setImported] = useState<SheetImport | null>(null);
   const [tab, setTab] = useState("");
   const [sel, setSel] = useState<string | null>(null);
+  // Row order of each table after a sort in the grid (view only).
+  const [order, setOrder] = useState<Record<string, number[]>>({});
   const [panel, setPanelState] = useState<Panel>(() => {
     try {
       return (localStorage.getItem(PANEL_KEY) as Panel) || null;
@@ -125,11 +127,11 @@ export function SheetPage() {
       t.rows.forEach((row, ri) =>
         t.fields.forEach((f, fi) => {
           const id = cellId(t.label, rowIdOf(row), f.key);
-          m.set(id, { id, table: t, row, key: f.key, label: f.label, cv: row.cells_view[f.key], ref: col(fi + (t.label ? 2 : 1)) + (ri + 2) });
+          m.set(id, { id, table: t, row, key: f.key, label: f.label, cv: row.cells_view[f.key], ref: col(fi + (t.label ? 2 : 1)) + ((order[t.label]?.indexOf(ri) ?? ri) + 2) });
         }),
       );
     return m;
-  }, [tables]);
+  }, [tables, order]);
   const valueOf = (c: Cell) => drafts[c.id]?.value ?? c.cv?.value ?? "";
   const all = [...cells.values()];
   const unsaved = all.filter((c) => drafts[c.id] && valueKey(drafts[c.id].value) !== valueKey(c.cv?.value ?? ""));
@@ -146,6 +148,8 @@ export function SheetPage() {
       return next;
     });
   const shape = useMemo(() => gridShape(tables), [tables]);
+  // A rebuilt grid starts in the original order.
+  useEffect(() => setOrder({}), [shape]);
 
   const save = async () => {
     if (!sheet) return;
@@ -269,6 +273,7 @@ export function SheetPage() {
                     sel={sel}
                     onSelect={setSel}
                     onValue={(id, v) => setValue(cells.get(id)!, v)}
+                    onOrder={(label, o) => setOrder((m) => ({ ...m, [label]: o }))}
                   />
                 </Suspense>
               )}

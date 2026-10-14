@@ -1,11 +1,26 @@
 import { useEffect, useRef } from "react";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import viVN from "@univerjs/preset-sheets-core/locales/vi-VN";
+import { UniverSheetsFilterPreset } from "@univerjs/preset-sheets-filter";
+import filterViVN from "@univerjs/preset-sheets-filter/locales/vi-VN";
 import { UniverSheetsFindReplacePreset } from "@univerjs/preset-sheets-find-replace";
 import findViVN from "@univerjs/preset-sheets-find-replace/locales/vi-VN";
-import { BorderStyleTypes, createUniver, LocaleType, mergeLocales, type ICellData, type IStyleData, type IWorksheetData } from "@univerjs/presets";
+import { UniverSheetsSortPreset } from "@univerjs/preset-sheets-sort";
+import sortViVN from "@univerjs/preset-sheets-sort/locales/vi-VN";
+import {
+  BorderStyleTypes,
+  createUniver,
+  IUndoRedoService,
+  LocaleType,
+  mergeLocales,
+  type ICellData,
+  type IStyleData,
+  type IWorksheetData,
+} from "@univerjs/presets";
 import "@univerjs/preset-sheets-core/lib/index.css";
+import "@univerjs/preset-sheets-filter/lib/index.css";
 import "@univerjs/preset-sheets-find-replace/lib/index.css";
+import "@univerjs/preset-sheets-sort/lib/index.css";
 
 import type { SheetRowView, SheetTableView } from "../../api/types";
 
@@ -19,16 +34,38 @@ interface Layout {
   at: Map<string, string>; // "sheet:r:c" → cell id
   fixed: Map<string, string>; // "sheet:r:c" → its value
   base: Map<string, IStyleData>; // cell id → its style without the status colour
+  order: Map<string, number[]>; // sheet → indexes into its table's rows, top to bottom
 }
 
 // Commands that would move cells away from their field or document: rows,
-// columns and ranges inserted, removed or moved, merges, sorts, sheets.
+// columns and ranges inserted, removed or moved, merges, sheets. Sorting is
+// done here instead (sortRows), moving whole documents.
 const BLOCKED =
   /^sheet\.command\.(insert-(row|col|multi|range|sheet)|remove-(row|col|sheet)|delete-range-move|move-(rows|cols|range)|add-worksheet-merge|reorder-range|copy-sheet|set-worksheet-(name|order)|paste-besides-border)/;
 const XL_HEAD = "rgba(16, 124, 65, 0.12)";
 const TEXT = { pattern: "@" }; // text format: extracted values stay as written (0123, 15.000.000, 01/02/2024)
 const key = (sheet: string, r: number, c: number) => `${sheet}:${r}:${c}`;
 const sheetOf = (ti: number) => "t" + ti;
+const leadOf = (t: SheetTableView) => (t.rows.some((r) => r.bundle) ? 2 : 1);
+
+// Sort order like Excel with Vietnamese values: dates (dd/mm/yyyy) and
+// numbers (15.000.000, 2,5) by value and before text, text by Vietnamese
+// collation, blanks last.
+const collator = new Intl.Collator("vi", { numeric: true, sensitivity: "base" });
+function sortKey(s: string): number | null {
+  const d = s.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (d) return +d[3] * 10000 + +d[2] * 100 + +d[1];
+  if (/^-?[\d. ]+(,\d+)?$/.test(s.trim()) && /\d/.test(s)) return Number(s.replace(/[. ]/g, "").replace(",", "."));
+  return null;
+}
+function compare(x: string, y: string) {
+  if (!x.trim() || !y.trim()) return !x.trim() === !y.trim() ? 0 : x.trim() ? -1 : 1;
+  const a = sortKey(x);
+  const b = sortKey(y);
+  if (a != null && b != null) return a - b;
+  if (a != null || b != null) return a != null ? -1 : 1;
+  return collator.compare(x, y);
+}
 
 // The sheet grid on Univer (Excel-like: resize, select, copy/paste, undo).
 // The page keeps the source of truth: values come from the AI value or the
@@ -43,6 +80,7 @@ export default function UniverGrid({
   sel,
   onSelect,
   onValue,
+  onOrder,
 }: {
   tables: SheetTableView[];
   idOf: (t: SheetTableView, row: SheetRowView, key: string) => string;
@@ -52,18 +90,19 @@ export default function UniverGrid({
   sel: string | null;
   onSelect: (id: string) => void;
   onValue: (id: string, value: string) => void;
+  onOrder: (table: string, order: number[]) => void; // rows of a table after a sort, as indexes into its rows
 }) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<FUniver | null>(null);
   const layout = useRef<Layout | null>(null);
   const shown = useRef(new Map<string, { v: string; tone: string }>());
-  const live = useRef({ tables, idOf, valueOf, toneOf, onSelect, onValue });
-  live.current = { tables, idOf, valueOf, toneOf, onSelect, onValue };
+  const live = useRef({ tables, idOf, valueOf, toneOf, onSelect, onValue, onOrder });
+  live.current = { tables, idOf, valueOf, toneOf, onSelect, onValue, onOrder };
 
   // Build the workbook once; the page remounts the grid (key) when rows or
   // fields change.
   useEffect(() => {
-    const { tables, idOf, valueOf, toneOf } = live.current;
+    const { tables, idOf, valueOf } = live.current;
     const css = getComputedStyle(document.documentElement);
     const color = (v: string) => css.getPropertyValue(v).trim();
     const tones: Record<string, string> = {
@@ -81,44 +120,60 @@ export default function UniverGrid({
       at: new Map(),
       fixed: new Map(),
       base: new Map(),
+      order: new Map(),
     };
     shown.current = new Map();
-    const sheets: Record<string, Partial<IWorksheetData>> = {};
-    tables.forEach((t, ti) => {
-      const sheet = sheetOf(ti);
-      const bundle = t.rows.some((r) => r.bundle);
-      const lead = bundle ? 2 : 1;
-      const cellData: Record<number, Record<number, ICellData>> = { 0: {} };
-      const head: IStyleData = { bl: 1, bg: { rgb: XL_HEAD } };
-      const fix = (r: number, c: number, v: string, s: IStyleData = {}) => {
-        (cellData[r] ??= {})[c] = { v, s };
-        L.fixed.set(key(sheet, r, c), v);
-      };
-      fix(0, 0, t.label ? "Loại tài liệu" : "File", head);
-      if (bundle) fix(0, 1, "Bộ", head);
-      t.fields.forEach((f, fi) => fix(0, lead + fi, f.label, head));
-      t.rows.forEach((row, ri) => {
-        const r = ri + 1;
-        const top = ri > 0 && t.rows[ri - 1].bundle !== row.bundle ? { bd: { t: rule } } : {};
-        fix(r, 0, t.label ? t.title : (row.file_name ?? ""), top);
-        if (bundle) fix(r, 1, row.bundle ?? "", { ...top, bl: 1 });
+    // The data rows of a sub-table in the given order, with the maps from
+    // cells to documents and fields. Used to build and after a sort.
+    const place = (sheet: string, t: SheetTableView, order: number[]) => {
+      const { idOf, valueOf, toneOf } = live.current;
+      const lead = leadOf(t);
+      const rows: ICellData[][] = [];
+      order.forEach((ri, i) => {
+        const row = t.rows[ri];
+        const r = i + 1;
+        const bd = i > 0 && t.rows[order[i - 1]].bundle !== row.bundle ? { t: rule } : null;
+        const cells: ICellData[] = [];
+        const fix = (c: number, v: string, s: IStyleData) => {
+          cells[c] = { v, s };
+          L.fixed.set(key(sheet, r, c), v);
+        };
+        fix(0, t.label ? t.title : (row.file_name ?? ""), { bd });
+        if (lead === 2) fix(1, row.bundle ?? "", { bd, bl: 1 });
         t.fields.forEach((f, fi) => {
           const id = idOf(t, row, f.key);
           const c = lead + fi;
           const v = valueOf(id);
           const tone = toneOf(id);
-          const base = { ...top, n: TEXT };
-          cellData[r][c] = {
-            v,
-            t: 1,
-            s: { ...base, ...(tone ? { bg: { rgb: tones[tone] } } : {}) },
-          };
+          const base: IStyleData = { bd, n: TEXT };
+          cells[c] = { v, t: 1, s: { ...base, bg: tone ? { rgb: tones[tone] } : null } };
           L.base.set(id, base);
           L.pos.set(id, { sheet, r, c });
           L.at.set(key(sheet, r, c), id);
           shown.current.set(id, { v, tone });
         });
+        rows.push(cells);
       });
+      L.order.set(sheet, order);
+      return rows;
+    };
+
+    const tableOf = new Map<string, SheetTableView>();
+    const sheets: Record<string, Partial<IWorksheetData>> = {};
+    tables.forEach((t, ti) => {
+      const sheet = sheetOf(ti);
+      tableOf.set(sheet, t);
+      const lead = leadOf(t);
+      const head: IStyleData = { bl: 1, bg: { rgb: XL_HEAD } };
+      const header: ICellData[] = [];
+      const fixHead = (c: number, v: string) => {
+        header[c] = { v, s: head };
+        L.fixed.set(key(sheet, 0, c), v);
+      };
+      fixHead(0, t.label ? "Loại tài liệu" : "File");
+      if (lead === 2) fixHead(1, "Bộ");
+      t.fields.forEach((f, fi) => fixHead(lead + fi, f.label));
+      const cellData = Object.fromEntries([header, ...place(sheet, t, t.rows.map((_, i) => i))].map((cells, r) => [r, { ...cells }]));
       // Width from the longest of label and values, like the old grid.
       const chars = (i: number) =>
         i < lead
@@ -144,7 +199,7 @@ export default function UniverGrid({
     box.style.cssText = "position:absolute;inset:0";
     const { univer, univerAPI } = createUniver({
       locale: LocaleType.VI_VN,
-      locales: { [LocaleType.VI_VN]: mergeLocales(viVN, findViVN) },
+      locales: { [LocaleType.VI_VN]: mergeLocales(viVN, findViVN, filterViVN, sortViVN) },
       darkMode: css.colorScheme === "dark",
       presets: [
         UniverSheetsCorePreset({
@@ -158,6 +213,9 @@ export default function UniverGrid({
         }),
         // Ctrl+F / Ctrl+H: find, replace one, replace all.
         UniverSheetsFindReplacePreset(),
+        // Filter and sort in each column's header, like Excel Online.
+        UniverSheetsFilterPreset(),
+        UniverSheetsSortPreset(),
       ],
     });
     api.current = univerAPI;
@@ -167,10 +225,64 @@ export default function UniverGrid({
       sheetOrder: Object.keys(sheets),
       sheets,
     });
+    const wb = univerAPI.getActiveWorkbook()!;
+    tables.forEach((t, ti) => wb.getSheetBySheetId(sheetOf(ti))?.getRange(0, 0, t.rows.length + 1, leadOf(t) + t.fields.length).createFilter());
+    const undo = univer.__getInjector().get(IUndoRedoService);
+    undo.clearUndoRedo("sheet");
+
+    // Sort whole documents: a row keeps its type, bundle and every field
+    // together, and each cell stays tied to its document. The order is a view
+    // only, not saved. Undo history is cleared: undoing a sort would put
+    // values back into rows that belong to other documents now.
+    const sortRows = (sheet: string, rules: { colIndex: number; type: string }[]) => {
+      const t = tableOf.get(sheet);
+      const ws = wb.getSheetBySheetId(sheet);
+      if (!t || !ws) return;
+      const lead = leadOf(t);
+      const { idOf, valueOf } = live.current;
+      const text = (ri: number, c: number) => {
+        const row = t.rows[ri];
+        if (c === 0) return t.label ? t.title : (row.file_name ?? "");
+        if (c < lead) return row.bundle ?? "";
+        const f = t.fields[c - lead];
+        return f ? valueOf(idOf(t, row, f.key)) : "";
+      };
+      const order = [...L.order.get(sheet)!].sort((a, b) => {
+        for (const { colIndex, type } of rules) {
+          const x = text(a, colIndex);
+          const y = text(b, colIndex);
+          // Blanks stay last either way, like Excel.
+          const d = !x.trim() || !y.trim() ? compare(x, y) : compare(x, y) * (type === "desc" ? -1 : 1);
+          if (d) return d;
+        }
+        return 0;
+      });
+      ws.getRange(1, 0, order.length, lead + t.fields.length).setValues(place(sheet, t, order));
+      undo.clearUndoRedo("sheet");
+      live.current.onOrder(t.label, order);
+      // The selected cell now shows another document: follow it.
+      const cur = ws.getSelection()?.getActiveRange()?.getRange();
+      const id = cur && L.at.get(key(sheet, cur.startRow, cur.startColumn));
+      if (id) live.current.onSelect(id);
+    };
 
     const subs = [
       univerAPI.addEvent(univerAPI.Event.BeforeCommandExecute, (e) => {
         if (BLOCKED.test(e.id)) e.cancel = true;
+        if (e.id === "sheet.command.sort-range") {
+          e.cancel = true;
+          const { subUnitId, orderRules } = e.params;
+          setTimeout(() => sortRows(subUnitId, orderRules));
+        }
+        // The menu's ascending / descending (current or extended range):
+        // always the whole table, by the column of the active cell.
+        const m = e.id.match(/^sheet\.command\.sort-range-(asc|desc)/);
+        if (m) {
+          e.cancel = true;
+          const ws = wb.getActiveSheet();
+          const colIndex = ws.getSelection()?.getActiveRange()?.getRange().startColumn;
+          if (colIndex != null) setTimeout(() => sortRows(ws.getSheetId(), [{ colIndex, type: m[1] }]));
+        }
       }),
       // Only field cells open the editor.
       univerAPI.addEvent(univerAPI.Event.BeforeSheetEditStart, (e) => {
