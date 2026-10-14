@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { downloadSheet, getSheet, importSheet, saveSheetEdits } from "../../api/endpoints";
@@ -7,6 +7,9 @@ import { PageImage } from "../../components/PageImage";
 import { useToast } from "../../components/toast";
 import { Empty, FileIcon, Icon, Loading, Modal } from "../../components/ui";
 import { fmtDate } from "../../lib/format";
+
+// Univer is large: load it only with the sheet grid.
+const UniverGrid = lazy(() => import("./UniverGrid"));
 
 // The comparison form of a value, like the server's (§6.9.2): accents and
 // case ignored; a value of digits and separators compares by its digits, so
@@ -35,6 +38,9 @@ const PANEL_KEY = "bp.sheetPanel";
 const rowIdOf = (r: { segment_id?: string; document_id?: string }) => r.segment_id || r.document_id || "";
 const cellId = (table: string, rowId: string, key: string) => `${table}|${rowId}|${key}`;
 const col = (i: number) => String.fromCharCode(65 + i);
+// Rows and fields of every sub-table: the grid is rebuilt when they change.
+const gridShape = (tables: SheetTableView[]) =>
+  tables.map((t) => t.label + ":" + t.rows.map(rowIdOf).join(",") + ":" + t.fields.map((f) => f.key).join(",")).join("|");
 const pages = (a?: number, b?: number) => (!a ? "" : a === b ? `tr. ${a}` : `tr. ${a}–${b}`);
 
 interface Cell {
@@ -132,10 +138,14 @@ export function SheetPage() {
   const setValue = (c: Cell, value: string, origin: Origin = "page") =>
     setDrafts((d) => {
       const next = { ...d };
-      if (valueKey(value) === valueKey(c.cv?.value ?? "")) delete next[c.id];
+      if (valueKey(value) === valueKey(c.cv?.value ?? "")) {
+        if (!(c.id in d)) return d;
+        delete next[c.id];
+      } else if (d[c.id]?.value === value && d[c.id].origin === origin) return d;
       else next[c.id] = { value, origin };
       return next;
     });
+  const shape = useMemo(() => gridShape(tables), [tables]);
 
   const save = async () => {
     if (!sheet) return;
@@ -242,7 +252,27 @@ export function SheetPage() {
       ) : (
         <div className="flex min-h-0 flex-1 border-t border-line max-lg:flex-col">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 overflow-auto">{table && <Grid table={table} drafts={drafts} sel={sel} onSelect={setSel} onValue={setValue} cells={cells} />}</div>
+            <div className="relative min-h-0 flex-1">
+              {table && (
+                <Suspense fallback={<Loading />}>
+                  <UniverGrid
+                    key={shape}
+                    tables={tables}
+                    idOf={(t, row, key) => cellId(t.label, rowIdOf(row), key)}
+                    valueOf={(id) => valueOf(cells.get(id)!)}
+                    toneOf={(id) => {
+                      const c = cells.get(id)!;
+                      if (valueKey(valueOf(c)) !== valueKey(c.cv?.ai_value_text ?? "")) return "edited";
+                      return c.cv?.calc ? "calc" : c.cv?.low ? "low" : "";
+                    }}
+                    tab={table.label}
+                    sel={sel}
+                    onSelect={setSel}
+                    onValue={(id, v) => setValue(cells.get(id)!, v)}
+                  />
+                </Suspense>
+              )}
+            </div>
             <div className="flex flex-none flex-wrap gap-1 border-t border-line bg-surface-2 px-2 pt-1">
               {tables.map((t) => (
                 <button
@@ -328,104 +358,6 @@ export function SheetPage() {
       )}
       {dl && <DownloadDialog sheet={sheet} onClose={() => setDl(false)} onDownload={(labels) => downloadSheet(sheet, labels).then(() => setDl(false), fail)} />}
     </div>
-  );
-}
-
-// One sub-table as a spreadsheet: column A the bundle (or file), then one
-// column per field; rows of one bundle are grouped with a rule between
-// bundles. Only values: no confidence or source columns (U47).
-function Grid({
-  table,
-  cells,
-  drafts,
-  sel,
-  onSelect,
-  onValue,
-}: {
-  table: SheetTableView;
-  cells: Map<string, Cell>;
-  drafts: Record<string, Draft>;
-  sel: string | null;
-  onSelect: (id: string) => void;
-  onValue: (c: Cell, value: string) => void;
-}) {
-  const head = "sticky top-0 z-2 h-6 border-r border-b border-line bg-surface-2 px-2 text-center text-[11.5px] font-normal text-subtle";
-  const td = "border-r border-b border-line bg-surface";
-  // A sub-table of a document type opens with the type (A), and the bundle
-  // (B) on a sheet built from the split; one without label opens with the
-  // file (A). Then the fields.
-  const bundle = table.rows.some((r) => r.bundle);
-  const lead = bundle ? 2 : 1;
-  const typeCol = "w-32 max-w-32 min-w-32 truncate";
-  const widths = table.fields.map((f) =>
-    Math.min(60, Math.max(16, f.label.length + 2, ...table.rows.map((r) => (r.cells_view[f.key]?.value ?? "").length + 3))),
-  );
-  return (
-    <table className="w-max border-separate border-spacing-0 text-[13px]">
-      <thead>
-        <tr>
-          <th className={head + " sticky left-0 z-3 w-10 min-w-10"} />
-          <th className={head + " sticky left-10 z-3 " + (table.label ? typeCol : "min-w-16")}>A</th>
-          {bundle && <th className={head + " sticky left-42 z-3 min-w-16"}>B</th>}
-          {table.fields.map((f, i) => (
-            <th key={f.key} className={head}>
-              {col(i + lead)}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td className="sticky left-0 z-1 border-r border-b border-line bg-surface-2 text-center text-[11.5px] text-subtle">1</td>
-          <td className={"sticky left-10 z-1 border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium text-fg " + (table.label ? typeCol : "")}>{table.label ? "Loại tài liệu" : "File"}</td>
-          {bundle && <td className="sticky left-42 z-1 border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium text-fg">Bộ</td>}
-          {table.fields.map((f, i) => (
-            <td key={f.key} className="border-r border-b border-line bg-[#107c41]/12 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg" style={{ minWidth: widths[i] + "ch" }}>
-              {f.label}
-            </td>
-          ))}
-        </tr>
-        {table.rows.map((row, ri) => {
-          const rowId = rowIdOf(row);
-          const bstart = ri > 0 && table.rows[ri - 1].bundle !== row.bundle;
-          const selected = sel?.startsWith(table.label + "|" + rowId + "|");
-          const rule = bstart ? " border-t-2 border-t-outline" : "";
-          return (
-            <tr key={rowId}>
-              <td className={"sticky left-0 z-1 border-r border-b border-line text-center text-[11.5px]" + rule + (selected ? " bg-[#107c41] text-white" : " bg-surface-2 text-subtle")}>{ri + 2}</td>
-              <td className={"sticky left-10 z-1 px-2.5 py-1.5 whitespace-nowrap text-fg " + td + rule + (table.label ? " " + typeCol : "")} title={`${row.file_name ?? ""} · ${pages(row.page_start, row.page_end)}`}>
-                {table.label ? table.title : row.file_name}
-              </td>
-              {bundle && <td className={"sticky left-42 z-1 px-2.5 py-1.5 font-medium whitespace-nowrap text-fg " + td + rule}>{row.bundle}</td>}
-              {table.fields.map((f) => {
-                const c = cells.get(cellId(table.label, rowId, f.key))!;
-                const cv = c.cv;
-                const v = drafts[c.id]?.value ?? cv?.value ?? "";
-                const edited = valueKey(v) !== valueKey(cv?.ai_value_text ?? "");
-                const tone = edited ? "bg-accent-container" : cv?.calc ? "bg-vlm-soft" : cv?.low ? "bg-warn-soft" : "bg-surface";
-                return (
-                  <td
-                    key={f.key}
-                    className={"relative border-r border-b border-line p-0 focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-[#107c41] " + tone + rule}
-                  >
-                    <input
-                      className="h-full min-h-8 w-full bg-transparent px-2.5 py-1.5 text-fg tabular-nums outline-none"
-                      value={v}
-                      placeholder={cv?.field_id ? "" : "—"}
-                      onFocus={() => onSelect(c.id)}
-                      onChange={(e) => onValue(c, e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                      aria-label={`${f.label} · ${row.bundle || row.file_name}`}
-                    />
-                    {edited && <span className="pointer-events-none absolute top-0 right-0 border-[5px] border-transparent border-t-accent border-r-accent" />}
-                  </td>
-                );
-              })}
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
   );
 }
 
