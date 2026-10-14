@@ -1,8 +1,11 @@
 import { useEffect, useRef } from "react";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import viVN from "@univerjs/preset-sheets-core/locales/vi-VN";
+import { UniverSheetsFindReplacePreset } from "@univerjs/preset-sheets-find-replace";
+import findViVN from "@univerjs/preset-sheets-find-replace/locales/vi-VN";
 import { BorderStyleTypes, createUniver, LocaleType, mergeLocales, type ICellData, type IStyleData, type IWorksheetData } from "@univerjs/presets";
 import "@univerjs/preset-sheets-core/lib/index.css";
+import "@univerjs/preset-sheets-find-replace/lib/index.css";
 
 import type { SheetRowView, SheetTableView } from "../../api/types";
 
@@ -141,7 +144,7 @@ export default function UniverGrid({
     box.style.cssText = "position:absolute;inset:0";
     const { univer, univerAPI } = createUniver({
       locale: LocaleType.VI_VN,
-      locales: { [LocaleType.VI_VN]: mergeLocales(viVN) },
+      locales: { [LocaleType.VI_VN]: mergeLocales(viVN, findViVN) },
       darkMode: css.colorScheme === "dark",
       presets: [
         UniverSheetsCorePreset({
@@ -153,6 +156,8 @@ export default function UniverGrid({
           disableTextFormatAlert: true,
           disableTextFormatMark: true,
         }),
+        // Ctrl+F / Ctrl+H: find, replace one, replace all.
+        UniverSheetsFindReplacePreset(),
       ],
     });
     api.current = univerAPI;
