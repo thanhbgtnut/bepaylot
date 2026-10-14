@@ -53,13 +53,14 @@ type CaseService interface {
 	Classification(ctx context.Context, c types.Case) types.ClassificationRule
 }
 
-// PageClassifier reads the document type of one page from its image
-// (Decision API, §6.9.4).
+// PageClassifier reads the document type of one page from its image and its
+// OCR text (Decision API, §6.9.4).
 type PageClassifier interface {
 	// ClassifyPage returns one of labels with its confidence, and whether
 	// the page is the first page of a document (isFirstPage) rather than the
-	// continuation of the one before it.
-	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (label string, confidence float64, isFirstPage bool, err error)
+	// continuation of the one before it. text is the OCR text of the page,
+	// "" when the page could not be read.
+	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte, text string) (label string, confidence float64, isFirstPage bool, err error)
 }
 
 // SplitConfirmer stores the split the pipeline proposed for a case as its

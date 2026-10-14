@@ -327,3 +327,31 @@ func TestSheetsAskOnce(t *testing.T) {
 		t.Fatalf("after a new file: %d turns", len(agent.prompts))
 	}
 }
+
+// A sheet with no document of its types does not end as an empty table: it
+// fails and says what each file of the case is classified as.
+func TestEmptySheetSaysWhy(t *testing.T) {
+	h := testkit.New(t)
+	h.Index.SetSplit(docmodel.NewSplit(docmodel.SplitDeps{Store: h.Store, Queue: h.Queue, Cases: h.Cases, Tree: h.Index, Config: h.Config}))
+	agent := &fakeExtract{}
+	kb := h.KB(types.KBConfig{DocTypes: []types.DocType{docType("hop_dong", "Hợp đồng", types.SheetField{Key: "so_hop_dong", Label: "Số hợp đồng"})}}, nil)
+	h.Upload(kb.ID, "scan.pdf", nil, []pdftest.Page{{"HOP DONG MUA BAN", "So hop dong: 012"}}) // pages not classified
+	h.Drain()
+	cs := h.Case(kb.ID, testkit.DefaultCase)
+	sq := &stubQueue{}
+	svc := sheets.New(sheets.Deps{Store: h.Store, Queue: sq, Cases: h.Cases, Extractor: docmodel.NewExtractor(h.Store, agent, nil), Config: h.Config})
+	sh, err := svc.Create(h.Ctx, h.Owner, cs.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Handlers()[types.TaskCaseSheet](h.Ctx, sq.payloads[0]); err != nil {
+		t.Fatal(err)
+	}
+	v, err := svc.Get(h.Ctx, h.Owner.ID, sh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Status != types.SheetFailed || !strings.Contains(v.Error, "hop_dong") || !strings.Contains(v.Error, "scan.pdf: chưa được phân loại") || len(agent.prompts) != 0 {
+		t.Fatalf("sheet = %s %q, %d turns", v.Status, v.Error, len(agent.prompts))
+	}
+}

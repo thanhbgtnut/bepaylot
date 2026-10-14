@@ -63,17 +63,20 @@ type PageTypes struct {
 	// false). nil = a page is a first page when its type differs from the
 	// page classified before it.
 	FirstPages []bool
-	// Seen is the sha256 of every image asked about, in call order.
+	// Seen is the sha256 of every image asked about, in call order, and
+	// Texts the OCR text sent with it.
 	Seen  []string
+	Texts []string
 	calls int
 }
 
 // ClassifyPage implements interfaces.PageClassifier.
-func (p *PageTypes) ClassifyPage(_ context.Context, _ []types.ClassLabel, image []byte) (string, float64, bool, error) {
+func (p *PageTypes) ClassifyPage(_ context.Context, _ []types.ClassLabel, image []byte, text string) (string, float64, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++
 	p.Seen = append(p.Seen, fmt.Sprintf("%x", sha256.Sum256(image)))
+	p.Texts = append(p.Texts, text)
 	if p.calls > len(p.Labels) || p.Labels[p.calls-1] == "" {
 		return "", 0, false, errors.New("decision api: scripted failure")
 	}

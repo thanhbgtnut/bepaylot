@@ -354,25 +354,21 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	// A page whose PDF text layer is already good does not need the VLM (§5.9).
 	refine := !(s.cfg.Parser.Engines.VLM.SkipWithTextLayerEnabled() && layer != nil &&
 		textlayer.Usable(textlayer.Quality(layer, "", tlOpt), tlOpt))
-	// The page image is all both need: the Decision API reads the document
-	// type while the engine reads the text (§6.9.4). The type is saved before
-	// the page finishes, whatever the OCR outcome. With
-	// classify.decision.serial the two never run at once in this process:
-	// the page is classified first, and the gate keeps every page's
-	// classification apart from every page's OCR.
+	// The page is read first, then classified from its image and its OCR
+	// text (§6.9.4): two document types whose names differ by one word are
+	// told apart by the words of the title. The type is saved before the
+	// page finishes, whatever the OCR outcome. With classify.decision.serial
+	// the gate keeps every page's classification apart from every page's OCR.
 	serial := s.cfg.Classify.Decision.Serial && s.classify != nil
-	classified := make(chan struct{})
+	classify := func(text string) {
+		if serial {
+			s.models.enter(gateClassify)
+			defer s.models.leave()
+		}
+		s.classifyPage(ctx, d, row, text)
+	}
 	if serial {
-		s.models.enter(gateClassify)
-		s.classifyPage(ctx, d, row)
-		s.models.leave()
-		close(classified)
 		s.models.enter(gateOCR)
-	} else {
-		go func() {
-			defer close(classified)
-			s.classifyPage(ctx, d, row)
-		}()
 	}
 	t0 := time.Now()
 	raw, err := s.callEngine(ctx, engine, row, refine)
@@ -380,7 +376,6 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	if serial {
 		s.models.leave()
 	}
-	<-classified
 	if err != nil {
 		if !queue.IsFinalAttempt(ctx) {
 			return err
@@ -390,8 +385,11 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 			page := textlayer.PageFromLayer(pageNo, row.Width, row.Height, row.DPI, layer)
 			page.TextQuality = textlayer.Quality(layer, "", tlOpt)
 			assemble.Render(page)
+			classify(assemble.PlainText(page))
 			return s.savePage(ctx, d, page, nil, ocrMs)
 		}
+		// No text at all: the page is classified by its image alone.
+		classify("")
 		return s.finishPageFailed(ctx, d, pageNo, err)
 	}
 
@@ -415,17 +413,18 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	if err := s.cropFigures(ctx, row, page); err != nil {
 		s.log.Warn("crop figures failed", "doc", d.ID, "page", pageNo, "err", err)
 	}
+	classify(assemble.PlainText(page))
 	// The engine's raw JSON (layout, VLM calls) is kept on the page row.
 	return s.savePage(ctx, d, page, raw.Raw, ocrMs)
 }
 
 // classifyPage asks the Decision API which document type of the KB the page
-// image is, and whether it is the first page of a document (is_first_page), and keeps the
-// answer on the page row (§6.9.4). It runs when the KB
+// is, from its image and its OCR text, and whether it is the first page of a
+// document (is_first_page), and keeps the answer on the page row (§6.9.4). It runs when the KB
 // has doc_types and a classifier is configured, once per page: a retry of
 // page:ocr keeps the type it has. A failure is logged and leaves the page
 // unclassified; it never fails the page.
-func (s *Service) classifyPage(ctx context.Context, d types.Document, row types.DocumentPage) {
+func (s *Service) classifyPage(ctx context.Context, d types.Document, row types.DocumentPage, text string) {
 	if s.classify == nil || row.DocType != "" {
 		return
 	}
@@ -448,7 +447,7 @@ func (s *Service) classifyPage(ctx context.Context, d types.Document, row types.
 	// blank page, a letter) is forced into one of them, often confidently.
 	labels := append(kb.Config.Labels(),
 		types.ClassLabel{Name: types.LabelOther, Title: "Khác", Description: "trang trắng, hoặc giấy tờ không thuộc các loại trên"})
-	label, conf, isFirstPage, err := s.classify.ClassifyPage(ctx, labels, img)
+	label, conf, isFirstPage, err := s.classify.ClassifyPage(ctx, labels, img, text)
 	if err != nil {
 		s.log.Warn("classify page failed", "doc", d.ID, "page", row.PageNo, "err", err)
 		return

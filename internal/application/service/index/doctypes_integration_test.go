@@ -36,6 +36,10 @@ func TestDocTypesInCaseTree(t *testing.T) {
 	if err != nil || len(segs) != 2 {
 		t.Fatalf("segments = %+v %v", segs, err)
 	}
+	// Every page is classified after OCR, with its OCR text.
+	if texts := strings.Join(h.PageTypes.Texts, "\n"); len(h.PageTypes.Texts) != 3 || !strings.Contains(texts, "HOA DON GIA TRI GIA TANG") || !strings.Contains(texts, "Dieu 2 thanh toan") {
+		t.Errorf("classify texts = %q", h.PageTypes.Texts)
+	}
 	// The split is confirmed without a review: the segments are the case's
 	// own, in one bundle, and the file counts as reviewed.
 	if g := segs[0]; g.Label != "hop_dong" || g.PageStart != 1 || g.PageEnd != 2 || g.Source != types.SegmentUser || g.BundleCode != "B01" {

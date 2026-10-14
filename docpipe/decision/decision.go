@@ -1,8 +1,8 @@
 // Package decision is the client of the Decision API, Ollama's System One
 // endpoint (POST /v1/systemone, https://docs.ollama.com/api/systemone): a
-// typed question about an image, answered with a choice and its
-// probabilities. bepaylot uses it to read the document type of a page
-// (§6.9.4).
+// typed question about an image (and its OCR text), answered with a choice
+// and its probabilities. bepaylot uses it to read the document type of a
+// page (§6.9.4).
 package decision
 
 import (
@@ -89,16 +89,38 @@ type response struct {
 	} `json:"answers"`
 }
 
+// maxText is the most OCR text of a page sent with its image, in runes: the
+// title is at the top of the page, and a longer state can go past the
+// model's batch size.
+const maxText = 1500
+
+// state is the context of the questions: the page image, and the OCR text
+// of the page when there is one, so that two types whose names differ by
+// one word ("tài sản" / "tài sản khác") are told apart by the exact words
+// of the title rather than by how the page looks.
+func state(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "Ảnh chứng từ:"
+	}
+	if r := []rune(text); len(r) > maxText {
+		text = string(r[:maxText])
+	}
+	return "Ảnh chứng từ, kèm văn bản OCR của trang. Đọc đúng từng chữ của tiêu đề trong văn bản: " +
+		"hai loại giấy tờ có thể chỉ khác nhau một từ.\n\nVăn bản OCR:\n" + text
+}
+
 // ClassifyPage implements interfaces.PageClassifier: it asks which of labels
-// the page image is, and in the same call whether the page is the first page
-// of a document (is_first_page). The image goes inline as raw base64, which
+// the page is, from its image and its OCR text (text, "" when there is none),
+// and in the same call whether the page is the first page of a document
+// (is_first_page). The image goes inline as raw base64, which
 // is what Ollama takes (it refuses a "data:" prefix as illegal base64). A
 // server that answers 400 to that (LM Studio takes only data URLs) is asked
 // again with a data URL, and gets data URLs from then on. A server that
 // fails on the two questions together (LM Studio: "input is too large",
 // they exceed the model's batch size) is asked them one by one, and from
 // then on. An answer without is_first_page is not a first page.
-func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, img []byte) (string, float64, bool, error) {
+func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, img []byte, text string) (string, float64, bool, error) {
 	criteria := make(map[string]string, len(labels))
 	for _, l := range labels {
 		criteria[l.Name] = l.Title
@@ -113,7 +135,7 @@ func (c *Client) ClassifyPage(ctx context.Context, labels []types.ClassLabel, im
 		if asDataURL {
 			image = "data:" + http.DetectContentType(jpg) + ";base64," + b64
 		}
-		body, err := json.Marshal(request{Model: c.cfg.Model, State: "Ảnh chứng từ:", Images: []string{image}, Questions: questions})
+		body, err := json.Marshal(request{Model: c.cfg.Model, State: state(text), Images: []string{image}, Questions: questions})
 		if err != nil {
 			return 0, nil, err
 		}

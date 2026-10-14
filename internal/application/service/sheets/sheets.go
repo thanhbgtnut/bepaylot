@@ -232,6 +232,46 @@ func (s *Service) rowsOf(ctx context.Context, caseID uuid.UUID, tables []types.S
 	return rows, nil
 }
 
+// whyEmpty says why a sheet has no row: what each file of the case is
+// classified as, since a row needs a document of one of the sheet's types.
+func (s *Service) whyEmpty(ctx context.Context, caseID uuid.UUID, tables []types.SheetTable) string {
+	docs, err := s.st.Segments.SplitDocs(ctx, caseID)
+	if err != nil {
+		return err.Error()
+	}
+	segs, err := s.st.Segments.ByCase(ctx, caseID)
+	if err != nil {
+		return err.Error()
+	}
+	labels := map[uuid.UUID][]string{}
+	for _, g := range segs {
+		l := fmt.Sprintf("tr.%d-%d %s", g.PageStart, g.PageEnd, g.Label)
+		if g.ProposedLabel != "" && g.ProposedLabel != g.Label {
+			l += " (AI đoán " + g.ProposedLabel + ", độ tin cậy thấp)"
+		}
+		labels[g.DocumentID] = append(labels[g.DocumentID], l)
+	}
+	want := make([]string, 0, len(tables))
+	for _, t := range tables {
+		want = append(want, t.Label)
+	}
+	var files []string
+	for _, d := range docs {
+		switch {
+		case d.Seq == 0:
+			files = append(files, d.FileName+": chưa xử lý xong")
+		case len(labels[d.ID]) == 0:
+			files = append(files, d.FileName+": chưa được phân loại")
+		default:
+			files = append(files, d.FileName+": "+strings.Join(labels[d.ID], ", "))
+		}
+	}
+	if len(files) == 0 {
+		return "Hồ sơ chưa có file nào"
+	}
+	return fmt.Sprintf("Không có giấy tờ nào thuộc loại %s. %s", strings.Join(want, ", "), strings.Join(files, "; "))
+}
+
 // handleBuild is case:sheet (§6.9.6).
 func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 	var p types.SheetTaskPayload
@@ -261,6 +301,9 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 	rows, err := s.rowsOf(ctx, sh.CaseID, sh.Columns)
 	if err != nil {
 		return fail(err)
+	}
+	if len(rows) == 0 { // nothing to extract: say why instead of an empty sheet
+		return s.st.Sheets.SetState(ctx, sh.ID, types.SheetFailed, 0, nil, s.whyEmpty(ctx, sh.CaseID, sh.Columns))
 	}
 	total := 0
 	for _, r := range rows {

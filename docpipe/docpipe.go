@@ -1,9 +1,9 @@
 // Package docpipe is the document flow of bepaylot as a library: a PDF is
-// rendered to page images, every page image is classified (document type
-// and is_first_page), the pages are grouped into documents at the first
-// pages, and every page is read by the OCR engine (TurboOCR /ocr/raw, or
-// TurboOCR followed by one VLM call per page) into lines, blocks and
-// markdown.
+// rendered to page images, every page is read by the OCR engine (TurboOCR
+// /ocr/raw, or TurboOCR followed by one VLM call per page) into lines,
+// blocks and markdown, every page is classified from its image and its OCR
+// text (document type and is_first_page), and the pages are grouped into
+// documents at the first pages.
 //
 // It keeps nothing: no database, no object storage, no queue. Run returns
 // the page images and everything read from them.
@@ -22,10 +22,11 @@ import (
 	"github.com/thanhenti/bepaylot/docpipe/types"
 )
 
-// Classifier reads the document type of one page from its image, and
-// whether the page is the first page of a document. decision.Client is one.
+// Classifier reads the document type of one page from its image and its OCR
+// text, and whether the page is the first page of a document.
+// decision.Client is one.
 type Classifier interface {
-	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (label string, confidence float64, isFirstPage bool, err error)
+	ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte, text string) (label string, confidence float64, isFirstPage bool, err error)
 }
 
 // Config configures a Pipeline.
@@ -51,7 +52,7 @@ type Config struct {
 	// reading order, tables and the VLM step.
 	Options *parser.PageOptions
 
-	// Concurrency is the number of pages classified, then read, at once
+	// Concurrency is the number of pages read, then classified, at once
 	// (default 4).
 	Concurrency int
 }
@@ -107,9 +108,10 @@ func New(cfg Config) (*Pipeline, error) {
 	return &Pipeline{cfg: cfg}, nil
 }
 
-// Run reads the PDF at path in three steps: render every page, classify
-// every page and group the pages into documents, then read every page with
-// the engine. Classification and OCR never run at the same time, so one
+// Run reads the PDF at path in three steps: render every page, read every
+// page with the engine, then classify every page from its image and OCR
+// text and group the pages into documents. Classification and OCR never
+// run at the same time, so one
 // server can hold both models. A page the classifier or the engine fails on
 // keeps its error and does not fail the run; Run fails when the PDF cannot
 // be rendered or ctx is done.
@@ -133,18 +135,6 @@ func (p *Pipeline) Run(ctx context.Context, path string) (*Result, error) {
 		return nil, fmt.Errorf("docpipe: %w", err)
 	}
 
-	if p.cfg.Classifier != nil {
-		p.each(ctx, res.Pages, func(pg *Page, _ int) {
-			t := &pg.Type
-			t.Label, t.Confidence, t.FirstPage, pg.ClassifyErr = p.cfg.Classifier.ClassifyPage(ctx, p.cfg.Labels, pg.JPEG)
-		})
-		pts := make([]types.PageDocType, len(res.Pages))
-		for i, pg := range res.Pages {
-			pts[i] = pg.Type
-		}
-		res.Documents = GroupByFirstPage(pts, p.cfg.MinConfidence)
-	}
-
 	p.each(ctx, res.Pages, func(pg *Page, i int) {
 		raw, err := p.cfg.Engine.ParsePage(ctx, parser.PageImage{PageNo: pg.PageNo, Body: bytes.NewReader(pg.JPEG), Size: int64(len(pg.JPEG)), Width: pg.Width, Height: pg.Height}, *p.cfg.Options)
 		if err != nil {
@@ -155,6 +145,25 @@ func (p *Pipeline) Run(ctx context.Context, path string) (*Result, error) {
 		assemble.Render(pg.Parsed)
 		pg.Raw = raw.Raw
 	})
+
+	if p.cfg.Classifier != nil {
+		// The OCR text goes with the image: two types whose names differ by
+		// one word are told apart by the words of the title. A page the
+		// engine failed on is classified by its image alone.
+		p.each(ctx, res.Pages, func(pg *Page, _ int) {
+			text := ""
+			if pg.Parsed != nil {
+				text = assemble.PlainText(pg.Parsed)
+			}
+			t := &pg.Type
+			t.Label, t.Confidence, t.FirstPage, pg.ClassifyErr = p.cfg.Classifier.ClassifyPage(ctx, p.cfg.Labels, pg.JPEG, text)
+		})
+		pts := make([]types.PageDocType, len(res.Pages))
+		for i, pg := range res.Pages {
+			pts[i] = pg.Type
+		}
+		res.Documents = GroupByFirstPage(pts, p.cfg.MinConfidence)
+	}
 	return res, ctx.Err()
 }
 

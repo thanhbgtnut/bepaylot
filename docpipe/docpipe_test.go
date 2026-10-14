@@ -27,11 +27,13 @@ type scripted struct {
 	answers map[string]types.PageDocType
 	labels  []string
 	fail    string // image that fails
+	texts   []string
 }
 
-func (s *scripted) ClassifyPage(_ context.Context, labels []types.ClassLabel, image []byte) (string, float64, bool, error) {
+func (s *scripted) ClassifyPage(_ context.Context, labels []types.ClassLabel, image []byte, text string) (string, float64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.texts = append(s.texts, text)
 	s.labels = s.labels[:0]
 	for _, l := range labels {
 		s.labels = append(s.labels, l.Name)
@@ -44,9 +46,9 @@ func (s *scripted) ClassifyPage(_ context.Context, labels []types.ClassLabel, im
 }
 
 // The whole flow on a four-page PDF: two contracts scanned one after the
-// other, then an invoice. Pages are rendered, classified, grouped at the
-// first pages, read by TurboOCR (/ocr/raw) and by the VLM through the
-// OpenAI-compatible client.
+// other, then an invoice. Pages are rendered, read by TurboOCR (/ocr/raw)
+// and by the VLM through the OpenAI-compatible client, then classified with
+// their OCR text and grouped at the first pages.
 func TestRun(t *testing.T) {
 	sample, err := os.ReadFile("parser/turboocr/testdata/output_example.json")
 	if err != nil {
@@ -131,6 +133,15 @@ func TestRun(t *testing.T) {
 	for i, d := range res.Documents {
 		if d != want[i] {
 			t.Errorf("document %d = %+v, want %+v", i, d, want[i])
+		}
+	}
+	// Every page is classified after OCR, with the OCR text of the page.
+	if len(clf.texts) != 4 {
+		t.Fatalf("classify calls = %d", len(clf.texts))
+	}
+	for i, text := range clf.texts {
+		if !strings.Contains(text, "UBND XÃ NHA BÍCH") {
+			t.Errorf("classify call %d: no OCR text (%q)", i+1, text)
 		}
 	}
 	if got := strings.Join(clf.labels, ","); got != "hop_dong,hoa_don,other" {

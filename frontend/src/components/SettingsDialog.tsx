@@ -204,7 +204,10 @@ const guessType = (label: string) => {
 function DocTypesTab() {
   const { kbs, kb: current, updateKBLocal, openEditKB } = useApp();
   const { toast, fail } = useToast();
-  const [pick, setPick] = useState(current?.id ?? kbs[0]?.id ?? "");
+  const [picked, setPick] = useState(current?.id ?? kbs[0]?.id ?? "");
+  // After a reload the KBs arrive after the tab opens: until one is picked,
+  // the current KB (or the first one) is shown.
+  const pick = kbs.some((k) => k.id === picked) ? picked : (current?.id ?? kbs[0]?.id ?? "");
   const kb = kbs.find((k) => k.id === pick);
   const [types, setTypes] = useState<(DocType & { fields?: NewField[] })[]>([]);
   const [active, setActive] = useState(0);

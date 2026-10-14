@@ -52,8 +52,9 @@ func cached[T any](ctx context.Context, c modelCache, log *slog.Logger, key, kin
 	return out, nil
 }
 
-// cachedClassifier keeps the Decision API's answer for a page image: the
-// same image asked about the same document types is answered from the cache.
+// cachedClassifier keeps the Decision API's answer for a page image and its
+// OCR text: the same page asked about the same document types is answered
+// from the cache.
 type cachedClassifier struct {
 	inner interfaces.PageClassifier
 	cache modelCache
@@ -69,10 +70,10 @@ type pageType struct {
 
 // The key names the questions asked ("decision+is_first_page"): answers
 // stored for other questions (is_break) are not reused.
-func (c cachedClassifier) ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte) (string, float64, bool, error) {
+func (c cachedClassifier) ClassifyPage(ctx context.Context, labels []types.ClassLabel, image []byte, text string) (string, float64, bool, error) {
 	lb, _ := json.Marshal(labels)
-	r, err := cached(ctx, c.cache, c.log, cacheKey([]byte("decision+is_first_page"), []byte(c.scope), lb, image), "decision", func() (pageType, error) {
-		label, conf, isFirstPage, err := c.inner.ClassifyPage(ctx, labels, image)
+	r, err := cached(ctx, c.cache, c.log, cacheKey([]byte("decision+is_first_page"), []byte(c.scope), lb, image, []byte(text)), "decision", func() (pageType, error) {
+		label, conf, isFirstPage, err := c.inner.ClassifyPage(ctx, labels, image, text)
 		return pageType{label, conf, isFirstPage}, err
 	})
 	return r.Label, r.Confidence, r.FirstPage, err
