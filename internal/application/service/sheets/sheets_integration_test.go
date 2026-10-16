@@ -44,7 +44,7 @@ type fakeExtract struct {
 var (
 	askedRe = regexp.MustCompile(`(?m)^- (\w+) · `)
 	pageRe  = regexp.MustCompile(`^<page n="(\d+)">$`)
-	lineRe  = regexp.MustCompile(`^\[L(\d+)\] (.*)$`)
+	lineRe  = regexp.MustCompile(`^\[L(\d+)\] (?:\([0-9.]+\) )?(.*)$`)
 )
 
 // where each key is written in the test documents.

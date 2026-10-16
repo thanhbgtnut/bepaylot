@@ -21,6 +21,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
 	"github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/queue"
+	"github.com/thanhenti/bepaylot/internal/storage"
 	"github.com/thanhenti/bepaylot/internal/types"
 	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
@@ -49,6 +50,10 @@ type Deps struct {
 	Extractor Extractor
 	Config    *config.Config
 	Log       *slog.Logger
+	// Objects keeps the files of the Excel forms; FormLLM proposes how a
+	// form is filled (§6.9.8).
+	Objects storage.ObjectStore
+	FormLLM interfaces.Completer
 }
 
 // Service implements the sheet use cases.
@@ -59,6 +64,8 @@ type Service struct {
 	extractor Extractor
 	cfg       *config.Config
 	log       *slog.Logger
+	objects   storage.ObjectStore
+	formLLM   interfaces.Completer
 }
 
 // New builds the service.
@@ -67,7 +74,8 @@ func New(d Deps) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{st: d.Store, q: d.Queue, cases: d.Cases, extractor: d.Extractor, cfg: d.Config, log: log}
+	return &Service{st: d.Store, q: d.Queue, cases: d.Cases, extractor: d.Extractor, cfg: d.Config, log: log,
+		objects: d.Objects, formLLM: d.FormLLM}
 }
 
 // Handlers returns the task handlers.
@@ -98,6 +106,12 @@ func (s *Service) Create(ctx context.Context, user types.User, caseID uuid.UUID,
 	if err != nil {
 		return types.Sheet{}, err
 	}
+	return s.create(ctx, user, c, tables, "Bảng tổng hợp", nil)
+}
+
+// create starts a sheet of the chosen document types; formID is the Excel
+// form it is built for (§6.9.8).
+func (s *Service) create(ctx context.Context, user types.User, c types.Case, tables []string, name string, formID *uuid.UUID) (types.Sheet, error) {
 	kb, err := s.st.KBs.Get(ctx, c.KBID)
 	if err != nil {
 		return types.Sheet{}, err
@@ -110,7 +124,7 @@ func (s *Service) Create(ctx context.Context, user types.User, caseID uuid.UUID,
 	for _, tb := range picked {
 		labels = append(labels, tb.Label)
 	}
-	sh, err := s.st.Sheets.Create(ctx, types.Sheet{CaseID: c.ID, Name: "Bảng tổng hợp", Tables: labels, Columns: picked, CreatedBy: user.ID})
+	sh, err := s.st.Sheets.Create(ctx, types.Sheet{CaseID: c.ID, Name: name, Tables: labels, Columns: picked, FormID: formID, CreatedBy: user.ID})
 	if err != nil {
 		return types.Sheet{}, err
 	}
@@ -291,6 +305,7 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 	fail := func(err error) error {
 		if queue.IsFinalAttempt(ctx) || errors.Is(err, queue.ErrSkipRetry) {
 			_ = s.st.Sheets.SetState(context.WithoutCancel(ctx), sh.ID, types.SheetFailed, sh.Filled, nil, err.Error())
+			s.afterBuild(context.WithoutCancel(ctx), sh.ID, err.Error())
 		}
 		return err
 	}
@@ -303,7 +318,10 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 		return fail(err)
 	}
 	if len(rows) == 0 { // nothing to extract: say why instead of an empty sheet
-		return s.st.Sheets.SetState(ctx, sh.ID, types.SheetFailed, 0, nil, s.whyEmpty(ctx, sh.CaseID, sh.Columns))
+		why := s.whyEmpty(ctx, sh.CaseID, sh.Columns)
+		err := s.st.Sheets.SetState(ctx, sh.ID, types.SheetFailed, 0, nil, why)
+		s.afterBuild(ctx, sh.ID, why)
+		return err
 	}
 	total := 0
 	for _, r := range rows {
@@ -371,7 +389,11 @@ func (s *Service) handleBuild(ctx context.Context, raw []byte) error {
 	if rows == nil {
 		rows = []types.SheetRow{}
 	}
-	return s.st.Sheets.SetProgress(ctx, sh.ID, types.SheetDone, count(), total, rows, "")
+	if err := s.st.Sheets.SetProgress(ctx, sh.ID, types.SheetDone, count(), total, rows, ""); err != nil {
+		return err
+	}
+	s.afterBuild(ctx, sh.ID, "")
+	return nil
 }
 
 // notFound reports a field the extraction recorded without a value: the

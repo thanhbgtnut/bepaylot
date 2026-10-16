@@ -7,11 +7,13 @@ import { isAdmin, type AdminUser, type APIKey, type DocType, type LLMKeyView, ty
 import { fmtMoney, ROLE_LABEL, toCode, uniqueCode } from "../lib/format";
 import { useApp } from "./AppContext";
 import { useAuth } from "./AuthContext";
+import { ChecksTab } from "./ChecksTab";
+import { FormsTab } from "./FormsTab";
 import { TopBar } from "./Layout";
 import { useToast } from "./toast";
 import { Empty, Icon, Modal, Spinner } from "./ui";
 
-export type SettingsTab = "account" | "doctypes" | "keys" | "users";
+export type SettingsTab = "account" | "checks" | "doctypes" | "forms" | "keys" | "users";
 
 // "Thông tin" (§7.8), opened from the signed-in user's menu: account, key &
 // cost (a usage page like ChatGPT/Claude's, next to the key setup; cost is
@@ -50,14 +52,15 @@ export function SettingsDialog({ tab: initial, onClose }: { tab: "account" | "ke
 }
 
 // "Cài đặt" (§7.8), a page opened from the bottom of the sidebar: the fields
-// of each document type of a knowledge base (§7.11) and users for admins.
+// of each document type of a knowledge base (§7.11), its Excel forms
+// (§7.12) and users for admins.
 // Every section is a centred column of the same width, opened by a heading
 // that says what the section is for.
 export function SettingsPage() {
   const { user } = useAuth();
   const admin = isAdmin(user);
   const { tab: param } = useParams();
-  const tabs: [string, string, string][] = [["doctypes", "description", "Loại giấy tờ"], ...(admin ? [["users", "group", "Người dùng"] as [string, string, string]] : [])];
+  const tabs: [string, string, string][] = [["doctypes", "description", "Loại giấy tờ"], ["forms", "request_page", "Mẫu xuất Excel"], ["checks", "rule", "Quy tắc đối chiếu"], ...(admin ? [["users", "group", "Người dùng"] as [string, string, string]] : [])];
   const tab = tabs.some(([k]) => k === param) ? param : "doctypes";
   return (
     <>
@@ -73,6 +76,8 @@ export function SettingsPage() {
       <div className="min-h-0 flex-1 overflow-auto px-6 py-6">
         <div className="mx-auto flex max-w-5xl flex-col gap-5">
           {tab === "doctypes" && <DocTypesTab />}
+          {tab === "forms" && <FormsTab />}
+          {tab === "checks" && <ChecksTab />}
           {tab === "users" && <UsersTab />}
         </div>
       </div>

@@ -5,7 +5,12 @@ import type {
   Document,
   DocumentDetail,
   DocumentPage,
+  CheckConfig,
+  CheckRun,
+  CompileResult,
   EngineInfo,
+  ExportMapping,
+  ExportTemplate,
   KBConfig,
   KnowledgeBase,
   PageSearchHit,
@@ -155,7 +160,8 @@ export const publishTemplate = (id: string, version: number) => request<PromptTe
 
 // ---- case sheets (§6.9.6)
 
-export const createSheet = (caseId: string, tables?: string[]) => request<Sheet>(`/cases/${caseId}/sheets`, { body: { tables } });
+export const createSheet = (caseId: string, tables?: string[], exportTemplateId?: string) =>
+  request<Sheet>(`/cases/${caseId}/sheets`, { body: { tables, export_template_id: exportTemplateId } });
 export const listSheets = (caseId: string) => request<{ data: Sheet[] }>(`/cases/${caseId}/sheets`).then((r) => r.data ?? []);
 export const getSheet = (id: string) => request<SheetView>(`/sheets/${id}`);
 export const deleteSheet = (id: string) => request(`/sheets/${id}`, { method: "DELETE" });
@@ -198,3 +204,30 @@ export const issueAPIKey = (userId: string, name: string) =>
   request<{ key: APIKey; api_key: string }>(`/admin/users/${userId}/api-keys`, { body: { name } });
 export const getLLMKey = () => request<LLMKeyView>("/admin/llm");
 export const setLLMKey = (apiKey: string) => request<LLMKeyView>("/admin/llm", { method: "PUT", body: { api_key: apiKey } });
+
+// ---- Excel forms of a KB (§6.9.8)
+export const listExportTemplates = (kb: string) =>
+  request<{ data: ExportTemplate[] }>(`/kbs/${kb}/export-templates`).then((r) => r.data ?? []);
+export const uploadExportTemplate = (kb: string, file: File) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return uploadForm<ExportTemplate>(`/kbs/${kb}/export-templates`, fd);
+};
+export const saveExportTemplate = (id: string, name: string, mapping: ExportMapping) =>
+  request<ExportTemplate>(`/export-templates/${id}`, { method: "PUT", body: { name, mapping } });
+export const deleteExportTemplate = (id: string) => request(`/export-templates/${id}`, { method: "DELETE" });
+export const downloadSheetForm = (s: { id: string; name: string }, caseCode?: string) =>
+  download(`/sheets/${s.id}/form.xlsx`, `${caseCode ? caseCode + "_" : ""}${s.name}.xlsx`);
+
+// ---- cross-checks (§6.9.9)
+export const saveChecks = (kb: string, config: CheckConfig) => request<KnowledgeBase>(`/kbs/${kb}/checks`, { method: "PUT", body: config });
+export const compileCheck = (kb: string, body: { kind: "rule" | "link"; doc_type?: string; anchor: string; text: string }) =>
+  request<CompileResult>(`/kbs/${kb}/checks/compile`, { body });
+export const createCheck = (caseId: string) => request<CheckRun>(`/cases/${caseId}/checks`, { method: "POST" });
+export const listChecks = (caseId: string) => request<{ data: CheckRun[] }>(`/cases/${caseId}/checks`).then((r) => r.data ?? []);
+export const getCheck = (id: string) => request<CheckRun>(`/checks/${id}`);
+export const rerunCheck = (id: string) => request<CheckRun>(`/checks/${id}/rerun`, { method: "POST" });
+export const setCheckLink = (id: string, body: { segment_id: string; anchor_segment_id: string | null; auto?: boolean }) =>
+  request<CheckRun>(`/checks/${id}/links`, { method: "PUT", body });
+export const deleteCheck = (id: string) => request(`/checks/${id}`, { method: "DELETE" });
+

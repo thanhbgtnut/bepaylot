@@ -11,6 +11,7 @@ import { ToastProvider } from "./components/toast";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { CasePage } from "./pages/cases/CasePage";
 import { SplitPage } from "./pages/cases/SplitPage";
+import { CheckPage } from "./pages/checks/CheckPage";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { DocumentDetail } from "./pages/documents/DocumentDetail";
 import { DocumentsPage } from "./pages/documents/DocumentsPage";
@@ -37,6 +38,7 @@ const router = createBrowserRouter([
       { path: "cases/:caseId", element: <CasePage /> },
       { path: "cases/:caseId/sheets/:sheetId", element: <SheetPage /> },
       { path: "cases/:caseId/split", element: <SplitPage /> },
+      { path: "cases/:caseId/checks/:checkId", element: <CheckPage /> },
       { path: "settings/:tab?", element: <SettingsPage /> },
       { path: "*", element: <Navigate to="/documents" replace /> },
     ],

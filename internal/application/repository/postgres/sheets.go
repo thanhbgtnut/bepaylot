@@ -18,13 +18,13 @@ import (
 type SheetsRepo struct{ pool *pgxpool.Pool }
 
 const sheetCols = `s.id, s.case_id, s.name, s.status, s.filled, s.total,
-	s.rows, s.error, s.created_by, s.created_at, s.updated_at, s.tables, s.columns`
+	s.rows, s.error, s.created_by, s.created_at, s.updated_at, s.tables, s.columns, s.export_template_id`
 
 func scanSheet(row pgx.Row) (types.Sheet, error) {
 	var s types.Sheet
 	var rows, cols []byte
 	err := row.Scan(&s.ID, &s.CaseID, &s.Name, &s.Status, &s.Filled, &s.Total,
-		&rows, &s.Error, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &s.Tables, &cols)
+		&rows, &s.Error, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &s.Tables, &cols, &s.FormID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -92,8 +92,8 @@ func (r *SheetsRepo) Create(ctx context.Context, s types.Sheet) (types.Sheet, er
 	if err != nil {
 		return types.Sheet{}, err
 	}
-	err = r.pool.QueryRow(ctx, `INSERT INTO case_sheets (case_id, name, total, created_by, tables, columns)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, s.CaseID, cleanText(s.Name), s.Total, s.CreatedBy, s.Tables, cols).Scan(&id)
+	err = r.pool.QueryRow(ctx, `INSERT INTO case_sheets (case_id, name, total, created_by, tables, columns, export_template_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, s.CaseID, cleanText(s.Name), s.Total, s.CreatedBy, s.Tables, cols, s.FormID).Scan(&id)
 	if err != nil {
 		return types.Sheet{}, fmt.Errorf("sheets.Create: %w", err)
 	}

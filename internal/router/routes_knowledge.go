@@ -82,6 +82,22 @@ func registerKnowledgeRoutes(v1 *route.RouterGroup, h *handler.Handlers) {
 	g.POST("/sheets/:id/edits", h.SaveSheetEdits)
 	g.POST("/sheets/:id/import", h.ImportSheet)
 	g.GET("/sheets/:id/xlsx", h.DownloadSheet)
+	// Excel forms of a KB (U85).
+	g.GET("/kbs/:id/export-templates", h.ListExportTemplates)
+	g.POST("/kbs/:id/export-templates", h.UploadExportTemplate)
+	g.GET("/export-templates/:id", h.GetExportTemplate)
+	g.PUT("/export-templates/:id", h.SaveExportTemplate)
+	g.DELETE("/export-templates/:id", h.DeleteExportTemplate)
+	g.GET("/sheets/:id/form.xlsx", h.DownloadSheetForm)
+	// Cross-checks of the documents of a case (U87).
+	g.PUT("/kbs/:id/checks", h.SaveChecks)
+	g.POST("/kbs/:id/checks/compile", h.CompileCheck)
+	g.POST("/cases/:id/checks", h.CreateCheck)
+	g.GET("/cases/:id/checks", h.ListChecks)
+	g.GET("/checks/:id", h.GetCheck)
+	g.POST("/checks/:id/rerun", h.RerunCheck)
+	g.PUT("/checks/:id/links", h.SetCheckLink)
+	g.DELETE("/checks/:id", h.DeleteCheck)
 	// Tách & gom trang (U48, U49).
 	g.POST("/cases/:id/classify", h.ClassifyCase)
 	g.GET("/cases/:id/split", h.GetSplit)

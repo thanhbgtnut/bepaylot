@@ -189,3 +189,45 @@ func ValueText(v any) string {
 		return string(b)
 	}
 }
+
+// ParseNumber reads a Vietnamese or English number: "15.000.000", "15,000,000",
+// "1.234,5", "1,234.5", "15 000 000 đ", "-2.000 VND".
+func ParseNumber(s string) (float64, bool) {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.IsDigit(r), r == '.', r == ',', r == '-':
+			b.WriteRune(r)
+		case unicode.IsSpace(r):
+		case unicode.IsLetter(r): // currency: đ, VND, đồng
+		default:
+			return 0, false
+		}
+	}
+	t := b.String()
+	if t == "" || strings.Trim(t, ".,-") == "" {
+		return 0, false
+	}
+	dots, commas := strings.Count(t, "."), strings.Count(t, ",")
+	switch {
+	case dots > 0 && commas > 0: // the last one is the decimal mark
+		if strings.LastIndex(t, ",") > strings.LastIndex(t, ".") {
+			t = strings.ReplaceAll(t, ".", "")
+			t = strings.ReplaceAll(t, ",", ".")
+		} else {
+			t = strings.ReplaceAll(t, ",", "")
+		}
+	case dots > 1:
+		t = strings.ReplaceAll(t, ".", "")
+	case commas > 1:
+		t = strings.ReplaceAll(t, ",", "")
+	case dots == 1 && len(t)-strings.Index(t, ".")-1 == 3: // 15.000: thousands
+		t = strings.ReplaceAll(t, ".", "")
+	case commas == 1 && len(t)-strings.Index(t, ",")-1 == 3:
+		t = strings.ReplaceAll(t, ",", "")
+	case commas == 1:
+		t = strings.ReplaceAll(t, ",", ".")
+	}
+	x, err := strconv.ParseFloat(t, 64)
+	return x, err == nil
+}

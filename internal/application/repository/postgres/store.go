@@ -41,6 +41,8 @@ type Store struct {
 	Segments  *SegmentsRepo
 	Templates *TemplatesRepo
 	Sheets    *SheetsRepo
+	Forms     *ExportTemplatesRepo
+	Checks    *ChecksRepo
 	Usage     *UsageRepo
 
 	ModelCache *ModelCacheRepo
@@ -101,6 +103,8 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		ModelCache: &ModelCacheRepo{pool},
 		Templates:  &TemplatesRepo{pool},
 		Sheets:     &SheetsRepo{pool},
+		Forms:      &ExportTemplatesRepo{pool},
+		Checks:     &ChecksRepo{pool},
 		Usage:      &UsageRepo{pool},
 	}, nil
 }

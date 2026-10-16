@@ -160,19 +160,21 @@ type SheetCell struct {
 // Sheet is a case sheet (§6.9.6). Columns are the document types and fields
 // of the KB as they were when the sheet was made, one per chosen sub-table.
 type Sheet struct {
-	ID        uuid.UUID    `json:"id"`
-	CaseID    uuid.UUID    `json:"case_id"`
-	Name      string       `json:"name"`
-	Status    string       `json:"status"`
-	Filled    int          `json:"filled"`
-	Total     int          `json:"total"`
-	Tables    []string     `json:"tables"`
-	Columns   []SheetTable `json:"columns"`
-	Rows      []SheetRow   `json:"rows"`
-	Error     string       `json:"error,omitempty"`
-	CreatedBy uuid.UUID    `json:"created_by"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	ID      uuid.UUID    `json:"id"`
+	CaseID  uuid.UUID    `json:"case_id"`
+	Name    string       `json:"name"`
+	Status  string       `json:"status"`
+	Filled  int          `json:"filled"`
+	Total   int          `json:"total"`
+	Tables  []string     `json:"tables"`
+	Columns []SheetTable `json:"columns"`
+	Rows    []SheetRow   `json:"rows"`
+	Error   string       `json:"error,omitempty"`
+	// FormID is the Excel form the sheet was built for (§6.9.8).
+	FormID    *uuid.UUID `json:"export_template_id,omitempty"`
+	CreatedBy uuid.UUID  `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // Correction is one AI value a user changed on a sheet (§6.9.6).

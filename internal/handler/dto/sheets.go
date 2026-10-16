@@ -1,6 +1,8 @@
 package dto
 
 import (
+	"github.com/google/uuid"
+
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/llm"
 	"github.com/thanhenti/bepaylot/internal/types"
@@ -31,6 +33,20 @@ type CreateSheetRequest struct {
 	// Tables are the codes of the document types to build; omitted = every
 	// document type of the KB that has fields.
 	Tables []string `json:"tables,omitempty" example:"hop_dong,hoa_don"`
+	// ExportTemplateID builds the sheet for an Excel form of the KB (§6.9.8):
+	// its document types, named after it; Tables is then ignored.
+	ExportTemplateID *uuid.UUID `json:"export_template_id,omitempty"`
+}
+
+// ExportTemplateList is the body of GET /v1/kbs/{id}/export-templates.
+type ExportTemplateList struct {
+	Data []types.ExportTemplate `json:"data"`
+}
+
+// SaveExportTemplateRequest is the body of PUT /v1/export-templates/{id}.
+type SaveExportTemplateRequest struct {
+	Name    string              `json:"name"`
+	Mapping types.ExportMapping `json:"mapping"`
 }
 
 // ClassifyCaseRequest is the body of POST /v1/cases/{id}/classify.
@@ -84,4 +100,24 @@ type SetLLMKeyRequest struct {
 // SheetEditsRequest is the body of POST /v1/sheets/{id}/edits.
 type SheetEditsRequest struct {
 	Edits []sheets.EditInput `json:"edits"`
+}
+
+// CompileCheckRequest is the body of POST /v1/kbs/{id}/checks/compile.
+type CompileCheckRequest struct {
+	Kind    string `json:"kind" example:"rule"` // rule | link
+	DocType string `json:"doc_type,omitempty" example:"hoa_don"`
+	Anchor  string `json:"anchor" example:"hop_dong"`
+	Text    string `json:"text" example:"Tổng giá trị hoá đơn không vượt giá trị hợp đồng"`
+}
+
+// CheckRunList is the body of GET /v1/cases/{id}/checks.
+type CheckRunList struct {
+	Data []types.CheckRun `json:"data"`
+}
+
+// SetCheckLinkRequest is the body of PUT /v1/checks/{id}/links.
+type SetCheckLinkRequest struct {
+	SegmentID       uuid.UUID  `json:"segment_id"`
+	AnchorSegmentID *uuid.UUID `json:"anchor_segment_id"`
+	Auto            bool       `json:"auto,omitempty"`
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
+	"github.com/thanhenti/bepaylot/internal/types"
 )
 
 // maxSheetUpload caps an uploaded .xlsx.
@@ -29,8 +30,14 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 	switch {
 	case errors.Is(err, sheets.ErrNotFound):
 		h.notFound(c, "sheet not found")
+	case errors.Is(err, sheets.ErrFormNotFound):
+		h.notFound(c, "export template not found")
+	case errors.Is(err, sheets.ErrCheckNotFound):
+		h.notFound(c, "check run not found")
 	case errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNoTables),
-		errors.Is(err, sheets.ErrUnknownKey):
+		errors.Is(err, sheets.ErrUnknownKey), errors.Is(err, sheets.ErrBadForm),
+		errors.Is(err, sheets.ErrBadMapping), errors.Is(err, sheets.ErrFormSheet),
+		errors.Is(err, sheets.ErrNoChecks), errors.Is(err, sheets.ErrBadChecks):
 		h.unprocessable(c, err.Error())
 	case errors.Is(err, sheets.ErrNotFinished):
 		c.JSON(consts.StatusConflict, dto.NewError("conflict_error", err.Error()))
@@ -69,7 +76,13 @@ func (h *Handlers) CreateSheet(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	}
-	sh, err := h.Sheets.Create(ctx, u, caseID, req.Tables)
+	var sh types.Sheet
+	var err error
+	if req.ExportTemplateID != nil {
+		sh, err = h.Sheets.CreateForForm(ctx, u, caseID, *req.ExportTemplateID)
+	} else {
+		sh, err = h.Sheets.Create(ctx, u, caseID, req.Tables)
+	}
 	if err != nil {
 		h.sheetError(c, err)
 		return

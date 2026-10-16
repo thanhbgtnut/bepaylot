@@ -11,6 +11,8 @@ export interface KBConfig {
   parser_engine?: string;
   /** Loại giấy tờ của KB: trang của file được phân loại theo ảnh vào các loại này. */
   doc_types?: DocType[];
+  /** Quy tắc đối chiếu chứng từ (§6.9.9); chỉ sửa qua PUT /kbs/:id/checks. */
+  checks?: CheckConfig;
 }
 
 /** Loại giấy tờ của KB kèm các trường bóc tách từ mỗi giấy tờ loại đó (§6.9.3); cũng là cột của bảng Excel. */
@@ -391,6 +393,72 @@ export interface Sheet {
   columns: SheetTable[];
   rows: SheetRow[];
   error?: string;
+  // the Excel form the sheet was built for (§6.9.8)
+  export_template_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---- U85: Excel forms of a KB (§6.9.8)
+
+export interface ExportColumn {
+  col: string;
+  header: string;
+  note?: string;
+}
+
+export interface ExportPlaceholder {
+  cell: string;
+  text: string;
+  note?: string;
+}
+
+// What the code found in the form.
+export interface ExportLayout {
+  sheet: string;
+  title?: string;
+  header_top: number;
+  header_bottom: number;
+  data_start: number;
+  data_rows: number;
+  total_row?: number;
+  total_label?: string;
+  columns: ExportColumn[];
+  placeholders: ExportPlaceholder[];
+}
+
+export type ExportKind = "seq" | "field" | "formula" | "blank";
+
+// Formulas use {r} for the row, {first}/{last} for the record rows.
+export interface ExportColumnMap {
+  col: string;
+  kind: ExportKind;
+  key?: string;
+  formula?: string;
+  total?: string;
+}
+
+export interface ExportFillMap {
+  cell: string;
+  doc_type?: string;
+  key?: string;
+  text?: string;
+}
+
+export interface ExportMapping {
+  doc_type: string;
+  columns: ExportColumnMap[];
+  placeholders: ExportFillMap[];
+  new_fields?: { doc_type: string; field: SheetField }[];
+}
+
+export interface ExportTemplate {
+  id: string;
+  kb_id: string;
+  name: string;
+  file_name: string;
+  layout: ExportLayout;
+  mapping: ExportMapping;
   created_at: string;
   updated_at: string;
 }
@@ -509,3 +577,104 @@ export interface LLMKeyView {
   overridden: boolean;
   models: string[];
 }
+
+// ---- U87: cross-checks of the documents of a case (§6.9.9)
+
+export interface CheckStep {
+  id?: string;
+  text: string;
+  formula?: string;
+  ai?: boolean;
+  explanation?: string;
+}
+
+export interface CheckLink {
+  doc_type: string;
+  steps: CheckStep[];
+}
+
+export interface CheckRule {
+  id?: string;
+  name: string;
+  text: string;
+  formula?: string;
+  ai?: boolean;
+  off?: boolean;
+  explanation?: string;
+}
+
+export interface CheckConfig {
+  anchor: string;
+  links: CheckLink[];
+  rules: CheckRule[];
+}
+
+export interface CompileResult {
+  name: string;
+  formula?: string;
+  ai: boolean;
+  explanation: string;
+  missing?: string;
+}
+
+export interface CheckRef {
+  doc: string;
+  label: string;
+  field_id?: string;
+}
+
+export interface CheckDoc {
+  id: string;
+  document_id: string;
+  type: string;
+  type_title: string;
+  label: string;
+  file_name?: string;
+  page_start?: number;
+  page_end?: number;
+}
+
+export interface CheckMember extends CheckDoc {
+  source: "rule" | "ai" | "user" | "single";
+  reason: string;
+  candidates?: string[];
+}
+
+export interface CheckOutcome {
+  rule_id: string;
+  name: string;
+  text: string;
+  ai?: boolean;
+  status: "pass" | "fail" | "unknown" | "error";
+  detail?: string;
+  failing?: { note: string; refs: CheckRef[] }[];
+  missing?: string[];
+  refs?: CheckRef[];
+}
+
+export interface CheckGroup {
+  anchor: CheckDoc;
+  members: CheckMember[];
+  results: CheckOutcome[];
+}
+
+export interface CheckResult {
+  anchor: string;
+  anchor_title: string;
+  groups: CheckGroup[];
+  unlinked: CheckMember[];
+  counts: { groups: number; pass: number; fail: number; unknown: number; unlinked: number };
+  ran_at: string;
+}
+
+export interface CheckRun {
+  id: string;
+  case_id: string;
+  sheet_id: string;
+  status: "pending" | "running" | "done" | "failed";
+  error?: string;
+  result?: CheckResult;
+  created_at: string;
+  updated_at: string;
+}
+
