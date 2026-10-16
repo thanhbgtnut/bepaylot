@@ -209,23 +209,17 @@ func pageJPEG(t *testing.T, w, h int) []byte {
 }
 
 // Two steps: one TurboOCR call and ONE VLM call for the page, whose prompt
-// carries the OCR text; the markdown lands on the OCR regions and keeps the
+// holds no OCR text; the markdown lands on the OCR regions and keeps the
 // OCR positions.
-func TestEngineOneCallPerPageWithOCRText(t *testing.T) {
+func TestEngineOneCallPerPageWithoutOCRText(t *testing.T) {
 	layout, fv := sampleVLM(t)
-	e, _ := New(Config{Layout: layout, Client: fv, ContextLowConf: 0.8, MaxSide: 1288})
+	e, _ := New(Config{Layout: layout, Client: fv, MaxSide: 1288})
 	raw, env := parseSample(t, e)
 	if layout.calls.Load() != 1 || fv.calls.Load() != 1 {
 		t.Fatalf("layout calls %d, VLM calls %d; want 1 and 1", layout.calls.Load(), fv.calls.Load())
 	}
-	prompt := fv.prompts[0]
-	for _, want := range []string{"<ocr>", "Mã số hộ kinh doanh: 070082001498", "ĐÃ ĐỐI CHIẾU BẢNGỐC", "Ngày surta thhnng am ng Băm .c cts " + LowConfMark} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("prompt lacks %q", want)
-		}
-	}
-	if strings.Contains(prompt, OCRPlaceholder) || strings.Contains(prompt, "Họ và tên: NGUYỄN VĂN TÌNH "+LowConfMark) {
-		t.Error("placeholder left in the prompt, or a confident line marked")
+	if prompt := fv.prompts[0]; prompt != DefaultPagePrompt {
+		t.Errorf("prompt = %q, want the page prompt alone", prompt)
 	}
 	if env.Mode != "page" || env.Call == nil || env.Call.PromptTokens != 2000 || env.Align == nil || env.Markdown == "" || len(env.Layout) == 0 {
 		t.Fatalf("envelope = %+v", env)
@@ -352,17 +346,6 @@ func (s *stripLayout) ParsePage(ctx context.Context, in parser.PageImage, opt pa
 	return p, nil
 }
 
-func TestEngineOCRContextCap(t *testing.T) {
-	layout, fv := sampleVLM(t)
-	e, _ := New(Config{Layout: layout, Client: fv, ContextMaxChars: 200})
-	parseSample(t, e)
-	p := fv.prompts[0]
-	body := p[strings.Index(p, "<ocr>\n")+len("<ocr>\n") : strings.Index(p, "\n</ocr>")]
-	if n := len([]rune(body)); n > 202 || !strings.HasSuffix(body, "…") || strings.Contains(body, LowConfMark) {
-		t.Fatalf("context (%d runes) = %q", n, body)
-	}
-}
-
 func TestEngineConcurrencyAcrossPages(t *testing.T) {
 	layout, fv := sampleVLM(t)
 	e, _ := New(Config{Layout: layout, Client: fv, MaxConcurrency: 2})
@@ -432,7 +415,7 @@ func TestLiveVLM(t *testing.T) {
 		model = "allenai/olmocr-2-7b"
 	}
 	client := &httpVLM{base: strings.TrimRight(base, "/"), model: model}
-	e, _ := New(Config{Layout: &fakeLayout{}, Client: client, MaxConcurrency: 4, ContextLowConf: 0.8, MaxSide: 1288, Retries: 1})
+	e, _ := New(Config{Layout: &fakeLayout{}, Client: client, MaxConcurrency: 4, MaxSide: 1288, Retries: 1})
 	t0 := time.Now()
 	raw, err := e.ParsePage(context.Background(), parser.PageImage{PageNo: 1, Body: bytes.NewReader(img), Width: cfg.Width, Height: cfg.Height},
 		parser.PageOptions{Layout: true, ReadingOrder: true, Tables: true, Refine: true})

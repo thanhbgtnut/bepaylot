@@ -1,11 +1,16 @@
 # BePaylot — Đặc tả kỹ thuật (Spec)
 
-> Phiên bản: 0.27 · Ngày: 2026-10-14 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15; U50–U51 (phân loại trang theo ảnh bằng Decision API, loại giấy tờ khai báo ở KB, node giấy tờ trên cây hồ sơ) đã triển khai (P18, 11/10/2026), xem §15; U52–U57 (OCR và phân loại đồng thời, tách & gom tự động, không nạp hai model cùng lúc, trang trắng/Khác và dải ảnh nhỏ ngắt theo giấy tờ, lưu kết quả gọi model, sửa loại giấy tờ của KB) đã triển khai (P19, 12/10/2026), xem §15; U58 (câu hỏi `is_break` trong request Decision API, ngắt các giấy tờ cùng loại nằm liền nhau) đã triển khai (P20, 12/10/2026), xem §15; U59 (cột đầu của bảng và `.xlsx` là loại tài liệu, cột theo mẫu bảng, bỏ danh sách trường viết cứng) đã triển khai (P21, 12/10/2026), xem §15; U61–U63 (`autorotate` khi gọi OCR, câu hỏi `is_first_page` và gom tài liệu chỉ theo trang đầu, module `docpipe` dùng lại được ở project khác) đã triển khai (P22, P23, 13/10/2026), xem §15; U67 (bảng Excel tách khỏi phân loại, agent đọc file để điền) đã triển khai (P24, 13/10/2026) rồi **bị thay bởi U68–U71** (trường khai báo theo loại giấy tờ của KB, trích xuất khi xử lý file, bảng Excel chỉ gom kết quả; P25, 13/10/2026), xem §15; U80–U81 (chỉ trích xuất trường khi bấm tạo bảng Excel, kết quả lưu lại để dùng lại; trường có mô tả dẫn hướng agent) và U82 (trường trống được hỏi lại một lần ở lần tạo bảng kế tiếp) đã triển khai (P26, 13/10/2026), xem §13, §15; U83 (phân loại trang bằng ảnh **kèm text OCR**, chạy sau OCR) đã triển khai (P27, 14/10/2026), xem §15
+> Phiên bản: 0.28 · Ngày: 2026-10-16 · Trạng thái: đã triển khai P0–P2, P5 (case), P7 (đăng nhập/đăng ký + OIDC), P9 (gỡ LLM Wiki, search chỉ duyệt cây), P10 (VLM qua agent, JSON trang trong Postgres), dựng cây theo trang (U37), P11 (VLM mỗi trang một lần gọi, có text OCR để kiểm, U38), P12 (cây hồ sơ dựng bằng code, thêm file chỉ nối nhánh, U39), agent tự suy luận cách tra theo cây (U40, U41), cây của case nạp sẵn vào context (U42); P8 (mô hình dữ liệu hồ sơ) mới có trong spec, xem §13, §15; U43–U46 (trang phương án kiểu NotebookLM, bảng Excel, mẫu prompt theo quyền, chi phí trong Cài đặt) đã triển khai (P13–P16, 08/10/2026), web app nhúng vào binary server, xem §13, §15; U47–U49 (bảng theo loại giấy tờ, tách & gom bộ chứng từ) đã triển khai (P17, 08/10/2026), xem §15; U50–U51 (phân loại trang theo ảnh bằng Decision API, loại giấy tờ khai báo ở KB, node giấy tờ trên cây hồ sơ) đã triển khai (P18, 11/10/2026), xem §15; U52–U57 (OCR và phân loại đồng thời, tách & gom tự động, không nạp hai model cùng lúc, trang trắng/Khác và dải ảnh nhỏ ngắt theo giấy tờ, lưu kết quả gọi model, sửa loại giấy tờ của KB) đã triển khai (P19, 12/10/2026), xem §15; U58 (câu hỏi `is_break` trong request Decision API, ngắt các giấy tờ cùng loại nằm liền nhau) đã triển khai (P20, 12/10/2026), xem §15; U59 (cột đầu của bảng và `.xlsx` là loại tài liệu, cột theo mẫu bảng, bỏ danh sách trường viết cứng) đã triển khai (P21, 12/10/2026), xem §15; U61–U63 (`autorotate` khi gọi OCR, câu hỏi `is_first_page` và gom tài liệu chỉ theo trang đầu, module `docpipe` dùng lại được ở project khác) đã triển khai (P22, P23, 13/10/2026), xem §15; U67 (bảng Excel tách khỏi phân loại, agent đọc file để điền) đã triển khai (P24, 13/10/2026) rồi **bị thay bởi U68–U71** (trường khai báo theo loại giấy tờ của KB, trích xuất khi xử lý file, bảng Excel chỉ gom kết quả; P25, 13/10/2026), xem §15; U80–U81 (chỉ trích xuất trường khi bấm tạo bảng Excel, kết quả lưu lại để dùng lại; trường có mô tả dẫn hướng agent) và U82 (trường trống được hỏi lại một lần ở lần tạo bảng kế tiếp) đã triển khai (P26, 13/10/2026), xem §13, §15; U83 (phân loại trang bằng ảnh **kèm text OCR**, chạy sau OCR) đã triển khai (P27, 14/10/2026), xem §15; U84 (prompt VLM chỉ có ảnh; trích xuất trường lấy markdown làm dữ liệu chính, text TurboOCR làm tham khảo) đã triển khai (16/10/2026)
 >
 > Phạm vi: nền tảng xử lý tài liệu, tìm kiếm và agent gồm bốn module:
 > **Parser → Index (vectorless, kiểu PageIndex) → Hiển thị hồ sơ theo cây → Agent**. Mọi tài liệu thuộc một **case** (bộ hồ sơ theo một mã nghiệp vụ, ví dụ mã thanh toán `RT112233`), và case là phạm vi cứng khi agent tìm kiếm.
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
+>
+> Thay đổi trong 0.28 (U84): **TurboOCR chỉ là nguồn tham khảo**
+> - Lần gọi VLM của trang **chỉ gửi ảnh và prompt**, không còn kèm text TurboOCR (thay phần "gửi kèm text OCR" của U38). Bỏ `{ocr}`, dấu `[?]`, cấu hình `context_max_chars`, `context_low_conf` và trường raw `context_chars` (§5.9, §11).
+> - Tin nhắn trích xuất trường (§6.9.3) gửi mỗi trang ở hai nguồn: `<markdown>` (VLM đọc từ ảnh) là **dữ liệu chính**, `<ocr>` (text TurboOCR gốc, dòng `[L<n>]` kèm độ tin cậy OCR, lấy `text_ocr` khi dòng đã được VLM sửa, bỏ dòng có độ tin cậy dưới `parser.low_conf_threshold`) là **dữ liệu tham khảo** để phát hiện chỗ markdown đọc sai ảnh.
+> - Không cần migration.
 >
 > Thay đổi trong 0.27 (U83): **phân loại trang bằng ảnh kèm text OCR**
 > - Lần gọi Decision API của mỗi trang gửi **ảnh trang và text OCR của trang đó** (tối đa 1 500 ký tự đầu, trong `state`), thay vì chỉ ảnh, để phân biệt hai loại giấy tờ có tên chỉ khác nhau một từ: "Giấy chứng nhận quyền sử dụng đất và tài sản gắn liền với đất" và "Giấy chứng nhận quyền sử dụng đất và tài sản **khác** gắn liền với đất" (§6.9.4).
@@ -166,7 +171,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U40 | Khi hỏi đáp, agent thực hiện các tool: (1) lấy tree theo case, nạp vào context; (2) tìm đúng trang cần lấy thông tin; (3) load trang từ tree vào context để trả lời. **Agent phải tự biết làm flow này, không cần người dùng hướng dẫn**, để agent có khả năng tổng quát. (Làm rõ: `kb_search` của agent chỉ giữ mode keyword) | còn hiệu lực; **được làm rõ bởi U41** (không ghi flow vào prompt); thay phần "agent được chọn `kb_search` để server tự chạy cả luồng" của §8.2 | §0 (bản 0.15), §6.6, §8.2 |
 | U41 | Flow load tree theo case rồi lấy trang để trả lời **không phụ thuộc vào prompt**: agent **tự lên plan** dựa trên các tool được cung cấp; flow người dùng đưa chỉ là ví dụ (few-shot), agent phải tổng quát hơn. Lấy tree theo case phải **đúng mã case**, không lấy của case khác; case vẫn do client chọn khi mở phiên như hiện tại | còn hiệu lực; làm rõ U40, giữ U21/§8.1 (phạm vi cứng theo `sessions.case_id`) | §0 (bản 0.15), §6.6, §8.1, §8.2 |
 | U42 | Hãy **load tree vào context**, vì tree đã theo case rồi (kết quả chạy thử: agent ít đi đường cây → node → trang, chủ yếu tìm từ khoá) | còn hiệu lực; bổ sung U40/U41: cây là dữ liệu của phiên, không phải flow | §0 (bản 0.15), §8.1, §8.2 |
-| U38 | Kiểm tra lại `turboocr_vlm`: **không gọi VLM theo từng layout nữa**, chỉ đi qua **2 bước**: (1) bóc tách bằng TurboOCR (text, box của từng trang); (2) gọi VLM **theo từng trang** để lấy markdown. Khi gọi VLM phải **gửi kèm text của TurboOCR** để verify kết quả markdown (coi như context của VLM), vì markdown trả ra có thể **sai hoặc thiếu** | còn hiệu lực; **thay U36 (1)**, thay phần "cắt ảnh theo vùng" của U17 | §0 (bản 0.14), §5.9, §11, §16 |
+| U38 | Kiểm tra lại `turboocr_vlm`: **không gọi VLM theo từng layout nữa**, chỉ đi qua **2 bước**: (1) bóc tách bằng TurboOCR (text, box của từng trang); (2) gọi VLM **theo từng trang** để lấy markdown. Khi gọi VLM phải **gửi kèm text của TurboOCR** để verify kết quả markdown (coi như context của VLM), vì markdown trả ra có thể **sai hoặc thiếu** | còn hiệu lực, trừ phần **gửi kèm text TurboOCR khi gọi VLM: bị thay bởi U84**; **thay U36 (1)**, thay phần "cắt ảnh theo vùng" của U17 | §0 (bản 0.14), §5.9, §11, §16 |
 | U43 | **Xuất Excel từ các file hồ sơ phương án, gom lại.** Làm **giống NotebookLM**: nút xuất Excel nằm trong phương án; khi mở, bảng hiển thị thành **một trang riêng** có nút **quay lại phương án**. Giao diện phải khớp UI hiện tại; giao diện đã chốt theo prototype | còn hiệu lực; làm rõ U23; **được làm rõ bởi U47, U48**: bảng theo loại giấy tờ (trường là cột, giấy tờ là dòng), chọn bảng khi xuất; **được sửa bởi U70**: bảng dựng từ loại giấy tờ và trường của KB, không từ mẫu bảng | §6.9.6, §7.2, §7.6, §10.8, [`spec/prototype/u43-u46.html`](prototype/u43-u46.html) |
 | U44 | **Nhận diện thông tin người dùng chỉnh sửa** trên Excel ở những chỗ AI quét ra sai | còn hiệu lực; **được làm rõ bởi U47**: lịch sử chỉnh sửa nằm ở panel phải, mặc định thu gọn | §6.9.6, §7.6, §10.8 |
 | U45 | **Phân quyền:** một số user được đặt prompt, đa số user dùng prompt có sẵn | còn hiệu lực cho **mẫu prompt chat**; phần **mẫu bảng Excel bị thay bởi U68** (trường khai báo theo loại giấy tờ của KB); bổ sung U20 | §7.7, §8.4, §10.5, §10.8 |
@@ -208,6 +213,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U81 | Phần tạo các trường thông tin theo loại tài liệu: **thêm cột mô tả** để agent hiểu cần trích xuất trường thông tin nào; nội dung mô tả **như prompt dẫn hướng agent** cho việc trích xuất | còn hiệu lực; bổ sung U68 (trường có thêm mô tả), U69 (mô tả nằm trong tin nhắn trích xuất) | §6.9.3, §7.11, §10.1 |
 | U82 | Những trường **bị trống, không tìm thấy** thì **vẫn trích xuất lại một lần nữa** nếu ấn tạo bảng, để đảm bảo thông tin được lấy ra đúng nhất. (Cách hiểu: mỗi trường trống được hỏi lại **đúng một lần**, ở lần tạo bảng kế tiếp; sau lần thứ hai vẫn trống thì thôi) | còn hiệu lực; bổ sung U80 (ngoại lệ của "đã lưu thì không gọi lại": chỉ áp dụng cho trường chưa có giá trị) | §6.9.3, §6.9.6, §16.2, §16.5 |
 | U83 | Sửa logic xử lý ở docpipe: **gọi phân loại dùng text sau khi OCR và ảnh**, thay vì chỉ dùng ảnh, vì có hai loại cần phân riêng: "Giấy chứng nhận quyền sử dụng đất và tài sản gắn liền với đất" và "Giấy chứng nhận quyền sử dụng đất và tài sản **khác** gắn liền với đất", chỉ khác nhau một từ "khác" | còn hiệu lực; **thay U52** (phân loại chạy sau OCR của trang, không đồng thời); sửa U50 (đầu vào là ảnh kèm text OCR); U54 giữ nguyên | §6.9.4, §12 |
+| U84 | `docpipe` làm sai yêu cầu: **text TurboOCR là nguồn để tham khảo**. Luồng: từ ảnh gọi VLM lấy markdown; từ hai nội dung (text TurboOCR và markdown đó) đi vào **trích xuất trường thông tin**, trong đó **markdown là dữ liệu chính**, TurboOCR là **dữ liệu tham khảo**, để hạn chế sai số ở markdown do VLM hiểu sai ảnh. Prompt lấy markdown **không thêm text TurboOCR**. Bổ sung: text TurboOCR có **độ tin cậy thấp quá thì không đưa vào** trích xuất (chỉ dùng markdown); **độ tin cậy** của dòng OCR cũng được đưa vào làm thông tin tham khảo | còn hiệu lực; **thay phần "gửi kèm text TurboOCR" của U38**; sửa U69 (text truyền cho agent gồm markdown chính + OCR tham khảo) | §5.9, §6.9.3, §11 |
 
 ## 1. Yêu cầu chung
 
@@ -921,12 +927,9 @@ Số lần gọi VLM = số trang (trừ trang bỏ qua VLM vì có text layer t
 ảnh trang (S3) ──► (1) TurboOCR /ocr/raw?autorotate=1&layout=1&reading_order=1&tables=1
                      │  lines (text, conf, box) + regions (layout) + reading_order
                      ▼
-               ngữ cảnh OCR: các dòng theo thứ tự đọc, dòng trống giữa hai vùng,
-               dòng confidence < context_low_conf thêm " [?]", cắt ở context_max_chars
-                     ▼
                (2) vlm.Transcriber ──► agent.Extract (streaming, llm.providers)
-                     │  1 ảnh trang (thu về max_side) + page_prompt chứa <ocr>…</ocr>
-                     ▼  markdown của trang (bỏ front matter, bỏ "[?]" model chép lại)
+                     │  1 ảnh trang (thu về max_side) + page_prompt (không có text OCR, U84)
+                     ▼  markdown của trang (bỏ front matter)
                distribute (vlm/align.go): kiểm markdown bằng OCR, chia về vùng
                      │  → RawRegion.Text / .HTML (bảng) / .LaTeX (công thức)
                      ▼
@@ -936,12 +939,7 @@ Số lần gọi VLM = số trang (trừ trang bỏ qua VLM vì có text layer t
                assemble.Render: markdown trang + offset từng dòng
 ```
 
-**Prompt trang** (`page_prompt`, mặc định built-in; `{ocr}` là chỗ đặt text OCR, thiếu thì text OCR được nối vào cuối). Yêu cầu model:
-- chép trang thành markdown theo thứ tự đọc tự nhiên: giữ ngôn ngữ, chính tả, dấu; tiêu đề dùng `#`; bảng dạng HTML; công thức dạng LaTeX; không front matter, không code fence, không mô tả ảnh;
-- dùng text OCR trong `<ocr>…</ocr>` để **kiểm**: mọi đoạn text trong OCR phải có trong câu trả lời; tên, số, ngày, mã phải khớp với ảnh;
-- OCR có thể sai (mất dấu, dính chữ): chỗ OCR khác ảnh thì **viết theo ảnh**; không chép dấu `[?]`.
-
-Ngữ cảnh OCR chỉ gồm text dòng, không gửi toạ độ, id hay JSON thô, để ít token. Dòng confidence thấp được đánh dấu `[?]` để model biết chỗ nào phải nhìn kỹ ảnh thay vì tin OCR.
+**Prompt trang** (`page_prompt`, mặc định built-in). Prompt **chỉ có ảnh trang**, không kèm text TurboOCR (U84): TurboOCR là dữ liệu tham khảo, dùng ở bước trích xuất trường (§6.9.3) và để lấy toạ độ, không đưa vào lần gọi VLM. Yêu cầu model chép trang thành markdown theo thứ tự đọc tự nhiên: giữ ngôn ngữ, chính tả, dấu; tiêu đề dùng `#`; bảng dạng HTML; công thức dạng LaTeX; không front matter, không code fence, không mô tả ảnh.
 
 **Kiểm markdown bằng OCR và chia về vùng** (`distribute`, hàm thuần):
 1. Markdown được tách thành **đoạn**: tiêu đề `#`, dòng cấu trúc văn bản hành chính (`Điều N`, `Chương`…), bảng `<table>`/`|`, công thức `$$`/`\[`, đoạn văn tách theo dòng trống. Hình `![…](page_x_y_w_h.png)` bỏ qua (hình lấy từ layout).
@@ -972,11 +970,11 @@ Ngữ cảnh OCR chỉ gồm text dòng, không gửi toạ độ, id hay JSON t
 
 **Gọi VLM qua agent (streaming).** Engine không có HTTP client riêng. `vlm.Transcriber` được container nối vào `agent.Extract` (`internal/agent/extract.go`, adapter `internal/container/vlm.go`):
 - provider và model lấy từ `parser.engines.vlm.provider`/`model` trong **registry provider của agent** (`llm.providers`); model rỗng = `llm.default_model`;
-- một tin nhắn user gồm prompt (có text OCR) + ảnh JPEG của trang; không session, lịch sử, skill hay tool;
+- một tin nhắn user gồm prompt (không có text OCR) + ảnh JPEG của trang; không session, lịch sử, skill hay tool;
 - gọi bằng `Stream`; `<think>…</think>` bị bỏ; `finish_reason` = `length`/`max_tokens` → `truncated`; usage ghi vào raw;
 - `max_concurrency` là số **trang** gọi VLM đồng thời mỗi process (semaphore chung).
 
-**Token và context của model.** Mỗi lần gọi gồm ảnh trang (≈ 1.000–1.500 token ở 1288 px), text OCR (thường 1.000–3.000 token, tối đa `context_max_chars`) và markdown trả về (tối đa `max_tokens`, mặc định 4096). Server model (LM Studio/vLLM) phải đặt context đủ chứa cả ba (khuyến nghị ≥ 12k token). olmOCR-2 được fine-tune với prompt chỉ có ảnh; prompt có text OCR là prompt ngoài phân phối huấn luyện, nên cần đo trên trang thật (coverage, `align.unmatched`, CER nếu có đáp án) khi đổi model hoặc prompt (§15.3).
+**Token và context của model.** Mỗi lần gọi gồm ảnh trang (≈ 1.000–1.500 token ở 1288 px) và markdown trả về (tối đa `max_tokens`, mặc định 4096). Server model (LM Studio/vLLM) phải đặt context đủ chứa cả hai (khuyến nghị ≥ 8k token). Prompt chỉ có ảnh, đúng cách olmOCR-2 được fine-tune; khi đổi model hoặc prompt vẫn cần đo trên trang thật (coverage, `align.unmatched`, CER nếu có đáp án) (§15.3).
 
 **Không có OCR → gửi trang không kèm text** (`full_page: true`, mặc định). Khi TurboOCR lỗi (không kết nối được, timeout, circuit breaker mở), hoặc trả trang không có vùng và không có dòng, thì ảnh trang được gửi cho VLM trong **một** lần gọi với `prompt` (mặc định prompt v4 của olmOCR, không có text OCR). Nếu VLM cũng lỗi, trang lỗi và task retry. `SplitMarkdown` tách markdown thành vùng theo thứ tự đọc (cùng cách tách đoạn như trên):
 - `#`… → `doc_title` / `paragraph_title`; `Điều N`, `Chương`, `Mục`, `Phần` → `paragraph_title`; dòng VIẾT HOA bắt đầu bằng loại văn bản (`GIẤY`, `HỢP ĐỒNG`, `QUYẾT ĐỊNH`…) → `doc_title`;
@@ -991,7 +989,7 @@ Vì không có OCR, bbox của vùng là **dải dọc xấp xỉ** tỉ lệ v�
 **Raw.** Cột `document_pages.raw` (jsonb, §9.2) lưu:
 ```json
 {"engine":"turboocr_vlm","model":"…","mode":"page"|"full_page","layout_error":"…",
- "layout":<JSON TurboOCR>,"context_chars":1840,
+ "layout":<JSON TurboOCR>,
  "call":{"ms":…,"prompt_tokens":…,"completion_tokens":…,"truncated":false,"meta":{…},"error":"…"},
  "markdown":"<markdown VLM của trang>",
  "align":{"ocr_words":314,"matched_words":290,"coverage":0.92,"segments":30,
@@ -1005,10 +1003,10 @@ Từ raw đo được token mỗi trang, mức khớp với OCR và đoạn nào
 
 **Timeout.** Mỗi trang một lần gọi VLM; lần gọi trả markdown cả trang nên lâu hơn một lần gọi vùng. `page:ocr` giữ `Timeout = 15m`; timeout từng lần gọi là `llm.request_timeout`.
 
-**Cấu hình** (`parser.engines.vlm`, §11): `provider, model, page_prompt, prompt, max_tokens (4096), temperature (0,1), max_concurrency (4, số trang), context_max_chars (12000), context_low_conf (0,8), max_side (1288), jpeg_quality (90), retries (0), on_error, full_page, min_coverage (0,3), skip_with_text_layer`. Đã bỏ (0.14): `batch_prompt, classes, groups, tag_classes, batch_max_regions, batch_max_height, padding, min_side`; khoá cũ trong file config bị bỏ qua.
+**Cấu hình** (`parser.engines.vlm`, §11): `provider, model, page_prompt, prompt, max_tokens (4096), temperature (0,1), max_concurrency (4, số trang), max_side (1288), jpeg_quality (90), retries (0), on_error, full_page, min_coverage (0,3), skip_with_text_layer`. Đã bỏ (0.14): `batch_prompt, classes, groups, tag_classes, batch_max_regions, batch_max_height, padding, min_side`; khoá cũ trong file config bị bỏ qua. Đã bỏ (0.28, U84): `context_max_chars, context_low_conf`.
 
 **Kiểm thử.**
-- Unit `parser/vlm`: một lần gọi TurboOCR + một lần gọi VLM mỗi trang; prompt chứa text OCR, dòng confidence thấp có `[?]`, không còn `{ocr}`; markdown chia đúng vùng, dòng sửa giữ bbox OCR; dòng bị model bỏ sót được chèn lại; đoạn không được OCR xác nhận bị bỏ; dòng ngoài layout thành vùng mới; cắt ngữ cảnh ở `context_max_chars`; `max_concurrency` theo trang; `on_error`; `full_page`.
+- Unit `parser/vlm`: một lần gọi TurboOCR + một lần gọi VLM mỗi trang; prompt chỉ có ảnh, không chứa text OCR (U84); markdown chia đúng vùng, dòng sửa giữ bbox OCR; dòng bị model bỏ sót được chèn lại; đoạn không được OCR xác nhận bị bỏ; dòng ngoài layout thành vùng mới; `max_concurrency` theo trang; `on_error`; `full_page`.
 - Unit `parser/assemble`: căn dòng, chống bịa, cắt text tràn, chèn lại dòng bị bỏ sót (trừ dòng low-confidence), dòng tổng hợp, render lại ổn định.
 - Tích hợp: `service/index` mô phỏng bộ hồ sơ scan 20 trang, VLM giả kiểm prompt có đủ dòng OCR và chỉ được gọi một lần mỗi trang.
 - Live: `VLM_BASE_URL=http://localhost:1234/v1 VLM_TEST_IMAGE=<ảnh> go test -run TestLiveVLM ./docpipe/parser/vlm`, dùng layout mẫu `spec/parser/output_example.json` (client HTTP tối giản chỉ có trong test).
@@ -1478,7 +1476,7 @@ Một evidence là **một vị trí trong nguồn gốc** chứng minh cho mộ
 
 Các bước:
 1. **Chọn việc (code):** với mỗi file đã index của case, mỗi segment `active` mang **loại giấy tờ được chọn cho bảng** và loại đó có trường (`config.doc_types[].fields`, §7.11), lấy các trường **chưa có field nào** (`proposed` hay `confirmed`) trên segment đó. Không còn trường nào thì bỏ qua segment. Segment mà các trang của nó **không có dòng text nào** thì bỏ qua, không gọi agent và không ghi field, để lần tạo bảng sau thử lại. Segment `other`, `unknown`, loại không khai báo trường và loại không được chọn không được trích xuất.
-2. **Mỗi giấy tờ một lượt agent**, trong session ẩn gắn case (`metadata.extract_document_id`, không hiện trong lịch sử chat), `user_id` là người upload. Tin nhắn do code soạn, gồm: tên và mô tả loại giấy tờ; các trường cần lấy, mỗi trường một dòng `key · tên trường · kiểu`, trường có **mô tả** (U81, §7.11) thì thêm ` · <mô tả>` vào cuối dòng (xuống dòng trong mô tả đổi thành dấu cách), kèm một câu dặn rằng mô tả là hướng dẫn tìm và ghi giá trị của trường đó; **text đã bóc tách** của các trang thuộc giấy tờ, dạng `<page n="k">` với từng dòng `[L<n>] …` (cùng text mà `kb_read_pages` trả; với engine `turboocr_vlm` là text sau bước VLM); và dạng JSON phải trả. Giấy tờ dài hơn 60 000 ký tự thì phần sau bị lược.
+2. **Mỗi giấy tờ một lượt agent**, trong session ẩn gắn case (`metadata.extract_document_id`, không hiện trong lịch sử chat), `user_id` là người upload. Tin nhắn do code soạn, gồm: tên và mô tả loại giấy tờ; các trường cần lấy, mỗi trường một dòng `key · tên trường · kiểu`, trường có **mô tả** (U81, §7.11) thì thêm ` · <mô tả>` vào cuối dòng (xuống dòng trong mô tả đổi thành dấu cách), kèm một câu dặn rằng mô tả là hướng dẫn tìm và ghi giá trị của trường đó; **text đã bóc tách** của các trang thuộc giấy tờ, mỗi trang một `<page n="k">` gồm hai nguồn (U84): `<markdown>` là markdown VLM đọc từ ảnh trang, **dữ liệu chính** để lấy giá trị; `<ocr>` là text TurboOCR gốc, từng dòng `[L<n>] (<độ tin cậy>) …` (dòng đã được VLM sửa thì lấy `text_ocr`; dòng tổng hợp do VLM tạo thì không có; **dòng có độ tin cậy dưới `parser.low_conf_threshold` (0,6) bị bỏ**, để chữ OCR đọc quá kém không làm sai kết quả, trang không còn dòng nào thì chỉ dựa vào markdown), **chỉ để tham khảo**: đối chiếu từng giá trị lấy từ markdown, khi hai nguồn khác nhau thì xem xét và hạ confidence, không bỏ giá trị markdown chỉ vì OCR ghi khác; và dạng JSON phải trả (`line` là dòng `[L]` OCR ứng với giá trị). Giấy tờ dài hơn 60 000 ký tự thì phần sau bị lược.
 3. **Tool của lượt này chỉ có `calculate` và `json_validate`** (U71): không bind tool tài liệu `kb_*`, không tool MCP, không `tool_search`, không skill. Agent không cần tìm kiếm vì text nằm sẵn trong tin nhắn; `calculate` dùng cho giá trị phải tính (tổng, hiệu, tích, thương).
 4. **Agent trả một JSON:** `{"fields":[{"key","value","confidence","page","line","note"}]}`; `value` là `null` khi giấy tờ không có trường đó; `page`, `line` là trang và số dòng `[L]` chứa giá trị; `note` nêu cách tính khi giá trị là kết quả tính toán. Kiểu `date` viết `YYYY-MM-DD`, `number`/`money` viết số.
 5. **Ghi (code):** mỗi trường được hỏi thành một field `proposed`, `source=agent`, `segment_id` của giấy tờ, `value_type` theo cấu hình. Dòng `(page, line)` có thật trong các trang đã gửi thì thành evidence (quote là nguyên văn dòng, bbox của dòng) và `value_matched` tính như §6.9.2; dòng không có thật thì field vẫn được lưu nhưng **không có evidence** ("không có nguồn"), vì text đã do server đưa vào chứ không do agent tự tìm. Trường không có giá trị được lưu thành field **rỗng** (`value_text=''`, `note` nêu lý do), để biết trường đã được hỏi (lần sau hỏi lại một lần rồi thôi, U82); field rỗng không được coi là giá trị. Câu trả lời không phải JSON thì không ghi gì: bảng vẫn hoàn thành, các ô của giấy tờ đó để trống và giấy tờ được hỏi lại ở lần tạo bảng sau. Lỗi gọi model thì task `case:sheet` báo lỗi để retry (retry chỉ làm tiếp phần chưa có field).
@@ -2775,13 +2773,11 @@ parser:
     vlm:                            # engine turboocr_vlm (§5.9): TurboOCR rồi 1 lần gọi VLM/trang, qua agent, streaming
       provider: ${BEPAYLOT_VLM_PROVIDER}   # tên trong llm.providers; rỗng + llm.providers.vlm.base_url = "vlm"
       model: ${BEPAYLOT_VLM_MODEL}         # rỗng = llm.default_model (provider vlm: allenai/olmocr-2-7b)
-      page_prompt: ""               # "" = built-in; {ocr} = chỗ đặt text OCR của trang
+      page_prompt: ""               # "" = built-in; chỉ có ảnh, không kèm text OCR (U84)
       prompt: ""                    # trang không có OCR (full_page); "" = prompt olmOCR
-      max_tokens: 4096              # markdown cả trang; context model phải chứa ảnh + text OCR + phần này
+      max_tokens: 4096              # markdown cả trang; context model phải chứa ảnh + phần này
       temperature: 0.1
       max_concurrency: 4            # số trang gọi VLM đồng thời mỗi process
-      context_max_chars: 12000      # trần text OCR gửi kèm mỗi trang
-      context_low_conf: 0.8         # dòng OCR dưới ngưỡng này đánh dấu [?] trong prompt (0 = tắt)
       max_side: 1288
       jpeg_quality: 90
       retries: 0                    # thêm vào retry của provider

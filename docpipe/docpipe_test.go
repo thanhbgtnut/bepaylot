@@ -78,8 +78,8 @@ func TestRun(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("vlm request: %s %v", r.URL.Path, err)
 		}
-		if p := req.Messages[0].Content[0].Text; !strings.Contains(p, "UBND XÃ NHA BÍCH") {
-			t.Errorf("the prompt must carry the OCR text of the page")
+		if p := req.Messages[0].Content[0].Text; strings.Contains(p, "UBND XÃ NHA BÍCH") {
+			t.Errorf("the prompt must not carry the OCR text of the page")
 		}
 		mu.Lock()
 		vlmCalls++

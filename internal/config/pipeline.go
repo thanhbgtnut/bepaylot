@@ -134,24 +134,20 @@ type VLM struct {
 	// olmOCR server, or the chat provider when its model reads images).
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"` // "" = llm.default_model
-	// PagePrompt reads a page with its OCR text ({ocr} marks where it goes);
-	// "" = built-in. Prompt reads a page without OCR text (full_page); "" =
-	// olmOCR's page prompt.
+	// PagePrompt reads a page from its image alone; "" = built-in. Prompt
+	// reads a page the layout engine failed on (full_page); "" = olmOCR's
+	// page prompt.
 	PagePrompt  string  `yaml:"page_prompt"`
 	Prompt      string  `yaml:"prompt"`
 	MaxTokens   int     `yaml:"max_tokens"`
 	Temperature float64 `yaml:"temperature"`
 	// MaxConcurrency bounds in-flight page calls per worker process.
-	MaxConcurrency int `yaml:"max_concurrency"`
-	// ContextMaxChars caps the OCR text sent with a page (runes);
-	// ContextLowConf marks OCR lines below it as uncertain (0 = off).
-	ContextMaxChars int     `yaml:"context_max_chars"`
-	ContextLowConf  float64 `yaml:"context_low_conf"`
-	MaxSide         int     `yaml:"max_side"` // downscale page images above this long side
-	JPEGQuality     int     `yaml:"jpeg_quality"`
-	Retries         int     `yaml:"retries"`   // on top of the provider's own retries
-	OnError         string  `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
-	FullPage        *bool   `yaml:"full_page"` // no OCR (layout failed/empty) → page to the VLM alone
+	MaxConcurrency int    `yaml:"max_concurrency"`
+	MaxSide        int    `yaml:"max_side"` // downscale page images above this long side
+	JPEGQuality    int    `yaml:"jpeg_quality"`
+	Retries        int    `yaml:"retries"`   // on top of the provider's own retries
+	OnError        string `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
+	FullPage       *bool  `yaml:"full_page"` // no OCR (layout failed/empty) → page to the VLM alone
 	// MinCoverage is the share of a block's OCR words that must agree with
 	// the markdown before it replaces the OCR text.
 	MinCoverage float64 `yaml:"min_coverage"`
@@ -313,10 +309,6 @@ func (c *Config) applyPipelineDefaults() {
 		v.Temperature = 0.1
 	}
 	setInt(&v.MaxConcurrency, 4)
-	setInt(&v.ContextMaxChars, 12000)
-	if v.ContextLowConf == 0 {
-		v.ContextLowConf = 0.8
-	}
 	setInt(&v.MaxSide, 1288)
 	setInt(&v.JPEGQuality, 90)
 	setString(&v.OnError, "fallback")

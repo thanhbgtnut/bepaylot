@@ -14,18 +14,28 @@ func line(page, no int, text string) postgres.PageLine {
 	return postgres.PageLine{PageNo: page, ParsedLine: types.ParsedLine{LineNo: no, Text: text}}
 }
 
-// The agent reads each page as numbered lines and as markdown; a page that
-// has only markdown (the VLM read it without OCR text) is still sent.
-func TestExtractPromptHasLinesAndMarkdown(t *testing.T) {
+// The agent reads each page's markdown first (main source), then its TurboOCR
+// lines with their confidence as reference: a line the VLM rewrote shows its
+// OCR text, a line the VLM made or read below minConf is left out; a page
+// with only markdown is still sent.
+func TestExtractPromptMarkdownThenOCR(t *testing.T) {
 	table := types.SheetTable{Label: "hoa_don", Title: "Hoá đơn"}
 	fields := []types.SheetField{{Key: "tong_tien", Label: "Tổng thanh toán", ValueType: "money"}}
-	lines := []postgres.PageLine{line(1, 1, "HOA DON"), line(1, 2, "Tong thanh toan 550.000.000")}
-	md := map[int]string{1: "# HOA DON\n\n| Tong thanh toan | 550.000.000 |", 2: "Ky ten: Nguyen Van A"}
-	got := extractPrompt(table, fields, lines, md)
-	want := "<page n=\"1\">\n<lines>\n[L1] HOA DON\n[L2] Tong thanh toan 550.000.000\n</lines>\n" +
-		"<markdown>\n# HOA DON\n\n| Tong thanh toan | 550.000.000 |\n</markdown>\n</page>\n" +
-		"<page n=\"2\">\n<markdown>\nKy ten: Nguyen Van A\n</markdown>\n</page>\n"
-	if !strings.Contains(got, want) {
+	title := line(1, 1, "HOA DON")
+	title.Confidence = 0.98
+	rewritten := line(1, 2, "Tổng thanh toán 550.000.000")
+	rewritten.TextOCR, rewritten.TextSource, rewritten.Confidence = "Tong thanh toan 550.000.000", types.TextSourceVLM, 0.9
+	poor := line(1, 3, "Ngày surta thhnng am")
+	poor.Confidence = 0.3
+	made := line(2, 1, "Ký tên: Nguyễn Văn A")
+	made.TextSource = types.TextSourceVLM
+	lines := []postgres.PageLine{title, rewritten, poor, made}
+	md := map[int]string{1: "# HOA DON\n\n| Tổng thanh toán | 550.000.000 |", 2: "Ký tên: Nguyễn Văn A"}
+	got := extractPrompt(table, fields, lines, md, 0.6)
+	want := "<page n=\"1\">\n<markdown>\n# HOA DON\n\n| Tổng thanh toán | 550.000.000 |\n</markdown>\n" +
+		"<ocr>\n[L1] (0.98) HOA DON\n[L2] (0.90) Tong thanh toan 550.000.000\n</ocr>\n</page>\n" +
+		"<page n=\"2\">\n<markdown>\nKý tên: Nguyễn Văn A\n</markdown>\n</page>\n"
+	if !strings.Contains(got, want) || strings.Contains(got, "surta") {
 		t.Fatalf("prompt:\n%s", got)
 	}
 }

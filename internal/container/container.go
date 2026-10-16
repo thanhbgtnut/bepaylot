@@ -204,8 +204,8 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 			cache: st.ModelCache, log: log}
 		e, err := vlm.New(vlm.Config{
 			Layout: layout, Client: client, PagePrompt: vc.PagePrompt, Prompt: vc.Prompt,
-			MaxConcurrency: vc.MaxConcurrency, ContextMaxChars: vc.ContextMaxChars, ContextLowConf: vc.ContextLowConf,
-			MaxSide: vc.MaxSide, JPEGQuality: vc.JPEGQuality, Retries: vc.Retries, OnError: vc.OnError, FullPage: vc.FullPageEnabled(), Log: log,
+			MaxConcurrency: vc.MaxConcurrency,
+			MaxSide:        vc.MaxSide, JPEGQuality: vc.JPEGQuality, Retries: vc.Retries, OnError: vc.OnError, FullPage: vc.FullPageEnabled(), Log: log,
 		})
 		if err != nil {
 			return fmt.Errorf("vlm engine: %w", err)
@@ -268,6 +268,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		LLM: completer(cfg.Classify.Provider, cfg.Classify.Model, 4096), Config: cfg, Log: log})
 	idx.SetSplit(split)
 	extractor := docmodel.NewExtractor(st, extractRunner{ag: ag, st: st, cfg: cfg.LLM}, log)
+	extractor.MinOCRConfidence = cfg.Parser.LowConfThreshold
 	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Extractor: extractor, Config: cfg, Log: log})
 	h.Sheets, h.Split = sh, split
 

@@ -230,13 +230,11 @@ parser:
     vlm:
       provider: ${BEPAYLOT_VLM_PROVIDER}   # "" + VLM_BASE_URL set = "vlm"; or the chat provider (vision model)
       model: ${BEPAYLOT_VLM_MODEL}         # "" = llm.default_model
-      page_prompt: ""               # "" = built-in; {ocr} marks where the OCR text goes
-      prompt: ""                    # page without OCR text (full_page); "" = olmOCR's prompt
-      max_tokens: 4096              # the whole page's markdown; the model's context must hold image + OCR text + this
+      page_prompt: ""               # "" = built-in; image only, never the OCR text
+      prompt: ""                    # page the layout engine failed on (full_page); "" = olmOCR's prompt
+      max_tokens: 4096              # the whole page's markdown; the model's context must hold image + this
       temperature: 0.1
       max_concurrency: 4            # page calls in flight per worker process
-      context_max_chars: 12000      # cap on the OCR text sent with a page
-      context_low_conf: 0.8         # OCR lines below this are marked [?] in the prompt (0 = off)
       max_side: 1288                # olmOCR is trained on 1288 px pages
       jpeg_quality: 90
       retries: 0                    # extra attempts on top of the provider's own retries

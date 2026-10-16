@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/image/draw"
 
@@ -38,15 +37,10 @@ type Config struct {
 	// MaxConcurrency bounds in-flight page calls across all pages of this
 	// process.
 	MaxConcurrency int
-	// PagePrompt reads a page with its OCR text (OCRPlaceholder marks where
-	// it goes); Prompt reads a page without OCR text (full_page).
+	// PagePrompt reads a page after TurboOCR; Prompt reads a page the layout
+	// engine failed on (full_page). Neither carries the OCR text.
 	PagePrompt string
 	Prompt     string
-	// ContextMaxChars caps the OCR text sent with a page (runes).
-	ContextMaxChars int
-	// ContextLowConf marks OCR lines below this confidence with LowConfMark
-	// (0 = no marks).
-	ContextLowConf float64
 	// MaxSide downscales page images whose longer side exceeds it (olmOCR is
 	// trained on 1288 px pages); 0 keeps the size.
 	MaxSide     int
@@ -60,7 +54,7 @@ type Config struct {
 }
 
 // Engine implements parser.Engine: step 1 reads the page with Config.Layout,
-// step 2 asks the VLM for the page markdown with the OCR text as its check.
+// step 2 asks the VLM for the page markdown from the image alone.
 type Engine struct {
 	cfg Config
 	sem chan struct{}
@@ -79,9 +73,6 @@ func New(cfg Config) (*Engine, error) {
 	}
 	if cfg.Prompt == "" {
 		cfg.Prompt = DefaultPrompt
-	}
-	if cfg.ContextMaxChars <= 0 {
-		cfg.ContextMaxChars = 12000
 	}
 	if cfg.JPEGQuality <= 0 {
 		cfg.JPEGQuality = 90
@@ -123,21 +114,19 @@ type CallResult struct {
 type rawEnvelope struct {
 	Engine string `json:"engine"`
 	Model  string `json:"model"`
-	// Mode is "page" (TurboOCR + one VLM call with the OCR text) or
-	// "full_page" (no OCR: the page went to the VLM alone).
+	// Mode is "page" (TurboOCR + one VLM call) or "full_page" (the layout
+	// engine failed: the VLM is the only text source).
 	Mode        string          `json:"mode"`
 	LayoutError string          `json:"layout_error,omitempty"`
 	Layout      json.RawMessage `json:"layout,omitempty"`
-	// ContextChars is the length of the OCR text sent with the page.
-	ContextChars int          `json:"context_chars,omitempty"`
-	Call         *CallResult  `json:"call,omitempty"`
-	Markdown     string       `json:"markdown,omitempty"`
-	Align        *AlignReport `json:"align,omitempty"`
-	Ms           int          `json:"ms"`
+	Call        *CallResult     `json:"call,omitempty"`
+	Markdown    string          `json:"markdown,omitempty"`
+	Align       *AlignReport    `json:"align,omitempty"`
+	Ms          int             `json:"ms"`
 }
 
 // ParsePage runs the two steps: TurboOCR reads the page, then one VLM call
-// returns the page markdown with the OCR text in the prompt as the check.
+// returns the page markdown from the image alone (no OCR text in the prompt).
 // The markdown is split and aligned onto the OCR regions (distribute).
 //
 // With FullPage, a page the layout engine cannot handle (error, circuit open,
@@ -176,18 +165,11 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 	}
 
 	t0 := time.Now()
-	ocrText := e.ocrContext(page)
-	prompt := e.cfg.PagePrompt
-	if strings.Contains(prompt, OCRPlaceholder) {
-		prompt = strings.Replace(prompt, OCRPlaceholder, ocrText, 1)
-	} else {
-		prompt += "\n\n<ocr>\n" + ocrText + "\n</ocr>"
-	}
-	tr, cr := e.call(ctx, in.PageNo, prompt, src)
+	tr, cr := e.call(ctx, in.PageNo, e.cfg.PagePrompt, src)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	env := rawEnvelope{Mode: "page", ContextChars: utf8.RuneCountInString(ocrText), Call: &cr}
+	env := rawEnvelope{Mode: "page", Call: &cr}
 	if cr.Error != "" {
 		e.envelope(page, env, int(time.Since(t0).Milliseconds()))
 		e.cfg.Log.Warn("vlm: page call failed", "page", in.PageNo, "err", cr.Error)
@@ -199,7 +181,7 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 	if tr.Truncated {
 		e.cfg.Log.Warn("vlm: page markdown truncated at max_tokens; the rest keeps OCR text", "page", in.PageNo)
 	}
-	env.Markdown = cleanMarkdown(tr.Text)
+	env.Markdown = strings.TrimSpace(tr.Text)
 	rep := distribute(page, env.Markdown)
 	env.Align = &rep
 	if rep.OCRWords > 0 && rep.Coverage < 0.5 {
@@ -218,47 +200,6 @@ func (e *Engine) envelope(page *parser.RawPage, env rawEnvelope, ms int) {
 	if b, err := json.Marshal(env); err == nil {
 		page.Raw = b
 	}
-}
-
-// ocrContext renders the page's OCR lines in reading order, a blank line
-// between layout regions, low-confidence lines marked, capped at
-// ContextMaxChars runes.
-func (e *Engine) ocrContext(page *parser.RawPage) string {
-	regionOf := lineRegions(page)
-	var sb strings.Builder
-	n, prev := 0, -2
-	for _, li := range readingOrder(page) {
-		l := page.Lines[li]
-		text := strings.TrimSpace(l.Text)
-		if text == "" {
-			continue
-		}
-		if e.cfg.ContextLowConf > 0 && l.Confidence > 0 && l.Confidence < e.cfg.ContextLowConf {
-			text += " " + LowConfMark
-		}
-		sepr := "\n"
-		if prev != -2 && regionOf[li] != prev {
-			sepr = "\n\n"
-		}
-		if n == 0 {
-			sepr = ""
-		}
-		k := utf8.RuneCountInString(sepr + text)
-		if n+k > e.cfg.ContextMaxChars {
-			sb.WriteString("\n…")
-			break
-		}
-		sb.WriteString(sepr + text)
-		n += k
-		prev = regionOf[li]
-	}
-	return sb.String()
-}
-
-// cleanMarkdown drops low-confidence marks the model copied from the OCR text.
-func cleanMarkdown(s string) string {
-	s = strings.ReplaceAll(s, " "+LowConfMark, "")
-	return strings.TrimSpace(strings.ReplaceAll(s, LowConfMark, ""))
 }
 
 // call sends one page image to the Transcriber under the process-wide

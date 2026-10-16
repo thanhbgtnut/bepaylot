@@ -40,6 +40,9 @@ type Extractor struct {
 	st     *postgres.Store
 	runner ExtractRunner
 	log    *slog.Logger
+	// MinOCRConfidence drops TurboOCR lines read below it from the message:
+	// the agent then relies on the markdown alone (0 = keep every line).
+	MinOCRConfidence float64
 }
 
 // NewExtractor builds the extractor.
@@ -139,7 +142,7 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 			}
 			user = &u
 		}
-		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md))
+		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md, e.MinOCRConfidence))
 		if err != nil {
 			return saved, err
 		}
@@ -160,9 +163,11 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 
 // extractPrompt is the message of one extraction turn: the document type, the
 // fields to find, each with the description that guides the agent (U81), and
-// the text of the document, page by page, in two forms that complete each
-// other: the OCR lines, numbered, and the markdown of the page.
-func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string) string {
+// the text of the document, page by page: the markdown the VLM read from the
+// page image is the main source; the TurboOCR lines, numbered and with their
+// confidence, are a reference to catch what the VLM misread. Lines read below
+// minConf are left out.
+func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string, minConf float64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bóc tách thông tin từ một giấy tờ thuộc loại: %s", t.Title)
 	if t.Description != "" {
@@ -180,11 +185,15 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString("\nNội dung giấy tờ, theo trang, ở hai dạng của cùng một trang:\n" +
-		"- <lines>: chữ OCR theo từng dòng, mỗi dòng mở đầu bằng số dòng [L<n>] của trang đó;\n" +
-		"- <markdown>: bản markdown của trang, giữ bố cục (tiêu đề, bảng, cột).\n" +
-		"Dùng cả hai để bổ trợ và đối chiếu nhau: markdown cho biết giá trị thuộc ô, cột, mục nào; dòng [L] cho biết chữ gốc và vị trí. " +
-		"Khi hai dạng ghi khác nhau, chọn giá trị hợp với ngữ cảnh của giấy tờ và hạ confidence.\n")
+	b.WriteString("\nNội dung giấy tờ, theo trang, ở hai nguồn đọc cùng một trang:\n" +
+		"- <markdown>: bản markdown mô hình thị giác đọc từ ảnh trang, giữ bố cục (tiêu đề, bảng, cột). Đây là dữ liệu chính: lấy giá trị từ đây.\n" +
+		"- <ocr>: chữ TurboOCR đọc từ cùng trang, mỗi dòng mở đầu bằng số dòng [L<n>] của trang đó, rồi độ tin cậy OCR của dòng (0-1) trong ngoặc. " +
+		"Chỉ dùng để tham khảo, đối chiếu; độ tin cậy càng thấp càng ít dựa vào dòng đó. Dòng OCR đọc quá kém đã bị bỏ; " +
+		"trang không có <ocr> thì chỉ dựa vào markdown.\n" +
+		"Với mỗi giá trị lấy từ markdown, tìm dòng [L] tương ứng để kiểm tra: markdown có thể đọc sai ảnh (nhầm số, tên, ngày, mã, " +
+		"thiếu hoặc thừa chữ). Khi hai nguồn khác nhau, xem xét kỹ, chọn giá trị hợp với ngữ cảnh của giấy tờ và hạ confidence; " +
+		"OCR cũng có thể sai (thiếu dấu, dính chữ), nên đừng bỏ giá trị markdown chỉ vì OCR ghi khác. " +
+		"Giá trị không có trong markdown nhưng rõ ràng trong OCR thì vẫn lấy, với confidence thấp hơn.\n")
 	byPage := map[int][]postgres.PageLine{}
 	var order []int
 	for _, l := range lines {
@@ -203,17 +212,22 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 	for _, p := range order {
 		var pg strings.Builder
 		fmt.Fprintf(&pg, "<page n=\"%d\">\n", p)
-		if len(byPage[p]) > 0 {
-			pg.WriteString("<lines>\n")
-			for _, l := range byPage[p] {
-				if strings.TrimSpace(l.Text) != "" {
-					fmt.Fprintf(&pg, "[L%d] %s\n", l.LineNo, l.Text)
-				}
-			}
-			pg.WriteString("</lines>\n")
-		}
 		if md[p] != "" {
 			fmt.Fprintf(&pg, "<markdown>\n%s\n</markdown>\n", md[p])
+		}
+		var ocr strings.Builder
+		for _, l := range byPage[p] {
+			t := strings.TrimSpace(ocrText(l))
+			switch {
+			case t == "" || l.Confidence > 0 && l.Confidence < minConf:
+			case l.Confidence > 0:
+				fmt.Fprintf(&ocr, "[L%d] (%.2f) %s\n", l.LineNo, l.Confidence, t)
+			default: // confidence unknown
+				fmt.Fprintf(&ocr, "[L%d] %s\n", l.LineNo, t)
+			}
+		}
+		if ocr.Len() > 0 {
+			fmt.Fprintf(&pg, "<ocr>\n%s</ocr>\n", ocr.String())
 		}
 		pg.WriteString("</page>\n")
 		if size += pg.Len(); size > extractMaxChars && size > pg.Len() {
@@ -226,8 +240,20 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 		"và ghi cách tính vào note. Kiểu date viết YYYY-MM-DD; kiểu number và money viết số, không có dấu ngăn cách hàng nghìn.\n" +
 		"Trả lời đúng một JSON, không kèm lời giải thích:\n" +
 		`{"fields":[{"key":"<key>","value":<giá trị, hoặc null khi giấy tờ không có>,"confidence":<0-1>,` +
-		`"page":<số trang>,"line":<số dòng [L] chứa giá trị, hoặc null khi giá trị chỉ có trong markdown>,"note":"<cách tính, nếu có>"}]}`)
+		`"page":<số trang>,"line":<số dòng [L] OCR ứng với giá trị, hoặc null khi không có dòng nào>,"note":"<cách tính, nếu có>"}]}`)
 	return b.String()
+}
+
+// ocrText is what TurboOCR read on a line: lines the VLM rewrote keep it in
+// TextOCR; a line the VLM made (no OCR on the page) has none.
+func ocrText(l postgres.PageLine) string {
+	if l.TextOCR != "" {
+		return l.TextOCR
+	}
+	if l.TextSource == types.TextSourceVLM {
+		return ""
+	}
+	return l.Text
 }
 
 // extractedFields reads the agent's JSON reply into the fields to store: each
@@ -281,7 +307,7 @@ func extractedFields(d types.Document, g types.Segment, asked []types.SheetField
 				w.Evidence = []types.Evidence{{DocumentID: d.ID, FileName: d.FileName, PageNo: l.PageNo, LineFrom: l.LineNo, LineTo: l.LineNo,
 					BBox: []float64{l.BBox.X0, l.BBox.Y0, l.BBox.X1, l.BBox.Y1}, Quote: l.Text,
 					CitationID: fmt.Sprintf("doc:%s:p%d:l%d-%d", d.ID, l.PageNo, l.LineNo, l.LineNo), Status: "valid"}}
-				w.ValueMatched = textutil.ValueIn(text, l.Text)
+				w.ValueMatched = textutil.ValueIn(text, l.Text) || textutil.ValueIn(text, ocrText(l))
 			}
 		}
 		if !w.ValueMatched && textutil.ValueIn(text, md[f.Page]) {

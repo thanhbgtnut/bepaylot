@@ -1,10 +1,10 @@
 // Package vlm refines OCR with a vision-language model (§5.9) in two steps:
 // (1) TurboOCR reads the page (lines, boxes, layout); (2) one VLM call per
-// page turns the whole page image into markdown, with the OCR text in the
-// prompt so the model checks its answer against it (nothing missing, names
-// and numbers right). The markdown is then split and aligned back onto the
-// OCR regions (RawRegion.Text); package assemble aligns each region's text
-// with its OCR lines, so positions still come from TurboOCR.
+// page turns the whole page image into markdown. The prompt holds only the
+// image, never the OCR text: TurboOCR is a reference that field extraction
+// reads beside the markdown. The markdown is then split and aligned back
+// onto the OCR regions (RawRegion.Text); package assemble aligns each
+// region's text with its OCR lines, so positions still come from TurboOCR.
 //
 // The package does not talk to a model itself: every call goes through a
 // Transcriber, which production wires to the agent (agent.Extract, a
@@ -19,28 +19,16 @@ import (
 )
 
 // DefaultPrompt is olmOCR's own page prompt (v4, YAML front matter), used
-// when there is no OCR text to send (full_page: the layout engine failed).
+// when the layout engine failed (full_page).
 // Other models work with it too; the front matter is stripped when present.
 const DefaultPrompt = "Attached is one page of a document that you must process. Just return the plain text representation of this document as if you were reading it naturally. Convert equations to LateX and tables to HTML.\n" +
 	"If there are any figures or charts, label them with the following markdown syntax ![Alt text describing the contents of the figure](page_startx_starty_width_height.png)\n" +
 	"Return your output as markdown, with a front matter section on top specifying values for the primary_language, is_rotation_valid, rotation_correction, is_table, and is_diagram parameters."
 
-// OCRPlaceholder marks where PagePrompt receives the OCR text of the page;
-// a prompt without it gets the OCR block appended.
-const OCRPlaceholder = "{ocr}"
-
-// DefaultPagePrompt reads one page with its OCR text as the check.
+// DefaultPagePrompt reads one page from its image alone.
 const DefaultPagePrompt = "Attached is one page of a document. Return the plain text representation of this page as markdown, " +
 	"as if you were reading it naturally: keep the original language, spelling and diacritics; mark headings with #; " +
-	"convert tables to HTML and equations to LaTeX. Do not add front matter, comments or code fences, and do not describe images.\n\n" +
-	"Below is the text an OCR engine read from the same page, in reading order. Blank lines separate layout regions; " +
-	"lines ending in " + LowConfMark + " were read with low confidence. Use it to check your answer: every piece of text in it " +
-	"must appear in your answer, and names, numbers, dates and codes must match what the image shows. The OCR text may contain " +
-	"mistakes such as missing diacritics or merged words; wherever it disagrees with the image, write what the image shows. " +
-	"Never copy the " + LowConfMark + " marks.\n\n<ocr>\n" + OCRPlaceholder + "\n</ocr>"
-
-// LowConfMark ends an OCR context line read with low confidence.
-const LowConfMark = "[?]"
+	"convert tables to HTML and equations to LaTeX. Do not add front matter, comments or code fences, and do not describe images."
 
 // Request is one model call: a prompt and one JPEG image.
 type Request struct {
