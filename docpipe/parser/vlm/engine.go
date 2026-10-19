@@ -125,9 +125,10 @@ type rawEnvelope struct {
 	Ms          int             `json:"ms"`
 }
 
-// ParsePage runs the two steps: TurboOCR reads the page, then one VLM call
-// returns the page markdown from the image alone (no OCR text in the prompt).
-// The markdown is split and aligned onto the OCR regions (distribute).
+// ParsePage runs the two steps at the same time: TurboOCR reads the page while
+// one VLM call returns the page markdown from the image alone (no OCR text in
+// the prompt). The markdown is kept verbatim on RawPage.Markdown and is also
+// split and aligned onto the OCR regions (distribute).
 //
 // With FullPage, a page the layout engine cannot handle (error, circuit open,
 // or nothing found) is sent to the VLM without OCR text and its markdown is
@@ -138,8 +139,22 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 	if err != nil {
 		return nil, fmt.Errorf("vlm: read page image: %w", err)
 	}
+	var vlm chan pageCall
 	if opt.Refine {
 		opt.Layout = true // regions carry the markdown back to positions
+		src, _, err := image.Decode(bytes.NewReader(img))
+		if err != nil {
+			return nil, fmt.Errorf("vlm: decode page image: %w", err)
+		}
+		// The VLM reads the image alone, so it does not wait for TurboOCR.
+		vctx, cancel := context.WithCancel(ctx)
+		defer cancel() // stops the call when the page ends without it
+		vlm = make(chan pageCall, 1)
+		go func() {
+			t0 := time.Now()
+			tr, cr := e.call(vctx, in.PageNo, e.cfg.PagePrompt, src)
+			vlm <- pageCall{tr: tr, cr: cr, t0: t0}
+		}()
 	}
 	in.Body, in.Size = bytes.NewReader(img), int64(len(img))
 	page, err := e.cfg.Layout.ParsePage(ctx, in, opt)
@@ -148,30 +163,22 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 			return nil, err
 		}
 		e.cfg.Log.Warn("vlm: layout engine failed, sending the page to the VLM without OCR text", "page", in.PageNo, "err", err)
-		return e.fullPage(ctx, img, in, err.Error())
+		return e.fullPage(ctx, img, in, err.Error(), wait(vlm))
 	}
 	if !opt.Refine {
 		return page, nil
 	}
-	if len(page.Lines) == 0 {
-		if len(page.Regions) == 0 && e.cfg.FullPage {
-			return e.fullPage(ctx, img, in, "layout engine found no region and no line")
-		}
-		return page, nil // nothing to check a transcription against
-	}
-	src, _, err := image.Decode(bytes.NewReader(img))
-	if err != nil {
-		return nil, fmt.Errorf("vlm: decode page image: %w", err)
-	}
-
-	t0 := time.Now()
-	tr, cr := e.call(ctx, in.PageNo, e.cfg.PagePrompt, src)
+	pc := <-vlm
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if len(page.Lines) == 0 && len(page.Regions) == 0 && e.cfg.FullPage {
+		return e.fullPage(ctx, img, in, "layout engine found no region and no line", &pc)
+	}
+	tr, cr := pc.tr, pc.cr
 	env := rawEnvelope{Mode: "page", Call: &cr}
 	if cr.Error != "" {
-		e.envelope(page, env, int(time.Since(t0).Milliseconds()))
+		e.envelope(page, env, int(time.Since(pc.t0).Milliseconds()))
 		e.cfg.Log.Warn("vlm: page call failed", "page", in.PageNo, "err", cr.Error)
 		if e.cfg.OnError == OnErrorFail {
 			return nil, fmt.Errorf("vlm: page call failed: %s", cr.Error)
@@ -182,14 +189,34 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 		e.cfg.Log.Warn("vlm: page markdown truncated at max_tokens; the rest keeps OCR text", "page", in.PageNo)
 	}
 	env.Markdown = strings.TrimSpace(tr.Text)
-	rep := distribute(page, env.Markdown)
-	env.Align = &rep
-	if rep.OCRWords > 0 && rep.Coverage < 0.5 {
-		e.cfg.Log.Warn("vlm: page markdown agrees with little of the OCR text", "page", in.PageNo,
-			"coverage", rep.Coverage, "unmatched_segments", len(rep.Unmatched), "skipped", rep.Skipped)
+	page.Markdown = env.Markdown
+	if len(page.Lines) > 0 { // else nothing to check the markdown against
+		rep := distribute(page, env.Markdown)
+		env.Align = &rep
+		if rep.OCRWords > 0 && rep.Coverage < 0.5 {
+			e.cfg.Log.Warn("vlm: page markdown agrees with little of the OCR text", "page", in.PageNo,
+				"coverage", rep.Coverage, "unmatched_segments", len(rep.Unmatched), "skipped", rep.Skipped)
+		}
 	}
-	e.envelope(page, env, int(time.Since(t0).Milliseconds()))
+	e.envelope(page, env, int(time.Since(pc.t0).Milliseconds()))
 	return page, nil
+}
+
+// pageCall is the result of the page call that runs alongside the layout
+// engine.
+type pageCall struct {
+	tr *Transcription
+	cr CallResult
+	t0 time.Time
+}
+
+// wait returns the page call's result, or nil when no call was started.
+func wait(ch chan pageCall) *pageCall {
+	if ch == nil {
+		return nil
+	}
+	pc := <-ch
+	return &pc
 }
 
 func (e *Engine) envelope(page *parser.RawPage, env rawEnvelope, ms int) {

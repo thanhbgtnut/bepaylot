@@ -67,6 +67,9 @@ type RawPage struct {
 	Regions       []RawRegion
 	// ReadingOrder lists RawLine.IDs in reading order; may be empty.
 	ReadingOrder []int
+	// Markdown is the engine's own page markdown, verbatim (turboocr_vlm:
+	// the VLM's reply); empty when the engine has none.
+	Markdown string
 	// Raw is the engine's original response, kept for debugging/reparse.
 	Raw []byte
 }

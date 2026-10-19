@@ -127,7 +127,13 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 		}
 		md := map[int]string{}
 		for _, p := range pages {
-			if s := strings.TrimSpace(p.Markdown); s != "" {
+			// The VLM's markdown verbatim; pages without one keep the
+			// markdown rebuilt from OCR.
+			s := strings.TrimSpace(p.MarkdownVLM)
+			if s == "" {
+				s = strings.TrimSpace(p.Markdown)
+			}
+			if s != "" {
 				md[p.PageNo] = s
 			}
 		}

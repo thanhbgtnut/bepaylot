@@ -250,6 +250,38 @@ func TestEngineOneCallPerPageWithoutOCRText(t *testing.T) {
 	t.Fatal("the corrected line was not found")
 }
 
+// waitLayout is a layout engine that answers only once the VLM call has
+// started: it fails when the two steps run one after the other.
+type waitLayout struct {
+	*fakeLayout
+	vlm *fakeVLM
+}
+
+func (w waitLayout) ParsePage(ctx context.Context, in parser.PageImage, opt parser.PageOptions) (*parser.RawPage, error) {
+	for deadline := time.Now().Add(2 * time.Second); w.vlm.calls.Load() == 0; {
+		if time.Now().After(deadline) {
+			return nil, errors.New("the VLM was not called while the layout engine ran")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return w.fakeLayout.ParsePage(ctx, in, opt)
+}
+
+// TurboOCR and the VLM run at the same time, and the VLM's markdown is kept
+// verbatim next to the markdown rebuilt from the blocks.
+func TestEngineCallsLayoutAndVLMTogether(t *testing.T) {
+	layout, fv := sampleVLM(t)
+	e, _ := New(Config{Layout: waitLayout{layout, fv}, Client: fv})
+	raw, _ := parseSample(t, e)
+	want := strings.TrimSpace(fv.markdown())
+	if raw.Markdown != want {
+		t.Fatalf("raw markdown = %q, want the VLM reply verbatim", raw.Markdown)
+	}
+	if page := assembleSample(t, raw); page.MarkdownVLM != want {
+		t.Fatalf("page markdown_vlm = %q", page.MarkdownVLM)
+	}
+}
+
 // The OCR text is the check for what the markdown leaves out: a line the
 // model skipped is put back from OCR, so the page keeps it.
 func TestEngineKeepsOCRLinesTheVLMSkipped(t *testing.T) {
@@ -377,8 +409,8 @@ func TestEngineOnError(t *testing.T) {
 	fv.fail = &PermanentError{Err: errors.New("bad image")}
 	e, _ := New(Config{Layout: layout, Client: fv})
 	raw, env := parseSample(t, e)
-	if env.Call == nil || env.Call.Error == "" || len(raw.Lines) != 54 {
-		t.Fatalf("fallback: envelope %+v", env)
+	if env.Call == nil || env.Call.Error == "" || len(raw.Lines) != 54 || raw.Markdown != "" {
+		t.Fatalf("fallback: envelope %+v, markdown %q", env, raw.Markdown)
 	}
 	if page := assembleSample(t, raw); strings.Contains(page.Markdown, "BẢN GỐC") || !strings.Contains(page.Markdown, "BẢNGỐC") {
 		t.Fatal("fallback must keep the OCR text")

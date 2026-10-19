@@ -218,9 +218,12 @@ type DocumentPage struct {
 	OCRMs        int       `json:"ocr_ms"`
 	Engine       string    `json:"engine,omitempty"`
 	Markdown     string    `json:"markdown"`
-	TextPlain    string    `json:"text_plain"`
-	DocMdOffset  int       `json:"doc_md_offset"`
-	IsBlank      bool      `json:"is_blank"`
+	// MarkdownVLM is the VLM's page markdown, verbatim (empty when the page
+	// was not read by a VLM).
+	MarkdownVLM string `json:"markdown_vlm,omitempty"`
+	TextPlain   string `json:"text_plain"`
+	DocMdOffset int    `json:"doc_md_offset"`
+	IsBlank     bool   `json:"is_blank"`
 	// DocType is the document type the Decision API read from the page image
 	// (a doc_types code of the KB, §6.9.4); "" = not classified.
 	DocType           string     `json:"doc_type,omitempty"`

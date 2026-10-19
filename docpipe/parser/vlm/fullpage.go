@@ -21,8 +21,10 @@ import (
 // the page. Without OCR there are no real line positions: region boxes are
 // approximate vertical bands proportional to text length (confidence 0), and
 // assemble gives each region synthetic lines inside its band. Figures keep
-// the box the model reports (olmOCR: page_x_y_w_h.png).
-func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, reason string) (*parser.RawPage, error) {
+// the box the model reports (olmOCR: page_x_y_w_h.png). A page call that
+// already succeeded (pc, run alongside the layout engine) is reused instead
+// of a new call.
+func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, reason string, pc *pageCall) (*parser.RawPage, error) {
 	src, _, err := image.Decode(bytes.NewReader(img))
 	if err != nil {
 		return nil, fmt.Errorf("vlm: decode page image: %w", err)
@@ -33,7 +35,13 @@ func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, 
 		w, h = b.Dx(), b.Dy()
 	}
 	t0 := time.Now()
-	tr, cr := e.call(ctx, in.PageNo, e.cfg.Prompt, src)
+	var tr *Transcription
+	var cr CallResult
+	if pc != nil && pc.cr.Error == "" {
+		tr, cr, t0 = pc.tr, pc.cr, pc.t0
+	} else {
+		tr, cr = e.call(ctx, in.PageNo, e.cfg.Prompt, src)
+	}
 	if cr.Error != "" {
 		return nil, fmt.Errorf("vlm: full page (layout unavailable: %s): %s", reason, cr.Error)
 	}
@@ -42,7 +50,7 @@ func (e *Engine) fullPage(ctx context.Context, img []byte, in parser.PageImage, 
 	if long := max(b.Dx(), b.Dy()); e.cfg.MaxSide > 0 && long > e.cfg.MaxSide {
 		scale = float64(long) / float64(e.cfg.MaxSide)
 	}
-	page := &parser.RawPage{Width: w, Height: h, Regions: SplitMarkdown(tr.Text, w, h, scale)}
+	page := &parser.RawPage{Width: w, Height: h, Regions: SplitMarkdown(tr.Text, w, h, scale), Markdown: strings.TrimSpace(tr.Text)}
 	e.envelope(page, rawEnvelope{Mode: "full_page", LayoutError: reason, Call: &cr, Markdown: tr.Text}, int(time.Since(t0).Milliseconds()))
 	return page, nil
 }

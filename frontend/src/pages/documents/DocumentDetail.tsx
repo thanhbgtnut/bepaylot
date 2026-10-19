@@ -362,7 +362,7 @@ export function DocumentDetail() {
               )}
               {tab === "md" && page && (
                 <div className="px-5 py-4">
-                  <Markdown text={page.markdown || "_Trang trống_"} />
+                  <Markdown text={page.markdown_vlm || page.markdown || "_Trang trống_"} />
                 </div>
               )}
               {tab === "blocks" && page && <BlocksPanel blocks={page.blocks ?? []} />}

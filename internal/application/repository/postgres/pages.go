@@ -249,7 +249,7 @@ func (r *PagesRepo) List(ctx context.Context, doc uuid.UUID, gen, from, to int) 
 }
 
 const pageSelect = `SELECT document_id, page_no, gen, status, attempts, width, height, dpi, width_pt, height_pt, rotation,
-	image_key, raw_key, text_layer_key, text_source, text_quality, render_ms, ocr_ms, engine, markdown, text_plain,
+	image_key, raw_key, text_layer_key, text_source, text_quality, render_ms, ocr_ms, engine, markdown, markdown_vlm, text_plain,
 	doc_md_offset, is_blank, error, started_at, finished_at, doc_type, doc_type_confidence FROM document_pages`
 
 func scanPages(rows pgx.Rows) ([]types.DocumentPage, error) {
@@ -259,7 +259,7 @@ func scanPages(rows pgx.Rows) ([]types.DocumentPage, error) {
 		var p types.DocumentPage
 		var dpi, wpt, hpt, tq, dtc float32
 		if err := rows.Scan(&p.DocumentID, &p.PageNo, &p.Gen, &p.Status, &p.Attempts, &p.Width, &p.Height, &dpi, &wpt, &hpt, &p.Rotation,
-			&p.ImageKey, &p.RawKey, &p.TextLayerKey, &p.TextSource, &tq, &p.RenderMs, &p.OCRMs, &p.Engine, &p.Markdown, &p.TextPlain,
+			&p.ImageKey, &p.RawKey, &p.TextLayerKey, &p.TextSource, &tq, &p.RenderMs, &p.OCRMs, &p.Engine, &p.Markdown, &p.MarkdownVLM, &p.TextPlain,
 			&p.DocMdOffset, &p.IsBlank, &p.Error, &p.StartedAt, &p.FinishedAt, &p.DocType, &dtc); err != nil {
 			return nil, err
 		}
@@ -282,9 +282,10 @@ func (r *PagesRepo) SaveParsed(ctx context.Context, doc uuid.UUID, gen int, p *t
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `UPDATE document_pages SET status = 'done', raw = $4, raw_key = '', text_source = $5, text_quality = $6,
-		ocr_ms = $7, engine = $8, markdown = $9, text_plain = $10, is_blank = $11, error = '', finished_at = now()
+		ocr_ms = $7, engine = $8, markdown = $9, text_plain = $10, is_blank = $11, markdown_vlm = $12, error = '', finished_at = now()
 		WHERE document_id = $1 AND gen = $2 AND page_no = $3`,
-		doc, gen, p.PageNo, rawJSON, p.TextSource, p.TextQuality, ocrMs, p.Engine, cleanText(p.Markdown), cleanText(textPlain), p.IsBlank)
+		doc, gen, p.PageNo, rawJSON, p.TextSource, p.TextQuality, ocrMs, p.Engine, cleanText(p.Markdown), cleanText(textPlain), p.IsBlank,
+		cleanText(p.MarkdownVLM))
 	if err != nil {
 		return err
 	}

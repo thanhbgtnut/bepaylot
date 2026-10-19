@@ -83,7 +83,7 @@ type workBlock struct {
 func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 	page := &types.ParsedPage{
 		PageNo: opt.PageNo, Width: raw.Width, Height: raw.Height, DPI: opt.DPI,
-		Engine: opt.Engine, TextSource: types.TextSourceOCR,
+		Engine: opt.Engine, TextSource: types.TextSourceOCR, MarkdownVLM: raw.Markdown,
 	}
 
 	// 1. Regions → blocks.

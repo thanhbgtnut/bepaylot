@@ -106,6 +106,9 @@ type ParsedPage struct {
 	Blocks      []ParsedBlock `json:"blocks"`
 	Lines       []ParsedLine  `json:"lines"`
 	Markdown    string        `json:"markdown"`
+	// MarkdownVLM is the VLM's page markdown, verbatim (RawPage.Markdown);
+	// Markdown is rebuilt from the blocks and carries the line offsets.
+	MarkdownVLM string `json:"markdown_vlm,omitempty"`
 	// DocMdOffset is the rune offset of this page's markdown in the
 	// full-document markdown (set once the document is assembled).
 	DocMdOffset int `json:"doc_md_offset"`

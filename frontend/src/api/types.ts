@@ -92,6 +92,8 @@ export interface DocumentPage {
   text_quality: number;
   engine?: string;
   markdown: string;
+  /** Markdown VLM trả về, nguyên văn (rỗng khi trang không qua VLM). */
+  markdown_vlm?: string;
   text_plain: string;
   is_blank: boolean;
   error?: string;
