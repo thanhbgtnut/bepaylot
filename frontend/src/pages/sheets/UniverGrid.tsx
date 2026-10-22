@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import viVN from "@univerjs/preset-sheets-core/locales/vi-VN";
 import { UniverSheetsFilterPreset } from "@univerjs/preset-sheets-filter";
@@ -47,6 +48,26 @@ const TEXT = { pattern: "@" }; // text format: extracted values stay as written 
 const key = (sheet: string, r: number, c: number) => `${sheet}:${r}:${c}`;
 const sheetOf = (ti: number) => "t" + ti;
 const leadOf = (t: SheetTableView) => (t.rows.some((r) => r.bundle) ? 2 : 1);
+
+// Whether a cell's text is wider than its column, measured in Univer's
+// default font (Arial 11pt; header labels are bold and share the cell with
+// the filter button).
+let ruler: CanvasRenderingContext2D | null = null;
+function cutOff(text: string, width: number, bold: boolean) {
+  ruler ??= document.createElement("canvas").getContext("2d");
+  if (text.includes("\n") || !ruler) return true;
+  ruler.font = `${bold ? "bold " : ""}11pt Arial`;
+  return ruler.measureText(text).width > width - (bold ? 24 : 6);
+}
+
+// Column widths stretched to fill avail pixels, never narrower than their
+// own width; the left of the grid holds the row numbers (46 px) and the
+// right edge the scrollbar.
+function fill(widths: number[], avail: number) {
+  const room = avail - 46 - 16;
+  const total = widths.reduce((a, w) => a + w, 0);
+  return total >= room || total <= 0 ? widths : widths.map((w) => Math.floor((w * room) / total));
+}
 
 // Sort order like Excel with Vietnamese values: dates (dd/mm/yyyy) and
 // numbers (15.000.000, 2,5) by value and before text, text by Vietnamese
@@ -162,6 +183,8 @@ export default function UniverGrid({
     };
 
     const tableOf = new Map<string, SheetTableView>();
+    const natural = new Map<string, number[]>(); // sheet → column widths from their text
+    let avail = host.current!.clientWidth;
     const sheets: Record<string, Partial<IWorksheetData>> = {};
     tables.forEach((t, ti) => {
       const sheet = sheetOf(ti);
@@ -182,8 +205,9 @@ export default function UniverGrid({
         i < lead
           ? Math.max(8, ...t.rows.map((r) => (i === 0 ? (t.label ? t.title : r.file_name) : r.bundle)?.length ?? 0))
           : Math.max(t.fields[i - lead].label.length, ...t.rows.map((r) => valueOf(idOf(t, r, t.fields[i - lead].key)).length));
-      const columnData: Record<number, { w: number }> = {};
-      for (let i = 0; i < lead + t.fields.length; i++) columnData[i] = { w: Math.min(420, Math.max(90, chars(i) * 7.5 + 24)) };
+      const widths = Array.from({ length: lead + t.fields.length }, (_, i) => Math.min(420, Math.max(90, chars(i) * 7.5 + 24)));
+      natural.set(sheet, widths);
+      const columnData = Object.fromEntries(fill(widths, avail).map((w, i) => [i, { w }]));
       sheets[sheet] = {
         id: sheet,
         name: (t.title || "Cả file").slice(0, 31),
@@ -289,8 +313,8 @@ export default function UniverGrid({
       }),
       univerAPI.addEvent(univerAPI.Event.CellHover, (e) => {
         const text = e.worksheet.getRange(e.row, e.column).getDisplayValue();
-        const cut = text.includes("\n") || text.length * 7 > e.worksheet.getColumnWidth(e.column) - 12;
-        setTip(text && cut ? { text, ...pointer.current } : null);
+        const cut = text && cutOff(text, e.worksheet.getColumnWidth(e.column), e.row === 0);
+        setTip(cut ? { text, ...pointer.current } : null);
       }),
       // Only field cells open the editor.
       univerAPI.addEvent(univerAPI.Event.BeforeSheetEditStart, (e) => {
@@ -334,7 +358,32 @@ export default function UniverGrid({
         if (id) live.current.onSelect(id);
       }),
     ];
+    // The pointer is followed on the document: the grid's canvas keeps its
+    // own pointer events from reaching React.
+    const move = (e: PointerEvent) => {
+      pointer.current = { x: e.clientX, y: e.clientY };
+      if (!box.contains(e.target as Node)) setTip(null);
+    };
+    const hide = () => setTip(null);
+    // The columns fill the grid's width again when the window or a panel
+    // beside the grid changes it.
+    const resize = new ResizeObserver(() => {
+      const w = host.current?.clientWidth ?? 0;
+      if (!w || w === avail) return;
+      avail = w;
+      for (const [sheet, widths] of natural) {
+        const ws = wb.getSheetBySheetId(sheet);
+        fill(widths, avail).forEach((cw, i) => ws?.setColumnWidth(i, cw));
+      }
+    });
+    resize.observe(host.current!);
+    document.addEventListener("pointermove", move, true);
+    box.addEventListener("pointerdown", hide, true);
+    box.addEventListener("wheel", hide, { capture: true, passive: true });
     return () => {
+      document.removeEventListener("pointermove", move, true);
+      resize.disconnect();
+      setTip(null);
       subs.forEach((s) => s.dispose());
       api.current = null;
       layout.current = null;
@@ -390,30 +439,22 @@ export default function UniverGrid({
   }, [tab, sel, tables]);
 
   return (
-    <>
-      <div
-        ref={host}
-        className="absolute inset-0"
-        onPointerMove={(e) => {
-          pointer.current = { x: e.clientX, y: e.clientY };
-        }}
-        onPointerLeave={() => setTip(null)}
-        onPointerDown={() => setTip(null)}
-        onWheel={() => setTip(null)}
-      />
-      {tip && (
-        <div
-          className="pointer-events-none fixed z-50 max-h-[50vh] max-w-[420px] overflow-hidden rounded-lg border border-line bg-surface px-3 py-2 text-sm break-words whitespace-pre-wrap text-fg"
-          style={{
-            left: Math.max(8, Math.min(tip.x + 12, window.innerWidth - 436)),
-            // Below the pointer, or above it in the lower half of the window.
-            ...(tip.y < window.innerHeight / 2 ? { top: tip.y + 16 } : { bottom: window.innerHeight - tip.y + 8 }),
-            boxShadow: "var(--shadow-2)",
-          }}
-        >
-          {tip.text}
-        </div>
-      )}
-    </>
+    <div ref={host} className="absolute inset-0">
+      {tip &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-50 max-h-[50vh] max-w-[420px] overflow-hidden rounded-lg border border-line bg-surface px-3 py-2 text-sm break-words whitespace-pre-wrap text-fg"
+            style={{
+              left: Math.max(8, Math.min(tip.x + 12, window.innerWidth - 436)),
+              // Below the pointer, or above it in the lower half of the window.
+              ...(tip.y < window.innerHeight / 2 ? { top: tip.y + 16 } : { bottom: window.innerHeight - tip.y + 8 }),
+              boxShadow: "var(--shadow-2)",
+            }}
+          >
+            {tip.text}
+          </div>,
+          document.body,
+        )}
+    </div>
   );
 }
