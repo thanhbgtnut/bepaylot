@@ -29,6 +29,10 @@ func Render(page *types.ParsedPage) {
 		byBlock[page.Lines[i].BlockNo] = append(byBlock[page.Lines[i].BlockNo], i)
 	}
 
+	// A page the VLM read shows the VLM's text only: a block it left
+	// without text keeps its OCR lines as reference data (§5.9).
+	vlmPage := page.TextSource == types.TextSourceVLM
+
 	first := true
 	sep := func() {
 		if !first {
@@ -43,6 +47,15 @@ func Render(page *types.ParsedPage) {
 		lines := byBlock[b.BlockNo]
 		if b.IsFurniture {
 			continue
+		}
+		// A VLM-refined block renders its transcription verbatim; its lines
+		// are located inside it (§5.9).
+		refined := b.TextSource == types.TextSourceVLM && strings.TrimSpace(b.Text) != ""
+		if vlmPage && !refined {
+			if b.Type != types.BlockFigure || b.AssetKey == "" {
+				continue
+			}
+			lines = nil // the figure's image alone
 		}
 		// writeLines emits one markdown line per text line, with a prefix,
 		// and records the line offsets (after the prefix).
@@ -70,9 +83,6 @@ func Render(page *types.ParsedPage) {
 				break
 			}
 		}
-		// A VLM-refined block renders its transcription verbatim; its lines
-		// are located inside it (§5.9).
-		refined := b.TextSource == types.TextSourceVLM && strings.TrimSpace(b.Text) != ""
 		writeRefined := func() {
 			base := pos
 			write(b.Text)
@@ -101,18 +111,22 @@ func Render(page *types.ParsedPage) {
 			}
 			b.MdEnd = pos
 		case types.BlockFigure:
-			if b.AssetKey == "" && !hasText {
+			if b.AssetKey == "" && !hasText && !refined {
 				continue
 			}
 			sep()
 			b.MdStart = pos
 			if b.AssetKey != "" {
 				write(fmt.Sprintf("![%s p%d-b%d](%s)", figureLabel(b.RawClass), page.PageNo, b.BlockNo, b.AssetKey))
-				if hasText {
+				if hasText || refined {
 					write("\n")
 				}
 			}
-			writeLines("> ")
+			if refined {
+				writeRefined()
+			} else {
+				writeLines("> ")
+			}
 			b.MdEnd = pos
 		case types.BlockFormula:
 			if b.LaTeX == "" && !hasText {

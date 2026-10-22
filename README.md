@@ -568,7 +568,7 @@ Các nhóm tinh chỉnh chính trong `config.yaml` (giải thích chi tiết ở
 
 - `workers.*`: concurrency từng pool, cửa sổ trang cho mỗi tài liệu.
 - `parser.render.*`: DPI, trần pixel, số worker, tái chế, timeout, cache.
-- `parser.engines.vlm.*`: model, `page_prompt`, `max_concurrency` (số trang), `max_side`, `min_coverage`, `on_error`, `skip_with_text_layer`.
+- `parser.engines.vlm.*`: model, `page_prompt`, `max_concurrency` (số trang), `max_side`, `on_error`, `skip_with_text_layer`.
 - `parser.text_layer.*`, `index.*`, `search.*`: ngân sách token, số lần gọi LLM tối đa, cache.
 - `cases.*`: thư mục loại case, loại mặc định, tự tạo case khi upload.
 - `wiki.*`: thư mục schema, model, số trang viết song song, ngân sách index, giới hạn ingest, lint.

@@ -125,10 +125,12 @@ type rawEnvelope struct {
 	Ms          int             `json:"ms"`
 }
 
-// ParsePage runs the two steps at the same time: TurboOCR reads the page while
-// one VLM call returns the page markdown from the image alone (no OCR text in
-// the prompt). The markdown is kept verbatim on RawPage.Markdown and is also
-// split and aligned onto the OCR regions (distribute).
+// ParsePage runs the two steps at the same time and independently: TurboOCR
+// reads the page while one VLM call returns the page markdown from the image
+// alone (no OCR text in the prompt). The markdown is kept verbatim on
+// RawPage.Markdown and is the page's text; it is split onto the OCR regions
+// (distribute) only to give it positions. OCR text never enters it: the OCR
+// lines stay as reference data.
 //
 // With FullPage, a page the layout engine cannot handle (error, circuit open,
 // or nothing found) is sent to the VLM without OCR text and its markdown is
@@ -190,13 +192,11 @@ func (e *Engine) ParsePage(ctx context.Context, in parser.PageImage, opt parser.
 	}
 	env.Markdown = strings.TrimSpace(tr.Text)
 	page.Markdown = env.Markdown
-	if len(page.Lines) > 0 { // else nothing to check the markdown against
-		rep := distribute(page, env.Markdown)
-		env.Align = &rep
-		if rep.OCRWords > 0 && rep.Coverage < 0.5 {
-			e.cfg.Log.Warn("vlm: page markdown agrees with little of the OCR text", "page", in.PageNo,
-				"coverage", rep.Coverage, "unmatched_segments", len(rep.Unmatched), "skipped", rep.Skipped)
-		}
+	rep := distribute(page, env.Markdown)
+	env.Align = &rep
+	if rep.OCRWords > 0 && rep.Coverage < 0.5 {
+		e.cfg.Log.Warn("vlm: page markdown agrees with little of the OCR text", "page", in.PageNo,
+			"coverage", rep.Coverage, "unmatched_segments", len(rep.Unmatched), "skipped", rep.Skipped)
 	}
 	e.envelope(page, env, int(time.Since(pc.t0).Milliseconds()))
 	return page, nil
@@ -289,8 +289,9 @@ var (
 	reMathDel = regexp.MustCompile(`(?s)^\s*(?:\$\$|\\\[|\\\(|\$)\s*(.*?)\s*(?:\$\$|\\\]|\\\)|\$)\s*$`)
 )
 
-// apply stores a transcription on its region by kind: HTML tables replace the
-// layout engine's table HTML, formulas become LaTeX, the rest is region text.
+// apply stores a transcription on its region: Text always (the block renders
+// it verbatim); a table also takes the HTML table of the transcription in
+// place of the layout engine's (OCR) HTML, a formula its LaTeX.
 func apply(r *parser.RawRegion, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -298,17 +299,12 @@ func apply(r *parser.RawRegion, text string) {
 	}
 	switch strings.ToLower(r.Class) {
 	case "table":
-		if t := reTable.FindString(text); t != "" {
-			r.HTML = t
-			return
-		}
-		r.Text = text
+		r.HTML = reTable.FindString(text)
 	case "formula":
 		if m := reMathDel.FindStringSubmatch(text); m != nil {
 			text = m[1]
 		}
 		r.LaTeX = text
-	default:
-		r.Text = text
 	}
+	r.Text = text
 }

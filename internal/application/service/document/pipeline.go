@@ -396,8 +396,7 @@ func (s *Service) ocr(ctx context.Context, d types.Document, p types.DocTaskPayl
 	page := assemble.Build(raw, assemble.Options{
 		PageNo: pageNo, DPI: row.DPI, Engine: engine.Name(), ClassMap: s.cfg.Parser.ClassMap,
 		ReadingOrderFix: s.cfg.Parser.ReadingOrderFixEnabled(), LowConfThreshold: s.cfg.Parser.LowConfThreshold,
-		MinRefineCoverage: s.cfg.Parser.Engines.VLM.MinCoverage,
-		AssetKey:          func(pg, b int) string { return s.keys.Figure(d.KBID, d.ID, d.Gen, pg, b) },
+		AssetKey: func(pg, b int) string { return s.keys.Figure(d.KBID, d.ID, d.Gen, pg, b) },
 	})
 	page.Rotation = row.Rotation
 	if layer != nil {

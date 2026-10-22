@@ -22,10 +22,11 @@ type AlignReport struct {
 	// Regions lists the regions that received markdown, with the segment
 	// indexes they got.
 	Regions []RegionAssignment `json:"regions,omitempty"`
-	// Unmatched holds markdown segments no OCR word agrees with. They are not
-	// verified by OCR and are dropped.
+	// Unmatched holds markdown segments no OCR word agrees with. They are
+	// kept, as regions of their own without OCR positions.
 	Unmatched []string `json:"unmatched,omitempty"`
-	// Skipped says why no alignment was done (the page keeps OCR text).
+	// Skipped says why no alignment was done (every segment is then a region
+	// without OCR positions).
 	Skipped string `json:"skipped,omitempty"`
 }
 
@@ -48,15 +49,20 @@ type RegionAssignment struct {
 //  3. every segment goes to the region whose OCR words agree with most of
 //     its words; OCR lines outside every region that a segment agrees with
 //     become a new region;
-//  4. a segment no OCR word agrees with is dropped (not verified by OCR).
+//  4. a segment no OCR word agrees with becomes a region of its own, just
+//     below the region of the segment before it: no markdown is dropped.
 //
-// The segments of a region, joined, become its RawRegion.Text (or HTML for a
+// The segments of a region, joined, become its RawRegion.Text (and HTML for a
 // table, LaTeX for a formula); assemble then aligns that text with the
-// region's lines and puts back any OCR line the markdown left out.
+// region's lines to place it. OCR text is never added to it.
 func distribute(page *parser.RawPage, md string) AlignReport {
 	segs := splitSegments(md, page.Width, page.Height, 1)
 	rep := AlignReport{Segments: len(segs)}
 	regionOf := lineRegions(page)
+	nextID := 0
+	for _, r := range page.Regions {
+		nextID = max(nextID, r.ID+1)
+	}
 
 	var ocr []assemble.Word
 	for _, li := range readingOrder(page) {
@@ -70,20 +76,20 @@ func distribute(page *parser.RawPage, md string) AlignReport {
 		vw = append(vw, assemble.Words(s.text, si)...) // Line = segment index
 	}
 	rep.OCRWords = len(ocr)
+	votes := make([]map[int]int, len(segs))    // region index (-1: outside every region) → words
+	orphans := make([]map[int]bool, len(segs)) // lines outside every region that agree with the segment
+	var pair []int
+	var cost []float64
 	switch {
 	case len(ocr) == 0 || len(vw) == 0:
 		rep.Skipped = "no words to align"
-		return rep
 	case len(ocr)*len(vw) > assemble.MaxAlignCells:
 		rep.Skipped = "page too long to align"
-		return rep
+	default:
+		pair, cost = assemble.Align(ocr, vw)
 	}
-
-	pair, cost := assemble.Align(ocr, vw)
-	votes := make([]map[int]int, len(segs))    // region index (-1: outside every region) → words
-	orphans := make([]map[int]bool, len(segs)) // lines outside every region that agree with the segment
 	for i, w := range ocr {
-		if pair[i] < 0 || cost[i] > assemble.GoodMatch {
+		if pair == nil || pair[i] < 0 || cost[i] > assemble.GoodMatch {
 			continue
 		}
 		rep.MatchedWords++
@@ -96,16 +102,15 @@ func distribute(page *parser.RawPage, md string) AlignReport {
 			orphans[si][w.Line] = true
 		}
 	}
-	rep.Coverage = float64(rep.MatchedWords) / float64(len(ocr))
-
-	nextID := 0
-	for _, r := range page.Regions {
-		nextID = max(nextID, r.ID+1)
+	if len(ocr) > 0 {
+		rep.Coverage = float64(rep.MatchedWords) / float64(len(ocr))
 	}
+
 	texts := map[int][]string{}
 	segsOf := map[int][]int{}
 	created := map[int]bool{}
 	var order []int // regions in the order they first got a segment
+	prev := -1      // region of the previous segment
 	for si, s := range segs {
 		if s.class == "figure" {
 			continue
@@ -116,15 +121,17 @@ func distribute(page *parser.RawPage, md string) AlignReport {
 				best, bestN = r, n
 			}
 		}
-		if bestN == 0 {
+		switch {
+		case bestN == 0:
 			rep.Unmatched = append(rep.Unmatched, s.text)
-			continue
-		}
-		if best < 0 {
+			best = placeAfter(page, prev, s.class, &nextID)
+			created[best] = true
+		case best < 0:
 			var isNew bool
 			best, isNew = claimOrphans(page, regionOf, orphans[si], s.class, &nextID)
 			created[best] = created[best] || isNew
 		}
+		prev = best
 		if _, ok := texts[best]; !ok {
 			order = append(order, best)
 		}
@@ -190,6 +197,25 @@ func claimOrphans(page *parser.RawPage, regionOf []int, lines map[int]bool, clas
 		regionOf[li] = ri
 	}
 	return ri, true
+}
+
+// placeAfter makes a new region without OCR lines for a segment no OCR word
+// agrees with: a thin band just below region prev (the region of the
+// segment before it), or at the top of the page, so the reading order keeps
+// the segment where the markdown has it. It returns the region's index.
+func placeAfter(page *parser.RawPage, prev int, class string, nextID *int) int {
+	if class == "" {
+		class = "text"
+	}
+	h := max(float64(page.Height)*0.01, 1)
+	box := types.BBox{X1: float64(page.Width), Y1: h}
+	if prev >= 0 {
+		pb := page.Regions[prev].Quad.BBox()
+		box = types.BBox{X0: pb.X0, Y0: pb.Y1, X1: pb.X1, Y1: pb.Y1 + h}
+	}
+	page.Regions = append(page.Regions, parser.RawRegion{ID: *nextID, Class: class, Quad: types.QuadFromBBox(box)})
+	*nextID++
+	return len(page.Regions) - 1
 }
 
 // lineRegions returns, for every OCR line, the index of its region in

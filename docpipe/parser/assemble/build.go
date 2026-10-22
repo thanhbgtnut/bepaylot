@@ -24,10 +24,6 @@ type Options struct {
 	// in front of it (§5.2 note 3).
 	ReadingOrderFix  bool
 	LowConfThreshold float64
-	// MinRefineCoverage is the share of a block's OCR words that must agree
-	// with a region transcription (RawRegion.Text) before it is used; 0 means
-	// DefaultMinCoverage.
-	MinRefineCoverage float64
 	// AssetKey names the stored crop of a figure block; empty disables links.
 	AssetKey func(pageNo, blockNo int) string
 }
@@ -171,13 +167,12 @@ func Build(raw *parser.RawPage, opt Options) *types.ParsedPage {
 		}
 		if wb.refined != "" {
 			switch b.Type {
-			case types.BlockTable: // a markdown table; lines keep OCR text (cells)
+			case types.BlockTable: // lines keep OCR text (cells)
 				if t := cleanRefined(b.Type, wb.refined); t != "" {
 					b.Text, b.TextSource = t, types.TextSourceVLM
 				}
-			case types.BlockFigure:
 			default:
-				refineBlock(page, &b, from, len(page.Lines), wb.refined, opt.MinRefineCoverage)
+				refineBlock(page, &b, from, len(page.Lines), wb.refined)
 			}
 		}
 		if b.Type == types.BlockFigure && opt.AssetKey != nil {

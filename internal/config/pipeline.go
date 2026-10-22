@@ -123,11 +123,11 @@ type ParserEngines struct {
 	VLM      VLM      `yaml:"vlm"`
 }
 
-// VLM configures engine turboocr_vlm (§5.9), two steps per page: TurboOCR
-// reads lines, boxes and layout; then one call to a vision model through the
-// agent (agent.Extract, streaming, on the LLM provider registry) returns the
-// page markdown, with the OCR text in the prompt as the check. There is no
-// call per layout region. The engine is registered only when provider is
+// VLM configures engine turboocr_vlm (§5.9), two independent steps per page
+// run at the same time: TurboOCR reads lines, boxes and layout (reference
+// data); one call to a vision model through the agent (agent.Extract,
+// streaming, on the LLM provider registry) returns the page markdown from the
+// image alone, which is the page's text. There is no call per layout region. The engine is registered only when provider is
 // set.
 type VLM struct {
 	// Provider names an entry of llm.providers (e.g. "vlm" for a local
@@ -148,9 +148,6 @@ type VLM struct {
 	Retries        int    `yaml:"retries"`   // on top of the provider's own retries
 	OnError        string `yaml:"on_error"`  // fallback (keep OCR text) | fail (retry the page)
 	FullPage       *bool  `yaml:"full_page"` // no OCR (layout failed/empty) → page to the VLM alone
-	// MinCoverage is the share of a block's OCR words that must agree with
-	// the markdown before it replaces the OCR text.
-	MinCoverage float64 `yaml:"min_coverage"`
 	// SkipWithTextLayer skips the VLM on pages whose PDF text layer is usable.
 	SkipWithTextLayer *bool `yaml:"skip_with_text_layer"`
 }
@@ -312,9 +309,6 @@ func (c *Config) applyPipelineDefaults() {
 	setInt(&v.MaxSide, 1288)
 	setInt(&v.JPEGQuality, 90)
 	setString(&v.OnError, "fallback")
-	if v.MinCoverage == 0 {
-		v.MinCoverage = 0.3
-	}
 
 	setInt(&c.Index.Section.MaxTokens, 1500)
 	setInt(&c.Index.Tree.MinNodeTokens, 40)

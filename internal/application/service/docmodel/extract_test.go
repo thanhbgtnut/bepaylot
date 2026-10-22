@@ -22,7 +22,7 @@ func TestExtractPromptMarkdownThenOCR(t *testing.T) {
 	table := types.SheetTable{Label: "hoa_don", Title: "Hoá đơn"}
 	fields := []types.SheetField{{Key: "tong_tien", Label: "Tổng thanh toán", ValueType: "money"}}
 	title := line(1, 1, "HOA DON")
-	title.Confidence = 0.98
+	title.Confidence, title.BBox = 0.98, types.BBox{X0: 100, Y0: 50, X1: 1100, Y1: 150}
 	rewritten := line(1, 2, "Tổng thanh toán 550.000.000")
 	rewritten.TextOCR, rewritten.TextSource, rewritten.Confidence = "Tong thanh toan 550.000.000", types.TextSourceVLM, 0.9
 	poor := line(1, 3, "Ngày surta thhnng am")
@@ -31,9 +31,10 @@ func TestExtractPromptMarkdownThenOCR(t *testing.T) {
 	made.TextSource = types.TextSourceVLM
 	lines := []postgres.PageLine{title, rewritten, poor, made}
 	md := map[int]string{1: "# HOA DON\n\n| Tổng thanh toán | 550.000.000 |", 2: "Ký tên: Nguyễn Văn A"}
-	got := extractPrompt(table, fields, lines, md, 0.6)
+	size := map[int][2]int{1: {2000, 1000}} // page 2 size unknown, L2 has no box: no coordinates
+	got := extractPrompt(table, fields, lines, md, size, 0.6)
 	want := "<page n=\"1\">\n<markdown>\n# HOA DON\n\n| Tổng thanh toán | 550.000.000 |\n</markdown>\n" +
-		"<ocr>\n[L1] (0.98) HOA DON\n[L2] (0.90) Tong thanh toan 550.000.000\n</ocr>\n</page>\n" +
+		"<ocr>\n[L1] (0.98) @50,50,550,150 HOA DON\n[L2] (0.90) Tong thanh toan 550.000.000\n</ocr>\n</page>\n" +
 		"<page n=\"2\">\n<markdown>\nKý tên: Nguyễn Văn A\n</markdown>\n</page>\n"
 	if !strings.Contains(got, want) || strings.Contains(got, "surta") {
 		t.Fatalf("prompt:\n%s", got)

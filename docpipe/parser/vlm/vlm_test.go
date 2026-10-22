@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,9 +283,9 @@ func TestEngineCallsLayoutAndVLMTogether(t *testing.T) {
 	}
 }
 
-// The OCR text is the check for what the markdown leaves out: a line the
-// model skipped is put back from OCR, so the page keeps it.
-func TestEngineKeepsOCRLinesTheVLMSkipped(t *testing.T) {
+// The markdown is the page's text: a line the model skipped is not put back
+// from OCR; the OCR line stays as reference data with its box.
+func TestEngineDoesNotPutBackOCRLinesTheVLMSkipped(t *testing.T) {
 	layout, fv := sampleVLM(t)
 	fv.skipLine = 12 // "Nai, Việt Nam", the second line of region 4
 	e, _ := New(Config{Layout: layout, Client: fv})
@@ -293,25 +294,25 @@ func TestEngineKeepsOCRLinesTheVLMSkipped(t *testing.T) {
 		t.Fatal("fixture: the markdown should skip the line")
 	}
 	page := assembleSample(t, raw)
-	if !strings.Contains(page.Markdown, "Xã Nha B") || !strings.Contains(page.Markdown, "\nNai, Việt Nam") {
-		t.Fatalf("skipped line lost:\n%s", page.Markdown)
+	if !strings.Contains(page.Markdown, "Xã Nha B") || strings.Contains(page.Markdown, "\nNai, Việt Nam") {
+		t.Fatalf("OCR text reached the page markdown:\n%s", page.Markdown)
 	}
 	found := false
 	for _, l := range page.Lines {
 		if l.Text == "Nai, Việt Nam" {
 			found = true
-			if l.TextSource != types.TextSourceOCR || l.MdStart < 0 || page.Blocks[l.BlockNo].TextSource != types.TextSourceVLM {
-				t.Fatalf("put-back line = %+v", l)
+			if l.TextSource != types.TextSourceOCR || l.MdStart >= 0 || l.BBox.Width() <= 0 {
+				t.Fatalf("reference line = %+v", l)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("put-back line not found")
+		t.Fatal("the OCR line was not kept")
 	}
 }
 
-// Markdown no OCR word agrees with is not verified and is dropped.
-func TestEngineDropsMarkdownOCRDoesNotConfirm(t *testing.T) {
+// Markdown no OCR word agrees with is kept: OCR only places the text.
+func TestEngineKeepsMarkdownOCRDoesNotConfirm(t *testing.T) {
 	layout, fv := sampleVLM(t)
 	fv.extra = "Lorem ipsum dolor sit amet consectetur adipiscing elit"
 	e, _ := New(Config{Layout: layout, Client: fv})
@@ -319,8 +320,27 @@ func TestEngineDropsMarkdownOCRDoesNotConfirm(t *testing.T) {
 	if len(env.Align.Unmatched) != 1 || !strings.HasPrefix(env.Align.Unmatched[0], "Lorem") {
 		t.Fatalf("unmatched = %q", env.Align.Unmatched)
 	}
-	if page := assembleSample(t, raw); strings.Contains(page.Markdown, "Lorem") {
-		t.Fatal("unverified text reached the page markdown")
+	page := assembleSample(t, raw)
+	if !strings.HasSuffix(page.Markdown, fv.extra) {
+		t.Fatalf("markdown lost or moved the text:\n%s", page.Markdown)
+	}
+}
+
+// Every word of the page markdown comes from the VLM, even where the layout
+// engine found regions the VLM gave no text to.
+func TestEngineMarkdownHasNoOCRText(t *testing.T) {
+	layout, fv := sampleVLM(t)
+	e, _ := New(Config{Layout: layout, Client: fv})
+	raw, env := parseSample(t, e)
+	page := assembleSample(t, raw)
+	vlmWords := map[string]bool{}
+	for _, w := range strings.Fields(regexp.MustCompile(`<[^>]+>`).ReplaceAllString(env.Markdown, " ")) {
+		vlmWords[strings.Trim(w, "|#*-")] = true
+	}
+	for _, w := range strings.Fields(page.Markdown) {
+		if w = strings.Trim(w, "|#*-"); w != "" && !vlmWords[w] {
+			t.Errorf("word %q is not in the VLM markdown", w)
+		}
 	}
 }
 
@@ -553,7 +573,7 @@ func TestSplitMarkdown(t *testing.T) {
 	if got := strings.Join(classes, ","); got != "doc_title,text,paragraph_title,table,figure,text" {
 		t.Fatalf("classes = %s", got)
 	}
-	if !strings.Contains(rs[3].HTML, "<td>Gia công cơ khí</td>") || rs[3].Text != "" {
+	if !strings.Contains(rs[3].HTML, "<td>Gia công cơ khí</td>") || rs[3].Text != rs[3].HTML {
 		t.Errorf("table = %+v", rs[3])
 	}
 	if fb := rs[4].Quad.BBox(); fb.X0 != 200 || fb.Y0 != 400 || fb.X1 != 800 || fb.Y1 != 700 {

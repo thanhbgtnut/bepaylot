@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import viVN from "@univerjs/preset-sheets-core/locales/vi-VN";
 import { UniverSheetsFilterPreset } from "@univerjs/preset-sheets-filter";
@@ -98,6 +98,9 @@ export default function UniverGrid({
   const shown = useRef(new Map<string, { v: string; tone: string }>());
   const live = useRef({ tables, idOf, valueOf, toneOf, onSelect, onValue, onOrder });
   live.current = { tables, idOf, valueOf, toneOf, onSelect, onValue, onOrder };
+  // The whole text of the hovered cell when the column cuts it off.
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const pointer = useRef({ x: 0, y: 0 });
 
   // Build the workbook once; the page remounts the grid (key) when rows or
   // fields change.
@@ -284,8 +287,14 @@ export default function UniverGrid({
           if (colIndex != null) setTimeout(() => sortRows(ws.getSheetId(), [{ colIndex, type: m[1] }]));
         }
       }),
+      univerAPI.addEvent(univerAPI.Event.CellHover, (e) => {
+        const text = e.worksheet.getRange(e.row, e.column).getDisplayValue();
+        const cut = text.includes("\n") || text.length * 7 > e.worksheet.getColumnWidth(e.column) - 12;
+        setTip(text && cut ? { text, ...pointer.current } : null);
+      }),
       // Only field cells open the editor.
       univerAPI.addEvent(univerAPI.Event.BeforeSheetEditStart, (e) => {
+        setTip(null);
         if (!L.at.has(key(e.worksheet.getSheetId(), e.row, e.column))) e.cancel = true;
       }),
       // Typing, paste, delete, fill and undo all land here.
@@ -380,5 +389,31 @@ export default function UniverGrid({
     }
   }, [tab, sel, tables]);
 
-  return <div ref={host} className="absolute inset-0" />;
+  return (
+    <>
+      <div
+        ref={host}
+        className="absolute inset-0"
+        onPointerMove={(e) => {
+          pointer.current = { x: e.clientX, y: e.clientY };
+        }}
+        onPointerLeave={() => setTip(null)}
+        onPointerDown={() => setTip(null)}
+        onWheel={() => setTip(null)}
+      />
+      {tip && (
+        <div
+          className="pointer-events-none fixed z-50 max-h-[50vh] max-w-[420px] overflow-hidden rounded-lg border border-line bg-surface px-3 py-2 text-sm break-words whitespace-pre-wrap text-fg"
+          style={{
+            left: Math.max(8, Math.min(tip.x + 12, window.innerWidth - 436)),
+            // Below the pointer, or above it in the lower half of the window.
+            ...(tip.y < window.innerHeight / 2 ? { top: tip.y + 16 } : { bottom: window.innerHeight - tip.y + 8 }),
+            boxShadow: "var(--shadow-2)",
+          }}
+        >
+          {tip.text}
+        </div>
+      )}
+    </>
+  );
 }

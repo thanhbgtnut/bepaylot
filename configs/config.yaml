@@ -240,7 +240,6 @@ parser:
       retries: 0                    # extra attempts on top of the provider's own retries
       on_error: fallback            # fallback = keep the page's OCR text | fail = retry the page
       full_page: true               # layout failed / nothing found → page to the VLM without OCR text
-      min_coverage: 0.3             # share of a block's OCR words that must agree with the markdown
       skip_with_text_layer: ${BEPAYLOT_VLM_SKIP_WITH_TEXT_LAYER}   # "" = true: pages whose PDF text layer is good skip the VLM; false = always call it
 
 index:

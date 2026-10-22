@@ -92,19 +92,6 @@ func TestRefineAlignsReflowedParagraph(t *testing.T) {
 	}
 }
 
-// A crop that also caught the heading above it (nested regions, padding)
-// must not repeat the heading inside the paragraph.
-func TestRefineTrimsLeakedNeighbourText(t *testing.T) {
-	p := build(refinedSample("1. Tên hộ kinh doanh:\nNơi thường trú: Tổ 5, ấp Minh Thắng 3, Xã Nha Bích, Tỉnh Đồng Nai, Việt Nam\n**"))
-	checkOffsets(t, p)
-	if n := strings.Count(p.Markdown, "Tên hộ kinh doanh"); n != 1 {
-		t.Fatalf("heading appears %d times:\n%s", n, p.Markdown)
-	}
-	if !strings.Contains(p.Markdown, "Tỉnh Đồng Nai, Việt Nam\n**") {
-		t.Fatalf("trailing markup trimmed:\n%s", p.Markdown)
-	}
-}
-
 func TestRefineSyntheticLinesForRegionWithoutOCR(t *testing.T) {
 	p := build(refinedSample("Nơi thường trú: Tổ 5, ấp Minh Thắng 3, Xã Nha Bích, Tỉnh Đồng Nai, Việt Nam"))
 	checkOffsets(t, p)
@@ -119,19 +106,34 @@ func TestRefineSyntheticLinesForRegionWithoutOCR(t *testing.T) {
 	}
 }
 
-func TestRefineRejectsDisagreeingTranscription(t *testing.T) {
+// A transcription OCR disagrees with is still the block's text; the OCR
+// lines stay as reference data.
+func TestRefineKeepsDisagreeingTranscription(t *testing.T) {
 	p := build(refinedSample("Lorem ipsum dolor sit amet, consectetur adipiscing elit"))
 	checkOffsets(t, p)
-	if strings.Contains(p.Markdown, "Lorem") {
-		t.Fatalf("hallucinated text used:\n%s", p.Markdown)
+	if !strings.Contains(p.Markdown, "Lorem ipsum") || strings.Contains(p.Markdown, "Thang 3, Xa Nha Bich, Tinh Dong") {
+		t.Fatalf("markdown:\n%s", p.Markdown)
 	}
-	if !strings.Contains(p.Markdown, "Thang 3, Xa Nha Bich, Tinh Dong") {
-		t.Fatalf("OCR text lost:\n%s", p.Markdown)
-	}
-	for _, b := range p.Blocks {
-		if b.SourceID == 1 && b.TextSource != "" {
-			t.Errorf("block marked refined: %+v", b)
+	for _, l := range p.Lines {
+		if l.TextSource == types.TextSourceOCR && l.MdStart >= 0 {
+			t.Errorf("OCR line rendered: %+v", l)
 		}
+	}
+}
+
+// On a page the VLM read, a region it gave no text to does not render its
+// OCR lines.
+func TestRefineSkipsOCROnlyBlock(t *testing.T) {
+	raw := refinedSample("Nơi thường trú: Tổ 5, ấp Minh Thắng 3, Xã Nha Bích, Tỉnh Đồng Nai, Việt Nam")
+	raw.Regions = append(raw.Regions, parser.RawRegion{ID: 3, Class: "text", Confidence: 0.9, Quad: box(100, 700, 900, 740)})
+	raw.Lines = append(raw.Lines, parser.RawLine{ID: 4, Text: "Chi co trong OCR", Confidence: 0.9, Quad: box(100, 700, 900, 740), LayoutID: 3})
+	raw.ReadingOrder = append(raw.ReadingOrder, 4)
+	p := build(raw)
+	if strings.Contains(p.Markdown, "Chi co trong OCR") {
+		t.Fatalf("OCR-only text rendered:\n%s", p.Markdown)
+	}
+	if l := p.Lines[len(p.Lines)-1]; l.Text != "Chi co trong OCR" || l.MdStart >= 0 {
+		t.Fatalf("reference line = %+v", l)
 	}
 }
 
@@ -164,9 +166,9 @@ func TestCleanRefined(t *testing.T) {
 	}
 }
 
-// A line the transcription skipped is put back from OCR at its place; a
-// low-confidence line the model rewrote entirely is not.
-func TestRefinePutsBackSkippedLines(t *testing.T) {
+// A line the transcription skipped is not put back from OCR; a
+// low-confidence line the model rewrote takes the model's reading.
+func TestRefineDoesNotPutBackSkippedLines(t *testing.T) {
 	raw := &parser.RawPage{
 		Width: 1000, Height: 1000,
 		Regions: []parser.RawRegion{{ID: 0, Class: "text", Confidence: 0.9, Quad: box(100, 100, 900, 400),
@@ -181,14 +183,14 @@ func TestRefinePutsBackSkippedLines(t *testing.T) {
 	}
 	p := build(raw)
 	checkOffsets(t, p)
-	want := "Họ và tên: NGUYỄN VĂN TÌNH\nĐiện thoại: 0792 127 116\nNgày 05 tháng 01 năm 2026\nQuốc tịch: Việt Nam"
-	if p.Blocks[0].Text != want || p.Blocks[0].TextSource != types.TextSourceVLM {
-		t.Fatalf("block text = %q", p.Blocks[0].Text)
+	want := "Họ và tên: NGUYỄN VĂN TÌNH\nNgày 05 tháng 01 năm 2026\nQuốc tịch: Việt Nam"
+	if p.Blocks[0].Text != want || p.Blocks[0].TextSource != types.TextSourceVLM || p.Markdown != want {
+		t.Fatalf("block text = %q, markdown %q", p.Blocks[0].Text, p.Markdown)
 	}
-	if l := p.Lines[1]; l.Text != "Điện thoại: 0792 127 116" || l.TextSource != types.TextSourceOCR || l.MdStart < 0 {
-		t.Fatalf("put-back line = %+v", l)
+	if l := p.Lines[1]; l.Text != "Điện thoại: 0792 127 116" || l.TextSource != types.TextSourceOCR || l.MdStart >= 0 {
+		t.Fatalf("reference line = %+v", l)
 	}
-	if strings.Contains(p.Markdown, "surta") {
-		t.Fatalf("low-confidence OCR line duplicated:\n%s", p.Markdown)
+	if l := p.Lines[2]; l.TextSource != types.TextSourceVLM || !strings.HasPrefix(l.Text, "Ngày 05") || l.TextOCR != "Ngy surta thhnng am" {
+		t.Fatalf("low-confidence line = %+v", l)
 	}
 }

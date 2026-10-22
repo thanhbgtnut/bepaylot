@@ -126,7 +126,9 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 			return saved, err
 		}
 		md := map[int]string{}
+		size := map[int][2]int{}
 		for _, p := range pages {
+			size[p.PageNo] = [2]int{p.Width, p.Height}
 			// The VLM's markdown verbatim; pages without one keep the
 			// markdown rebuilt from OCR.
 			s := strings.TrimSpace(p.MarkdownVLM)
@@ -148,7 +150,7 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 			}
 			user = &u
 		}
-		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md, e.MinOCRConfidence))
+		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md, size, e.MinOCRConfidence))
 		if err != nil {
 			return saved, err
 		}
@@ -171,9 +173,11 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 // fields to find, each with the description that guides the agent (U81), and
 // the text of the document, page by page: the markdown the VLM read from the
 // page image is the main source; the TurboOCR lines, numbered and with their
-// confidence, are a reference to catch what the VLM misread. Lines read below
-// minConf are left out.
-func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string, minConf float64) string {
+// confidence and box, are a reference to catch what the VLM misread. Boxes
+// are scaled to 0-1000 of the page size (pageSize: page → width, height) so the
+// agent can tell columns and rows apart where the lines lose the layout.
+// Lines read below minConf are left out.
+func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string, pageSize map[int][2]int, minConf float64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bóc tách thông tin từ một giấy tờ thuộc loại: %s", t.Title)
 	if t.Description != "" {
@@ -193,7 +197,10 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 	}
 	b.WriteString("\nNội dung giấy tờ, theo trang, ở hai nguồn đọc cùng một trang:\n" +
 		"- <markdown>: bản markdown mô hình thị giác đọc từ ảnh trang, giữ bố cục (tiêu đề, bảng, cột). Đây là dữ liệu chính: lấy giá trị từ đây.\n" +
-		"- <ocr>: chữ TurboOCR đọc từ cùng trang, mỗi dòng mở đầu bằng số dòng [L<n>] của trang đó, rồi độ tin cậy OCR của dòng (0-1) trong ngoặc. " +
+		"- <ocr>: chữ TurboOCR đọc từ cùng trang, mỗi dòng mở đầu bằng số dòng [L<n>] của trang đó, rồi độ tin cậy OCR của dòng (0-1) trong ngoặc, " +
+		"rồi toạ độ khung của dòng @x0,y0,x1,y1 theo thang 0-1000 của chiều rộng và chiều cao trang (gốc ở góc trên bên trái). " +
+		"Dùng toạ độ để dựng lại bố cục: các dòng cùng khoảng y nằm trên một hàng (nhãn bên trái, giá trị bên phải; các ô của một hàng bảng), " +
+		"các dòng cùng khoảng x thuộc một cột. " +
 		"Chỉ dùng để tham khảo, đối chiếu; độ tin cậy càng thấp càng ít dựa vào dòng đó. Dòng OCR đọc quá kém đã bị bỏ; " +
 		"trang không có <ocr> thì chỉ dựa vào markdown.\n" +
 		"Với mỗi giá trị lấy từ markdown, tìm dòng [L] tương ứng để kiểm tra: markdown có thể đọc sai ảnh (nhầm số, tên, ngày, mã, " +
@@ -224,13 +231,18 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 		var ocr strings.Builder
 		for _, l := range byPage[p] {
 			t := strings.TrimSpace(ocrText(l))
-			switch {
-			case t == "" || l.Confidence > 0 && l.Confidence < minConf:
-			case l.Confidence > 0:
-				fmt.Fprintf(&ocr, "[L%d] (%.2f) %s\n", l.LineNo, l.Confidence, t)
-			default: // confidence unknown
-				fmt.Fprintf(&ocr, "[L%d] %s\n", l.LineNo, t)
+			if t == "" || l.Confidence > 0 && l.Confidence < minConf {
+				continue
 			}
+			fmt.Fprintf(&ocr, "[L%d]", l.LineNo)
+			if l.Confidence > 0 { // else unknown
+				fmt.Fprintf(&ocr, " (%.2f)", l.Confidence)
+			}
+			if wh := pageSize[p]; wh[0] > 0 && wh[1] > 0 && l.BBox.X1 > l.BBox.X0 {
+				x, y := 1000/float64(wh[0]), 1000/float64(wh[1])
+				fmt.Fprintf(&ocr, " @%.0f,%.0f,%.0f,%.0f", l.BBox.X0*x, l.BBox.Y0*y, l.BBox.X1*x, l.BBox.Y1*y)
+			}
+			fmt.Fprintf(&ocr, " %s\n", t)
 		}
 		if ocr.Len() > 0 {
 			fmt.Fprintf(&pg, "<ocr>\n%s</ocr>\n", ocr.String())
