@@ -43,7 +43,7 @@ export function ChatConfigDialog({
 
   const save = async () => {
     if (pick !== "custom") return onSave({ templateId: pick });
-    if (!custom.trim()) return fail(new Error("Nhập prompt tuỳ chỉnh"));
+    if (!custom.trim()) return fail(new Error("Nhập hướng dẫn riêng"));
     if (!share) return onSave({ templateId: "", custom: custom.trim() });
     if (!name.trim()) return fail(new Error("Đặt tên cho mẫu dùng chung"));
     setBusy(true);
@@ -76,13 +76,13 @@ export function ChatConfigDialog({
         </>
       }
     >
-      <p className="text-sm">Chọn cách agent làm việc với hồ sơ này. Áp dụng cho các câu hỏi tiếp theo trong phương án.</p>
+      <p className="text-sm">Chọn cách trợ lý trả lời. Áp dụng cho các câu hỏi tiếp theo trong cuộc trò chuyện này.</p>
       <div className="flex flex-col gap-2">
         <label className={optCls(pick === "")}>
           <input type="radio" checked={pick === ""} onChange={() => setPick("")} className="mt-1" />
           <span>
             <span className="block text-sm font-medium text-fg">Mặc định</span>
-            <span className="block text-xs">Agent tra cây hồ sơ, đọc đúng trang rồi trả lời có trích dẫn.</span>
+            <span className="block text-xs">Trợ lý tra mục lục hồ sơ, đọc đúng trang rồi trả lời có trích dẫn.</span>
           </span>
         </label>
         {templates.map((t) => (
@@ -121,7 +121,7 @@ export function ChatConfigDialog({
             <Icon name="lock" size={20} className="text-subtle" />
             <div>
               <span className="block text-sm font-medium text-fg">Tuỳ chỉnh</span>
-              Tài khoản của bạn dùng mẫu có sẵn. Chỉ người được quản trị cấp quyền "Được đặt prompt" mới viết được prompt riêng. Câu hỏi trong khung chat vẫn gửi tự do.
+              Tài khoản của bạn dùng mẫu có sẵn. Chỉ người được quản trị cấp quyền "Sửa hướng dẫn AI" mới viết được hướng dẫn riêng. Câu hỏi trong khung chat vẫn gửi tự do.
             </div>
           </div>
         )}

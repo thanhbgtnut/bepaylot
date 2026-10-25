@@ -102,7 +102,30 @@ type SheetEditsRequest struct {
 	Edits []sheets.EditInput `json:"edits"`
 }
 
-// CompileCheckRequest is the body of POST /v1/kbs/{id}/checks/compile.
+// CaseFieldList is the body of GET /v1/cases/{id}/fields.
+type CaseFieldList struct {
+	Data []sheets.CaseDocFields `json:"data"`
+}
+
+// CaseFieldRequest is the body of PUT /v1/cases/{id}/fields: the user's value
+// of one field of a document (U99).
+type CaseFieldRequest struct {
+	SegmentID uuid.UUID `json:"segment_id"`
+	Key       string    `json:"key" example:"tk_nhan"`
+	Value     string    `json:"value" example:"1903 4567 8901 23"`
+}
+
+// RulesetList is the body of GET /v1/check-rulesets.
+type RulesetList struct {
+	Data []types.CheckRuleset `json:"data"`
+}
+
+// CreateCheckRequest is the body of POST /v1/cases/{id}/checks.
+type CreateCheckRequest struct {
+	RulesetID uuid.UUID `json:"ruleset_id"`
+}
+
+// CompileCheckRequest is the body of POST /v1/check-rulesets/{id}/compile.
 type CompileCheckRequest struct {
 	Kind    string `json:"kind" example:"rule"` // rule | link
 	DocType string `json:"doc_type,omitempty" example:"hoa_don"`

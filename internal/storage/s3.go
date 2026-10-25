@@ -22,14 +22,16 @@ import (
 
 // S3 implements ObjectStore on any S3-compatible endpoint.
 type S3 struct {
-	client  *s3.Client
-	tm      *transfermanager.Client
-	presign *s3.PresignClient
-	bucket  string
+	client   *s3.Client
+	tm       *transfermanager.Client
+	presign  *s3.PresignClient
+	bucket   string
+	endpoint string // for error messages; "" = AWS
 }
 
-// NewS3 connects to the configured endpoint. With CreateBucket set, a
-// missing bucket is created (MinIO dev setups).
+// NewS3 connects to the configured endpoint. It makes no call by default:
+// the bucket must exist and the credentials need only read and write on its
+// objects. With CreateBucket set (local MinIO), a missing bucket is created.
 func NewS3(ctx context.Context, cfg config.S3Cfg) (*S3, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("storage: storage.s3.bucket is required")
@@ -70,8 +72,9 @@ func NewS3(ctx context.Context, cfg config.S3Cfg) (*S3, error) {
 			o.Concurrency = conc
 			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		}),
-		presign: s3.NewPresignClient(client),
-		bucket:  cfg.Bucket,
+		presign:  s3.NewPresignClient(client),
+		bucket:   cfg.Bucket,
+		endpoint: cfg.Endpoint,
 	}
 	if cfg.CreateBucket {
 		if err := st.ensureBucket(ctx); err != nil {
@@ -81,11 +84,17 @@ func NewS3(ctx context.Context, cfg config.S3Cfg) (*S3, error) {
 	return st, nil
 }
 
+// ensureBucket creates the bucket only when S3 says it does not exist; any
+// other failure (endpoint unreachable, TLS, access denied) is reported as is.
 func (s *S3) ensureBucket(ctx context.Context) error {
-	if _, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket}); err == nil {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket})
+	var missing *s3types.NotFound
+	if err == nil {
 		return nil
+	} else if !errors.As(err, &missing) {
+		return fmt.Errorf("storage: check bucket %s at %q: %w", s.bucket, s.endpoint, err)
 	}
-	_, err := s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &s.bucket})
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &s.bucket})
 	var owned *s3types.BucketAlreadyOwnedByYou
 	if err != nil && !errors.As(err, &owned) {
 		return fmt.Errorf("storage: create bucket %s: %w", s.bucket, err)

@@ -80,15 +80,6 @@ func (s *Service) UpdateKB(ctx context.Context, owner, id uuid.UUID, p postgres.
 		if err := types.ValidateDocTypes(p.Config.DocTypes); err != nil {
 			return types.KnowledgeBase{}, fmt.Errorf("%w: doc_types: %v", ErrBadRequest, err)
 		}
-		// The cross-checks are set by prompt editors through their own route
-		// (§6.9.9): a config sent here keeps the stored ones.
-		cur, err := s.st.KBs.GetOwned(ctx, id, owner)
-		if err != nil {
-			return cur, notFound(err)
-		}
-		cfg := *p.Config
-		cfg.Checks = cur.Config.Checks
-		p.Config = &cfg
 	}
 	kb, err := s.st.KBs.Update(ctx, id, owner, p)
 	if err != nil {

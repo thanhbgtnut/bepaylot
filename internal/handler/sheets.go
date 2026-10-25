@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/google/uuid"
 
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/handler/dto"
@@ -34,6 +35,8 @@ func (h *Handlers) sheetError(c *app.RequestContext, err error) {
 		h.notFound(c, "export template not found")
 	case errors.Is(err, sheets.ErrCheckNotFound):
 		h.notFound(c, "check run not found")
+	case errors.Is(err, sheets.ErrRulesetNotFound):
+		h.notFound(c, "rule set not found")
 	case errors.Is(err, sheets.ErrBadFile), errors.Is(err, sheets.ErrNoTables),
 		errors.Is(err, sheets.ErrUnknownKey), errors.Is(err, sheets.ErrBadForm),
 		errors.Is(err, sheets.ErrBadMapping), errors.Is(err, sheets.ErrFormSheet),
@@ -114,6 +117,74 @@ func (h *Handlers) ListSheets(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, dto.SheetList{Data: list})
+}
+
+// CaseFields handles GET /v1/cases/{id}/fields.
+//
+// @Summary   The documents of one file of a case and the value of each field of their type (§7.2)
+// @Tags      Sheets
+// @Produce   json
+// @Param     id           path      string  true  "Case id"      format(uuid)
+// @Param     document_id  query     string  true  "Document id"  format(uuid)
+// @Success   200          {object}  dto.CaseFieldList
+// @Failure   404          {object}  dto.ErrorResponse
+// @Security  ApiKeyAuth
+// @Router    /v1/cases/{id}/fields [get]
+func (h *Handlers) CaseFields(ctx context.Context, c *app.RequestContext) {
+	u, ok := h.user(c)
+	if !ok || !h.sheetsReady(c) {
+		return
+	}
+	caseID, ok := h.uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	docID, err := uuid.Parse(c.Query("document_id"))
+	if err != nil {
+		h.badRequest(c, "document_id must be a uuid")
+		return
+	}
+	list, err := h.Sheets.CaseFields(ctx, u.ID, caseID, docID)
+	if err != nil {
+		h.sheetError(c, err)
+		return
+	}
+	c.JSON(consts.StatusOK, dto.CaseFieldList{Data: list})
+}
+
+// SaveCaseField handles PUT /v1/cases/{id}/fields.
+//
+// @Summary   Save the user's value of one field of a document (U99)
+// @Description  Stored as a confirmed user field that supersedes the current one, as an edit on the sheet page.
+// @Tags      Sheets
+// @Accept    json
+// @Produce   json
+// @Param     id       path      string                 true  "Case id"  format(uuid)
+// @Param     request  body      dto.CaseFieldRequest   true  "Field"
+// @Success   200      {object}  sheets.CaseFieldView
+// @Failure   422      {object}  dto.ErrorResponse
+// @Security  ApiKeyAuth
+// @Router    /v1/cases/{id}/fields [put]
+func (h *Handlers) SaveCaseField(ctx context.Context, c *app.RequestContext) {
+	u, ok := h.user(c)
+	if !ok || !h.sheetsReady(c) {
+		return
+	}
+	caseID, ok := h.uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	var req dto.CaseFieldRequest
+	if err := c.BindJSON(&req); err != nil {
+		h.badRequest(c, "invalid JSON body: "+err.Error())
+		return
+	}
+	v, err := h.Sheets.SaveCaseField(ctx, u, caseID, req.SegmentID, req.Key, req.Value)
+	if err != nil {
+		h.sheetError(c, err)
+		return
+	}
+	c.JSON(consts.StatusOK, v)
 }
 
 // GetSheet handles GET /v1/sheets/{id}.

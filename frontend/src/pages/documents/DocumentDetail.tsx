@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
@@ -7,17 +7,19 @@ import {
   getDocument,
   getMarkdown,
   getPage,
-  listEngines,
   getTree,
   listPages,
   reparseDocument,
 } from "../../api/endpoints";
-import type { DocumentDetail as Doc, DocumentPage, EngineInfo, PageView, TreeNode } from "../../api/types";
+import type { DocumentDetail as Doc, DocumentPage, PageView, TreeNode } from "../../api/types";
 import { Markdown } from "../../components/Markdown";
 import { PageImage } from "../../components/PageImage";
+import { BackButton } from "../../components/nav";
 import { Thumb } from "../../components/Thumb";
 import { useToast } from "../../components/toast";
-import { Empty, FileIcon, Icon, Loading, MetaChips, Modal, SourceBadge, Spinner, StatusBadge } from "../../components/ui";
+import { useApp } from "../../components/AppContext";
+import { Empty, FileIcon, Icon, Loading, MetaChips, Modal, Spinner, StatusBadge } from "../../components/ui";
+import { typeColor, typeTitle } from "../../lib/doctype";
 import { fmtDate, fmtSize, TERMINAL } from "../../lib/format";
 import { BlocksPanel, FindPanel, LinesPanel, TreePanel } from "./panels";
 
@@ -25,21 +27,22 @@ type Tab = "info" | "lines" | "md" | "blocks" | "find" | "tree";
 const TABS: [Tab, string][] = [
   ["info", "Chi tiết"],
   ["lines", "Dòng"],
-  ["md", "Markdown"],
-  ["blocks", "Blocks"],
+  ["md", "Nội dung"],
+  ["blocks", "Bố cục"],
   ["find", "Tìm"],
   ["tree", "Mục lục"],
 ];
 const ZOOMS = [50, 67, 80, 100, 125, 150, 200];
 
-// Icon button on the dark viewer chrome.
-const darkBtn = "btn-icon text-[#e3e3e3] hover:bg-white/10 disabled:opacity-30";
+// Icon button of the viewer chrome.
+const barBtn = "btn-icon text-muted disabled:opacity-30";
 
 export function DocumentDetail() {
   const { id = "" } = useParams();
   const [sp, setSp] = useSearchParams();
   const nav = useNavigate();
   const { toast, fail } = useToast();
+  const { kbs } = useApp();
   const pageNo = Math.max(1, +(sp.get("page") ?? 1) || 1);
   const hl = useMemo(() => (sp.get("hl") ?? "").split(",").filter(Boolean).map(Number), [sp]);
   const tab = (sp.get("tab") as Tab) || (hl.length ? "lines" : "info");
@@ -108,12 +111,26 @@ export function DocumentDetail() {
       alive = false;
     };
   }, [id, indexed, reloadKey]);
+  const types = kbs.find((k) => k.id === doc?.kb_id)?.config.doc_types ?? [];
+  // Pages grouped by document (a doctype node of the tree; while processing,
+  // the type read from each page); pages outside every document form an
+  // unclassified group.
   const groupOf = (p: DocumentPage) => {
     const n = docNodes.find((n) => p.page_no >= n.page_start && p.page_no <= n.page_end);
-    if (n) return { key: n.id, title: n.title || n.doc_type || "", pages: n.page_start === n.page_end ? `tr. ${n.page_start}` : `tr. ${n.page_start}–${n.page_end}` };
-    if (docNodes.length || !p.doc_type) return null;
-    return { key: "p:" + p.doc_type, title: p.doc_type === "other" ? "Khác" : p.doc_type, pages: "" };
+    if (n) return { key: n.id, type: n.doc_type, title: n.title || typeTitle(n.doc_type, types) };
+    if (docNodes.length || !p.doc_type) return { key: "none", type: "", title: "Chưa phân loại" };
+    return { key: "p:" + p.doc_type, type: p.doc_type, title: typeTitle(p.doc_type, types) };
   };
+  const blocks: { key: string; type?: string; title: string; pages: DocumentPage[] }[] = [];
+  for (const p of pages) {
+    const g = groupOf(p);
+    const last = blocks.at(-1);
+    if (last?.key === g.key) last.pages.push(p);
+    else blocks.push({ ...g, pages: [p] });
+  }
+  const typeCount = new Map<string, number>();
+  for (const n of docNodes) typeCount.set(n.doc_type!, (typeCount.get(n.doc_type!) ?? 0) + 1);
+  const pagesLabel = (a: number, b: number) => (a === b ? `tr. ${a}` : `tr. ${a}–${b}`);
 
   const pageReady = pages.find((p) => p.page_no === pageNo)?.status;
   useEffect(() => {
@@ -179,78 +196,94 @@ export function DocumentDetail() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#1e1f20] text-[#e3e3e3]">
+    <div className="flex min-h-0 flex-1 flex-col bg-surface-2/60 text-fg">
       {/* viewer chrome */}
-      <header className="flex h-16 flex-none items-center gap-1 px-2">
-        <button className={darkBtn} onClick={() => nav("/documents")} title="Đóng">
-          <Icon name="arrow_back" />
-        </button>
+      <header className="flex min-h-16 flex-none items-center gap-1 px-2 py-2">
+        <BackButton fallback="/documents" fallbackLabel="Tài liệu" className={barBtn} />
         <FileIcon mime={doc.mime_type} name={doc.file_name} />
         <div className="ml-2 min-w-0 flex-1">
           <div className="truncate text-base">{doc.file_name}</div>
-          {!TERMINAL.has(doc.status) && (
-            <div className="flex items-center gap-2 text-xs text-[#c4c7c5]">
-              <Spinner className="size-3 border-2 border-white/25 border-t-[#a8c7fa]" />
+          {!TERMINAL.has(doc.status) ? (
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <Spinner className="size-3 border-2" />
               {Math.round((doc.progress || 0) * 100)}% · {doc.pages_done}/{doc.page_count} trang
+            </div>
+          ) : (
+            // Pages, documents and their types, each type jumping to its first document.
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
+              <span>
+                {doc.page_count} trang{docNodes.length ? ` · ${docNodes.length} giấy tờ` : ""}
+              </span>
+              {[...typeCount].map(([t, c]) => (
+                <button key={t} className="inline-flex items-center gap-1.5 text-fg hover:underline" title={`Tới ${typeTitle(t, types)} đầu tiên`} onClick={() => go(docNodes.find((n) => n.doc_type === t)!.page_start)}>
+                  <i className="size-2 rounded-full" style={{ background: typeColor(t, types) }} />
+                  {typeTitle(t, types)}
+                  {c > 1 && <span className="text-muted">×{c}</span>}
+                </button>
+              ))}
             </div>
           )}
         </div>
-        <button className={darkBtn} title="Tìm trong file" onClick={() => (setPanel(true), go(pageNo, { tab: "find" }))}>
+        <button className={barBtn} title="Tìm trong file" onClick={() => (setPanel(true), go(pageNo, { tab: "find" }))}>
           <Icon name="search" />
         </button>
-        <button className={darkBtn} title="Tải xuống" onClick={() => downloadOriginal(doc).catch(fail)}>
+        <button className={barBtn} title="Tải xuống" onClick={() => downloadOriginal(doc).catch(fail)}>
           <Icon name="download" />
         </button>
-        <button className={darkBtn} title="Markdown toàn văn" onClick={() => setModal("md")}>
+        <button className={barBtn} title="Toàn văn" onClick={() => setModal("md")}>
           <Icon name="article" />
         </button>
-        <button className={darkBtn} title="Parse lại" onClick={() => setModal("reparse")}>
+        <button className={barBtn} title="Đọc lại" onClick={() => setModal("reparse")}>
           <Icon name="refresh" />
         </button>
-        <button className={darkBtn} title="Xoá" onClick={remove}>
+        <button className={barBtn} title="Xoá" onClick={remove}>
           <Icon name="delete" />
         </button>
-        <button className={darkBtn + (panel ? " bg-white/15" : "")} title="Chi tiết" onClick={() => setPanel((p) => !p)}>
+        <button className={barBtn + (panel ? " bg-accent-soft text-on-accent-soft" : "")} title="Chi tiết" onClick={() => setPanel((p) => !p)}>
           <Icon name="info" fill={panel} />
         </button>
       </header>
 
       <div className="flex min-h-0 flex-1">
-        {/* thumbnails */}
-        <div className="hidden w-36 flex-none flex-col gap-3 overflow-y-auto px-4 pt-1 pb-6 lg:flex">
-          {pages.map((p, i) => {
-            const on = p.page_no === pageNo;
-            const group = groupOf(p);
-            const head = group && group.key !== (i > 0 ? groupOf(pages[i - 1])?.key : undefined);
+        {/* thumbnails, one block per document with its type's color */}
+        <div className="hidden w-40 flex-none flex-col gap-1.5 overflow-y-auto px-2 pt-1 pb-6 lg:flex" aria-label="Các trang theo giấy tờ">
+          {blocks.map((b) => {
+            const cur = b.pages.some((p) => p.page_no === pageNo);
             return (
-              <Fragment key={p.page_no}>
-              {head && (
-                <div className={"w-full text-left text-[11px] leading-4 font-medium text-[#a8c7fa] " + (i > 0 ? "mt-1 border-t border-white/20 pt-3" : "")} title={group.title}>
-                  <span className="block truncate">{group.title}</span>
-                  {group.pages && <span className="block font-normal text-[#c4c7c5]">{group.pages}</span>}
+              <section key={b.key + b.pages[0].page_no} className={"rounded-md border-l-[3px] py-1.5 pr-0.5 pl-1.5 " + (cur ? "bg-accent-soft/40" : "")} style={{ borderColor: typeColor(b.type, types) }}>
+                <div className="mb-1.5">
+                  <div className="truncate text-[11px] leading-4 font-medium text-fg" title={b.title}>
+                    {b.title}
+                  </div>
+                  <div className="truncate text-[10.5px] text-muted">{pagesLabel(b.pages[0].page_no, b.pages.at(-1)!.page_no)}</div>
                 </div>
-              )}
-              <button
-                ref={(el) => {
-                  if (el && on) el.scrollIntoView({ block: "nearest" });
-                }}
-                onClick={() => go(p.page_no)}
-                className="group flex flex-col items-center gap-1.5"
-                title={p.text_plain?.slice(0, 160)}
-              >
-                <div className={"relative w-full overflow-hidden rounded-md border-2 transition-colors " + (on ? "border-[#a8c7fa]" : "border-transparent group-hover:border-white/30")}>
-                  {p.status === "done" || p.status === "rendered" || p.status === "ocr" ? (
-                    <Thumb docId={doc.id} pageNo={p.page_no} className="aspect-3/4 w-full bg-white" />
-                  ) : (
-                    <div className="grid aspect-3/4 w-full place-items-center bg-white/5">
-                      {p.status === "failed" ? <Icon name="error" className="text-[#f28b82]" /> : <Spinner className="size-4 border-2 border-white/25 border-t-[#a8c7fa]" />}
-                    </div>
-                  )}
-                  {p.is_blank && <span className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] leading-4">trắng</span>}
+                <div className="grid grid-cols-2 gap-x-1 gap-y-1">
+                  {b.pages.map((p) => {
+                    const on = p.page_no === pageNo;
+                    return (
+                      <button
+                        key={p.page_no}
+                        ref={(el) => {
+                          if (el && on) el.scrollIntoView({ block: "nearest" });
+                        }}
+                        onClick={() => go(p.page_no)}
+                        className="group flex flex-col items-center gap-1"
+                        title={p.text_plain?.slice(0, 160) || `Trang ${p.page_no}`}
+                      >
+                        <div className={"relative w-full overflow-hidden rounded border-2 transition-colors " + (on ? "border-accent" : "border-line group-hover:border-outline")}>
+                          {p.status === "done" || p.status === "rendered" || p.status === "ocr" ? (
+                            <Thumb docId={doc.id} pageNo={p.page_no} className="aspect-3/4 w-full bg-white" />
+                          ) : (
+                            <div className="grid aspect-3/4 w-full place-items-center bg-surface-3">{p.status === "failed" ? <Icon name="error" className="text-err" /> : <Spinner className="size-4 border-2" />}</div>
+                          )}
+                          {p.is_blank && <span className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] leading-4 text-white">trắng</span>}
+                        </div>
+                        <span className={"text-[11px] tabular-nums " + (on ? "font-medium text-accent" : "text-muted")}>{p.page_no}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <span className={"text-xs " + (on ? "font-medium text-white" : "text-[#c4c7c5]")}>{p.page_no}</span>
-              </button>
-              </Fragment>
+              </section>
             );
           })}
         </div>
@@ -260,19 +293,19 @@ export function DocumentDetail() {
           <div className="absolute inset-0 overflow-auto px-6 pt-2 pb-24">
             <div className="mx-auto" style={{ width: `${Math.min(zoom, 400)}%`, maxWidth: zoom <= 100 ? 980 : undefined }}>
               {pageErr ? (
-                <div className="grid aspect-3/4 place-items-center rounded bg-white/5 p-6 text-center text-sm text-[#c4c7c5]">
+                <div className="grid aspect-3/4 place-items-center rounded bg-surface-3 p-6 text-center text-sm text-muted">
                   <span>
-                    <Icon name="hourglass_empty" size={40} className="mb-2 text-[#8e918f]" />
+                    <Icon name="hourglass_empty" size={40} className="mb-2 text-subtle" />
                     <br />
                     Trang {pageNo} chưa sẵn sàng
                   </span>
                 </div>
               ) : !page ? (
                 <div className="grid aspect-3/4 place-items-center">
-                  <Spinner className="border-white/20 border-t-[#a8c7fa]" />
+                  <Spinner />
                 </div>
               ) : (
-                <div className="shadow-3">
+                <div className="overflow-hidden rounded-md border border-line shadow-1">
                   <PageImage
                     docId={doc.id}
                     pageNo={pageNo}
@@ -294,8 +327,8 @@ export function DocumentDetail() {
           </div>
 
           {/* floating page / zoom bar */}
-          <div className="absolute bottom-5 left-1/2 flex h-12 -translate-x-1/2 items-center gap-0.5 rounded-full bg-[#303134]/95 px-2 text-sm shadow-3 backdrop-blur">
-            <button className={darkBtn} disabled={pageNo <= 1} onClick={() => go(pageNo - 1)} title="Trang trước (←)">
+          <div className="absolute bottom-5 left-1/2 flex h-12 -translate-x-1/2 items-center gap-0.5 rounded-full border border-line bg-surface/95 px-2 text-sm text-fg shadow-2 backdrop-blur">
+            <button className={barBtn} disabled={pageNo <= 1} onClick={() => go(pageNo - 1)} title="Trang trước (←)">
               <Icon name="chevron_left" />
             </button>
             <span className="flex items-center gap-1.5 px-1 whitespace-nowrap">
@@ -309,26 +342,26 @@ export function DocumentDetail() {
                     if (n >= 1 && n <= doc.page_count) go(n);
                   }
                 }}
-                className="h-7 w-10 rounded bg-white/10 text-center outline-none focus:ring-2 focus:ring-[#a8c7fa]"
+                className="h-7 w-10 rounded bg-surface-2 text-center outline-none focus:ring-2 focus:ring-accent"
                 aria-label="Số trang"
               />
               / {doc.page_count}
             </span>
-            <button className={darkBtn} disabled={pageNo >= doc.page_count} onClick={() => go(pageNo + 1)} title="Trang sau (→)">
+            <button className={barBtn} disabled={pageNo >= doc.page_count} onClick={() => go(pageNo + 1)} title="Trang sau (→)">
               <Icon name="chevron_right" />
             </button>
-            <span className="mx-1 h-6 w-px bg-white/20" />
-            <button className={darkBtn} disabled={zoom <= ZOOMS[0]} onClick={() => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(zoom) - 1)])} title="Thu nhỏ">
+            <span className="mx-1 h-6 w-px bg-line" />
+            <button className={barBtn} disabled={zoom <= ZOOMS[0]} onClick={() => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(zoom) - 1)])} title="Thu nhỏ">
               <Icon name="zoom_out" />
             </button>
-            <button className="h-8 w-14 rounded-full hover:bg-white/10" onClick={() => setZoom(100)} title="Vừa khung">
+            <button className="h-8 w-14 rounded-full hover:bg-fg/8" onClick={() => setZoom(100)} title="Vừa khung">
               {zoom}%
             </button>
-            <button className={darkBtn} disabled={zoom >= ZOOMS.at(-1)!} onClick={() => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(zoom) + 1)])} title="Phóng to">
+            <button className={barBtn} disabled={zoom >= ZOOMS.at(-1)!} onClick={() => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(zoom) + 1)])} title="Phóng to">
               <Icon name="zoom_in" />
             </button>
-            <span className="mx-1 h-6 w-px bg-white/20" />
-            <button className={darkBtn + (showBoxes ? " bg-white/15" : "")} onClick={() => setShowBoxes((b) => !b)} title="Khung toạ độ từng dòng">
+            <span className="mx-1 h-6 w-px bg-line" />
+            <button className={barBtn + (showBoxes ? " bg-accent-soft text-on-accent-soft" : "")} onClick={() => setShowBoxes((b) => !b)} title="Khung từng dòng chữ">
               <Icon name="select" />
             </button>
           </div>
@@ -352,7 +385,7 @@ export function DocumentDetail() {
               ))}
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
-              {tab === "info" && <InfoPanel doc={doc} page={page} onGo={(n) => go(n)} />}
+              {tab === "info" && <InfoPanel doc={doc} page={page} typeName={(c) => typeTitle(c, types)} onGo={(n) => go(n)} />}
               {tab === "find" && <FindPanel doc={doc} onPick={(n, line) => go(n, { hl: [line], tab: "find" })} />}
               {tab === "tree" && <TreePanel doc={doc} current={pageNo} onPick={(n) => go(n, { tab: "tree" })} />}
               {(tab === "lines" || tab === "md" || tab === "blocks") && !page && !pageErr && <Loading />}
@@ -379,7 +412,7 @@ export function DocumentDetail() {
           onClose={() => setModal(null)}
           onDone={() => {
             setModal(null);
-            toast("Đã đưa vào hàng đợi parse lại");
+            toast("Đã đưa vào hàng đợi đọc lại");
             setTimeout(() => setReloadKey((k) => k + 1), 500);
           }}
         />
@@ -397,7 +430,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-function InfoPanel({ doc, page, onGo }: { doc: Doc; page: PageView | null; onGo: (n: number) => void }) {
+function InfoPanel({ doc, page, typeName, onGo }: { doc: Doc; page: PageView | null; typeName: (code: string) => string; onGo: (n: number) => void }) {
   return (
     <div className="px-5 py-3">
       {(doc.title || doc.summary) && (
@@ -415,15 +448,8 @@ function InfoPanel({ doc, page, onGo }: { doc: Doc; page: PageView | null; onGo:
         {doc.pages_failed > 0 && <span className="ml-2 text-err">{doc.pages_failed} trang lỗi</span>}
       </Row>
       <Row label="Kích thước">{fmtSize(doc.size_bytes)}</Row>
-      <Row label="OCR engine">{doc.engine || "mặc định"}</Row>
-      <Row label="Các bước">
-        <span className="flex flex-wrap gap-1.5">
-          <span className="tag">parse: {doc.parse_status}</span>
-          <span className="tag">index: {doc.index_status}</span>
-        </span>
-      </Row>
       {doc.metadata && Object.keys(doc.metadata).length > 0 && (
-        <Row label="Metadata">
+        <Row label="Thông tin thêm">
           <span className="flex flex-wrap gap-1.5">
             <MetaChips meta={doc.metadata} />
           </span>
@@ -431,7 +457,6 @@ function InfoPanel({ doc, page, onGo }: { doc: Doc; page: PageView | null; onGo:
       )}
       <Row label="Tải lên">{fmtDate(doc.created_at)}</Row>
       <Row label="Cập nhật">{fmtDate(doc.updated_at)}</Row>
-      {doc.callback_url && <Row label="Callback">{doc.callback_url}</Row>}
       {doc.error && <Row label="Lỗi">{<span className="text-err">{doc.error}</span>}</Row>}
       {!!doc.failed_pages?.length && (
         <Row label="Trang lỗi">
@@ -449,16 +474,9 @@ function InfoPanel({ doc, page, onGo }: { doc: Doc; page: PageView | null; onGo:
           <h3 className="pt-4 pb-1 text-sm font-medium">Trang {page.page_no}</h3>
           {page.doc_type && (
             <Row label="Loại giấy tờ">
-              {page.doc_type} · {Math.round((page.doc_type_confidence ?? 0) * 100)}%
+              {typeName(page.doc_type)} · {Math.round((page.doc_type_confidence ?? 0) * 100)}%
             </Row>
           )}
-          <Row label="Nguồn chữ">
-            <SourceBadge source={page.text_source} />
-          </Row>
-          <Row label="Ảnh">
-            {page.width}×{page.height}px · {Math.round(page.dpi)} dpi
-          </Row>
-          {page.ocr_ms > 0 && <Row label="Thời gian OCR">{page.ocr_ms} ms</Row>}
           {page.error && <Row label="Lỗi trang">{<span className="text-err">{page.error}</span>}</Row>}
         </>
       )}
@@ -476,7 +494,7 @@ function FullMarkdown({ docId, onClose }: { docId: string; onClose: () => void }
     );
   }, [docId]);
   return (
-    <Modal title="Markdown toàn văn" icon="article" onClose={onClose} width={900}>
+    <Modal title="Toàn văn" icon="article" onClose={onClose} width={900}>
       <div className="text-fg">{err ? <Empty>{err}</Empty> : md === null ? <Loading /> : <Markdown text={md} />}</div>
     </Modal>
   );
@@ -484,16 +502,11 @@ function FullMarkdown({ docId, onClose }: { docId: string; onClose: () => void }
 
 function ReparseDialog({ doc, pageNo, onClose, onDone }: { doc: Doc; pageNo: number; onClose: () => void; onDone: () => void }) {
   const { fail } = useToast();
-  const [engines, setEngines] = useState<EngineInfo[]>([]);
-  const [engine, setEngine] = useState("");
   const [scope, setScope] = useState<"all" | "page">("all");
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    listEngines().then(setEngines, () => {});
-  }, []);
   return (
     <Modal
-      title="Parse lại"
+      title="Đọc lại tài liệu"
       icon="refresh"
       onClose={onClose}
       footer={
@@ -507,7 +520,7 @@ function ReparseDialog({ doc, pageNo, onClose, onDone }: { doc: Doc; pageNo: num
             onClick={async () => {
               setBusy(true);
               try {
-                await reparseDocument(doc.id, { engine: engine || undefined, pages: scope === "page" ? [pageNo] : undefined });
+                await reparseDocument(doc.id, { pages: scope === "page" ? [pageNo] : undefined });
                 onDone();
               } catch (e) {
                 fail(e);
@@ -515,7 +528,7 @@ function ReparseDialog({ doc, pageNo, onClose, onDone }: { doc: Doc; pageNo: num
               }
             }}
           >
-            Parse lại
+            Đọc lại
           </button>
         </>
       }
@@ -525,18 +538,6 @@ function ReparseDialog({ doc, pageNo, onClose, onDone }: { doc: Doc; pageNo: num
       </label>
       <label className="flex items-center gap-3 text-sm text-fg">
         <input type="radio" className="size-4 accent-accent" checked={scope === "page"} onChange={() => setScope("page")} /> Chỉ trang {pageNo}
-      </label>
-      <label className="field">
-        OCR engine
-        <select className="input" value={engine} onChange={(e) => setEngine(e.target.value)}>
-          <option value="">Giữ nguyên ({doc.engine || "mặc định"})</option>
-          {engines.map((e) => (
-            <option key={e.name} value={e.name} disabled={!e.available}>
-              {e.name}
-              {e.available ? "" : " — không khả dụng"}
-            </option>
-          ))}
-        </select>
       </label>
     </Modal>
   );

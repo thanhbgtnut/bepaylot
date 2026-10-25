@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { NavLink, useParams } from "react-router-dom";
 
 import { changePassword, createAPIKey, listAPIKeys, revokeAPIKey } from "../api/auth";
-import { getAdminUsage, getLLMKey, getMyUsage, issueAPIKey, listAdminUsers, setLLMKey, updateAdminUser, updateKB } from "../api/endpoints";
-import { isAdmin, type AdminUser, type APIKey, type DocType, type LLMKeyView, type SheetField, type UsageSummary } from "../api/types";
-import { fmtMoney, ROLE_LABEL, toCode, uniqueCode } from "../lib/format";
-import { useApp } from "./AppContext";
+import { getAdminUsage, getLLMKey, getMyUsage, issueAPIKey, listAdminUsers, setLLMKey, updateAdminUser } from "../api/endpoints";
+import { isAdmin, type AdminUser, type APIKey, type LLMKeyView, type UsageSummary } from "../api/types";
+import { fmtMoney, ROLE_LABEL } from "../lib/format";
 import { useAuth } from "./AuthContext";
 import { ChecksTab } from "./ChecksTab";
+import { DocTypesTab } from "./DocTypes";
 import { FormsTab } from "./FormsTab";
 import { TopBar } from "./Layout";
 import { useToast } from "./toast";
-import { Empty, Icon, Modal, Spinner } from "./ui";
+import { Icon, Modal, Spinner } from "./ui";
 
 export type SettingsTab = "account" | "checks" | "doctypes" | "forms" | "keys" | "users";
 
@@ -37,7 +37,7 @@ export function SettingsDialog({ tab: initial, onClose }: { tab: "account" | "ke
         {(
           [
             ["account", "Tài khoản"],
-            ["keys", "Key & chi phí"],
+            ["keys", "Chi phí AI"],
           ] as const
         ).map(([k, l]) => (
           <button key={k} className={"tab " + (tab === k ? "tab-active" : "")} onClick={() => setTab(k)}>
@@ -180,302 +180,6 @@ function AccountTab() {
   );
 }
 
-const VALUE_TYPES: [string, string][] = [
-  ["string", "Văn bản"],
-  ["number", "Số"],
-  ["money", "Số tiền"],
-  ["date", "Ngày"],
-  ["bool", "Có / Không"],
-];
-// A field added here: its key follows its name (U65). A saved field keeps its
-// key, so the values already extracted under it stay with the column. typed:
-// the user picked the value type, so it no longer follows the name.
-type NewField = SheetField & { auto?: boolean; typed?: boolean };
-
-// guessType reads the value type off a field name ("Ngày ký" → date, "Tổng
-// thanh toán" → money), so the type rarely has to be picked by hand.
-const guessType = (label: string) => {
-  const c = toCode(label);
-  if (/(^|_)(so_luong|so_ngay|ty_le|khoi_luong|trong_luong)(_|$)/.test(c)) return "number";
-  if (/(^|_)ngay(_|$)/.test(c)) return "date";
-  if (/(^|_)(tien|gia_tri|thanh_toan|thanh_tien|tong|don_gia|doanh_thu)(_|$)/.test(c)) return "money";
-  return "string";
-};
-
-// Fields of each document type of a knowledge base (§7.11): pick the KB, pick
-// the document type on the left, edit its fields on the right. They are the
-// columns of the type's Excel sheet and are extracted when a sheet is made;
-// the description of a field guides the agent that extracts it.
-function DocTypesTab() {
-  const { kbs, kb: current, updateKBLocal, openEditKB } = useApp();
-  const { toast, fail } = useToast();
-  const [picked, setPick] = useState(current?.id ?? kbs[0]?.id ?? "");
-  // After a reload the KBs arrive after the tab opens: until one is picked,
-  // the current KB (or the first one) is shown.
-  const pick = kbs.some((k) => k.id === picked) ? picked : (current?.id ?? kbs[0]?.id ?? "");
-  const kb = kbs.find((k) => k.id === pick);
-  const [types, setTypes] = useState<(DocType & { fields?: NewField[] })[]>([]);
-  const [active, setActive] = useState(0);
-  const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const reset = useCallback(() => {
-    setTypes((kb?.config.doc_types ?? []).map((t) => ({ ...t, fields: (t.fields ?? []).map((f) => ({ ...f })) })));
-    setDirty(false);
-  }, [kb]);
-  useEffect(() => {
-    reset();
-    setActive(0);
-  }, [reset]);
-
-  const type = types[active];
-  const fields: NewField[] = type?.fields ?? [];
-  const setFields = (fn: (xs: NewField[]) => NewField[]) => {
-    setTypes((ts) => ts.map((t, i) => (i === active ? { ...t, fields: fn(t.fields ?? []) } : t)));
-    setDirty(true);
-  };
-  // Field keys need two characters or more.
-  const keyOf = (label: string, taken: string[]) => {
-    const k = toCode(label);
-    return k ? uniqueCode(k.length < 2 ? k + "_1" : k, taken) : "";
-  };
-  // named gives a new field the key and value type of its name.
-  const named = (f: NewField, label: string, taken: string[]): NewField =>
-    f.auto ? { ...f, label, key: keyOf(label, taken), value_type: f.typed ? f.value_type : guessType(label) } : { ...f, label };
-  // The table always ends with one empty row: typing in it makes it a field
-  // and the next empty row appears, so there is no "add" button. Row i ===
-  // fields.length is that empty row. A new field whose name is cleared goes.
-  const setLabel = (i: number, label: string) =>
-    setFields((xs) => {
-      const taken = xs.filter((_, j) => j !== i).map((x) => x.key);
-      if (i >= xs.length) return label ? [...xs, named({ key: "", label: "", auto: true }, label, taken)] : xs;
-      if (!label && xs[i].auto) return xs.filter((_, j) => j !== i);
-      return xs.map((f, k) => (k === i ? named(f, label, taken) : f));
-    });
-  const setType = (i: number, value_type: string) =>
-    setFields((xs) => (i >= xs.length ? xs : xs.map((f, k) => (k === i ? { ...f, value_type, typed: true } : f))));
-  const setDesc = (i: number, description: string) => setFields((xs) => xs.map((f, k) => (k === i ? { ...f, description } : f)));
-  // Several names pasted at once (one per line, or tab-separated cells from
-  // a spreadsheet) become one field each.
-  const pasteNames = (i: number, text: string) => {
-    const names = text
-      .split(/[\r\n\t]+/)
-      .map((x) => x.trim())
-      .filter(Boolean);
-    if (names.length < 2) return false;
-    setFields((xs) => {
-      const out = xs.slice(0, i);
-      for (const label of names) out.push(named({ key: "", label: "", auto: true }, label, [...out, ...xs.slice(i)].map((x) => x.key)));
-      return [...out, ...xs.slice(i).filter((f) => f.label)];
-    });
-    return true;
-  };
-  const focusRow = (i: number) => document.querySelector<HTMLInputElement>(`[data-field-name="${i}"]`)?.focus();
-  const focusDesc = (i: number) => document.querySelector<HTMLInputElement>(`[data-field-desc="${i}"]`)?.focus();
-  const save = async () => {
-    if (!kb) return;
-    const doc_types = types.map((t) => ({
-      name: t.name,
-      title: t.title,
-      description: t.description,
-      fields: (t.fields ?? []).filter((f) => f.key && f.label.trim()).map((f) => ({ key: f.key, label: f.label.trim(), value_type: f.value_type || "string", description: f.description?.trim() || undefined })),
-    }));
-    setBusy(true);
-    try {
-      // PATCH replaces the whole config, so it sends what the KB has.
-      updateKBLocal(await updateKB(kb.id, { config: { ...kb.config, doc_types } }));
-      toast("Đã lưu trường của loại giấy tờ; trường mới được bóc tách khi tạo bảng Excel");
-    } catch (e) {
-      fail(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Ctrl/⌘+S saves from anywhere on the page.
-  const saveRef = useRef(save);
-  saveRef.current = save;
-  useEffect(() => {
-    if (!dirty) return;
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") (e.preventDefault(), saveRef.current());
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [dirty]);
-
-  if (!kbs.length)
-    return (
-      <Empty icon="create_new_folder" title="Chưa có thư viện">
-        Tạo thư viện và khai báo loại giấy tờ trước khi thêm trường cần lấy.
-      </Empty>
-    );
-  return (
-    <>
-      <SectionHead
-        title="Trường cần lấy theo loại giấy tờ"
-        action={
-          <label className="field w-full sm:w-72">
-            <span>Thư viện</span>
-            <select className="input" value={pick} onChange={(e) => setPick(e.target.value)} disabled={dirty} title={dirty ? "Lưu hoặc hoàn tác thay đổi trước khi đổi thư viện" : undefined}>
-              {kbs.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        }
-      >
-        Các trường là cột của sheet tương ứng khi xuất Excel và được bóc tách khi bạn tạo bảng. Mô tả hướng dẫn AI cách lấy từng trường.
-      </SectionHead>
-
-      {!types.length ? (
-        <div className="rounded-2xl border border-line">
-          <Empty icon="category" title="Thư viện này chưa có loại giấy tờ">
-            Khai báo các loại giấy tờ (Hợp đồng, Hoá đơn…) rồi quay lại đây để thêm trường cho từng loại.
-            <div>
-              <button className="btn btn-primary mt-5" onClick={() => kb && openEditKB(kb)}>
-                <Icon name="edit" size={18} /> Thêm loại giấy tờ
-              </button>
-            </div>
-          </Empty>
-        </div>
-      ) : (
-        <div className="flex flex-col overflow-hidden rounded-2xl border border-line lg:flex-row">
-          {/* Master: the document types of the knowledge base. */}
-          <div className="flex flex-none flex-col gap-1 border-b border-line bg-surface-2/60 p-3 lg:w-64 lg:border-r lg:border-b-0">
-            <div className="flex items-center pr-1 pl-3">
-              <span className="flex-1 text-xs font-medium text-muted">Loại giấy tờ</span>
-              <button className="btn-icon btn-sm" title="Thêm, đổi tên hoặc xoá loại giấy tờ" aria-label="Sửa loại giấy tờ của thư viện" onClick={() => kb && openEditKB(kb)}>
-                <Icon name="edit" size={18} />
-              </button>
-            </div>
-            <div className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible" role="tablist" aria-label="Loại giấy tờ" aria-orientation="vertical">
-              {types.map((t, i) => {
-                const on = i === active;
-                return (
-                  <button
-                    key={t.name}
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => setActive(i)}
-                    className={"flex h-10 flex-none cursor-pointer items-center gap-3 rounded-full pr-2 pl-3 text-left text-sm " + (on ? "bg-accent-soft font-medium text-on-accent-soft" : "text-fg hover:bg-fg/8")}
-                  >
-                    <Icon name="description" size={20} fill={on} className={on ? "" : "text-muted"} />
-                    <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                    <span className={"grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] tabular-nums " + (on ? "bg-surface text-on-accent-soft" : "bg-surface-3 text-muted")} title={`${t.fields?.length ?? 0} trường`}>
-                      {t.fields?.length ?? 0}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Detail: the fields of the chosen type. */}
-          <div className="flex min-w-0 flex-1 flex-col" role="tabpanel" aria-label={type?.title}>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 pt-4 pb-3">
-              <h3 className="text-[15px] font-medium text-fg">{type?.title}</h3>
-              <code className="tag font-mono">{type?.name}</code>
-              {type?.description && <span className="w-full text-xs text-muted">{type.description}</span>}
-            </div>
-            <div className="overflow-x-auto border-t border-line">
-              <table className="w-full min-w-200 text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-muted">
-                    <th className="w-12 py-2.5 pl-5 font-medium">#</th>
-                    <th className="w-56 px-2 py-2.5 font-medium">Tên trường</th>
-                    <th className="w-44 px-2 py-2.5 font-medium">Key (tự sinh)</th>
-                    <th className="w-36 px-2 py-2.5 font-medium">Kiểu dữ liệu</th>
-                    <th className="px-2 py-2.5 font-medium">Mô tả (hướng dẫn AI)</th>
-                    <th className="w-14" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...fields, null].map((f, i) => (
-                    <tr key={i} className="border-t border-line hover:bg-fg/3">
-                      <td className="py-1.5 pl-5 text-xs text-muted tabular-nums">{f ? i + 1 : <Icon name="add" size={16} className="text-subtle" />}</td>
-                      <td className="px-2 py-1.5">
-                        <input
-                          className="input h-9 w-full"
-                          data-field-name={i}
-                          value={f?.label ?? ""}
-                          onChange={(e) => setLabel(i, e.target.value)}
-                          onPaste={(e) => pasteNames(i, e.clipboardData.getData("text")) && e.preventDefault()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === "ArrowDown") (e.preventDefault(), focusRow(Math.min(i + 1, fields.length)));
-                            if (e.key === "ArrowUp" && i > 0) (e.preventDefault(), focusRow(i - 1));
-                          }}
-                          placeholder={f ? "Tên trường" : fields.length ? "Gõ tên trường tiếp theo…" : "Gõ tên trường đầu tiên, vd Số hoá đơn"}
-                          aria-label={f ? `Tên trường ${i + 1}` : "Tên trường mới"}
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">{f?.key ? <code className="tag max-w-full truncate font-mono">{f.key}</code> : <span className="text-xs text-subtle">sinh từ tên trường</span>}</td>
-                      <td className="px-2 py-1.5">
-                        {f && (
-                          <select className="input h-9 w-full" value={f.value_type || "string"} onChange={(e) => setType(i, e.target.value)} aria-label={`Kiểu dữ liệu của trường ${f.label || i + 1}`}>
-                            {VALUE_TYPES.map(([v, l]) => (
-                              <option key={v} value={v}>
-                                {l}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </td>
-                      <td className="px-2 py-1.5">
-                        {f && (
-                          <input
-                            className="input h-9 w-full"
-                            data-field-desc={i}
-                            value={f.description ?? ""}
-                            onChange={(e) => setDesc(i, e.target.value)}
-                            onKeyDown={(e) => {
-                              if ((e.key === "Enter" || e.key === "ArrowDown") && i + 1 < fields.length) (e.preventDefault(), focusDesc(i + 1));
-                              if (e.key === "ArrowUp" && i > 0) (e.preventDefault(), focusDesc(i - 1));
-                            }}
-                            placeholder="Lấy ở đâu, ghi theo dạng nào (không bắt buộc)"
-                            title={f.description || undefined}
-                            aria-label={`Mô tả của trường ${f.label || i + 1}`}
-                          />
-                        )}
-                      </td>
-                      <td className="pr-3 text-right">
-                        {f && (
-                          <button className="btn-icon btn-sm" tabIndex={-1} title="Xoá trường" aria-label={`Xoá trường ${f.label || i + 1}`} onClick={() => setFields((xs) => xs.filter((_, j) => j !== i))}>
-                            <Icon name="delete" size={18} />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {/* One action bar for the whole knowledge base: edits of every type are saved together. */}
-            <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line px-5 py-3">
-              <span className="min-w-0 flex-1 text-xs text-muted">Gõ xong một trường, dòng mới tự hiện. Enter xuống dòng kế; dán nhiều dòng để thêm nhiều trường cùng lúc.</span>
-              <span className="text-xs text-muted" role="status">
-                {dirty ? "Có thay đổi chưa lưu" : "Đã lưu"}
-              </span>
-              <button className="btn btn-text btn-sm" onClick={reset} disabled={busy || !dirty}>
-                Hoàn tác
-              </button>
-              <button className="btn btn-primary btn-sm" onClick={save} disabled={busy || !dirty}>
-                {busy ? <Spinner className="size-4 border-2" /> : <Icon name="save" size={18} />} Lưu
-                <kbd className="ml-1 text-[11px] opacity-70">{/Mac/.test(navigator.platform) ? "⌘S" : "Ctrl+S"}</kbd>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      <p className="flex items-start gap-2 text-xs text-muted">
-        <Icon name="info" size={16} className="mt-px flex-none" />
-        Thông tin chỉ được bóc tách khi tạo bảng Excel và được lưu lại: lần tạo sau chỉ bóc tách trường mới thêm, và hỏi lại một lần các trường chưa tìm thấy.
-      </p>
-    </>
-  );
-}
-
 // A usage bar like the usage pages of ChatGPT and Claude.
 export function UsageBar({ label, spent, limit, reset, currency }: { label: string; spent: number; limit: number; reset?: string; currency: string }) {
   const p = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
@@ -553,29 +257,25 @@ function KeysTab({ admin }: { admin: boolean }) {
 
       {admin && (
         <section className="flex flex-col gap-3 border-t border-line pt-4">
-          <h3 className="text-sm font-medium text-fg">Key LLM dùng chung</h3>
-          <p className="text-xs">Một key cho mọi model (hỏi đáp, VLM, thẻ tài liệu, bảng Excel). Chi phí ở trên tính trên key này.</p>
+          <h3 className="text-sm font-medium text-fg">Tài khoản AI dùng chung</h3>
+          <p className="text-xs">Một tài khoản AI cho mọi tính năng: hỏi đáp, đọc tài liệu, xuất Excel. Chi phí ở trên tính trên tài khoản này.</p>
           {llm && (
             <div className="flex items-center gap-3 rounded-xl border border-line px-3 py-2">
               <Icon name="key" size={18} className="text-accent" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-fg">
-                  {llm.kind} · {llm.base_url || llm.provider}
-                </div>
-                <div className="truncate font-mono text-[11px] text-subtle">
-                  {llm.masked_key || "(chưa có key)"} · {llm.models.length} model đang dùng{llm.overridden ? " · đặt từ Cài đặt" : " · từ .env"}
-                </div>
+                <div className="truncate text-sm text-fg">{llm.provider || llm.kind}</div>
+                <div className="truncate text-[11px] text-subtle">{llm.masked_key ? "Mã khoá " + llm.masked_key : "Chưa có khoá"}</div>
               </div>
               {editKey === null && (
                 <button className="btn btn-text btn-sm" onClick={() => setEditKey("")}>
-                  Đổi key
+                  Đổi khoá
                 </button>
               )}
             </div>
           )}
           {editKey !== null && (
             <div className="flex gap-2">
-              <input className="input flex-1 font-mono" type="password" autoComplete="off" placeholder="Key mới; để trống = dùng key trong .env" value={editKey} onChange={(e) => setEditKey(e.target.value)} />
+              <input className="input flex-1 font-mono" type="password" autoComplete="off" placeholder="Khoá mới; để trống = dùng khoá mặc định của hệ thống" value={editKey} onChange={(e) => setEditKey(e.target.value)} />
               <button className="btn btn-text" onClick={() => setEditKey(null)}>
                 Huỷ
               </button>
@@ -585,13 +285,13 @@ function KeysTab({ admin }: { admin: boolean }) {
                   try {
                     setLLM(await setLLMKey(editKey));
                     setEditKey(null);
-                    toast("Đã đổi key LLM, áp dụng ngay");
+                    toast("Đã đổi khoá, áp dụng ngay");
                   } catch (e) {
                     fail(e);
                   }
                 }}
               >
-                Lưu key
+                Lưu khoá
               </button>
             </div>
           )}
@@ -599,14 +299,14 @@ function KeysTab({ admin }: { admin: boolean }) {
       )}
 
       <section className="flex flex-col gap-3 border-t border-line pt-4">
-        <h3 className="text-sm font-medium text-fg">{admin ? "API key của bạn" : "Key được cấp"}</h3>
+        <h3 className="text-sm font-medium text-fg">{admin ? "Khoá truy cập của bạn" : "Khoá truy cập được cấp"}</h3>
         <p className="text-xs">
-          {admin ? "Key cho script, gửi qua header x-api-key. Cấp key cho người khác ở tab Người dùng." : "Key do quản trị cấp. Chi phí ở trên tính theo key này; giới hạn do quản trị đặt."}
+          {admin ? "Dùng khi kết nối hệ thống khác vào BePaylot. Cấp khoá cho người khác ở tab Người dùng." : "Khoá do quản trị cấp. Chi phí ở trên tính theo khoá này; giới hạn do quản trị đặt."}
         </p>
         {created && <NewKey value={created} />}
         {admin && (
           <div className="flex gap-2">
-            <input className="input flex-1" value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="Tên key, ví dụ: curl, n8n" />
+            <input className="input flex-1" value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="Tên khoá, ví dụ: hệ thống báo cáo" />
             <button
               className="btn btn-tonal"
               onClick={async () => {
@@ -620,14 +320,14 @@ function KeysTab({ admin }: { admin: boolean }) {
                 }
               }}
             >
-              <Icon name="key" size={18} /> Tạo key
+              <Icon name="key" size={18} /> Tạo khoá
             </button>
           </div>
         )}
         {keys === null ? (
           <Spinner />
         ) : keys.length === 0 ? (
-          <span className="text-xs text-subtle">{admin ? "Chưa có API key" : "Chưa được cấp key. Web vẫn dùng bình thường; cần key cho script thì liên hệ quản trị."}</span>
+          <span className="text-xs text-subtle">{admin ? "Chưa có khoá truy cập" : "Chưa được cấp khoá. Web vẫn dùng bình thường; cần kết nối hệ thống khác thì liên hệ quản trị."}</span>
         ) : (
           <ul className="flex flex-col divide-y divide-line rounded-xl border border-line">
             {keys.map((k) => (
@@ -675,10 +375,10 @@ function NewKey({ value }: { value: string }) {
   const { toast, fail } = useToast();
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-ok-soft p-3 text-ok">
-      <span className="text-xs font-medium">Key mới — chỉ hiện một lần, hãy sao chép ngay:</span>
+      <span className="text-xs font-medium">Khoá mới — chỉ hiện một lần, hãy sao chép ngay:</span>
       <div className="flex items-center gap-2">
         <code className="min-w-0 flex-1 truncate rounded-md bg-surface px-2 py-1 font-mono text-xs text-fg">{value}</code>
-        <button className="btn-icon btn-sm" title="Sao chép" onClick={() => navigator.clipboard.writeText(value).then(() => toast("Đã sao chép API key"), fail)}>
+        <button className="btn-icon btn-sm" title="Sao chép" onClick={() => navigator.clipboard.writeText(value).then(() => toast("Đã sao chép khoá"), fail)}>
           <Icon name="content_copy" size={18} />
         </button>
       </div>
@@ -722,7 +422,7 @@ function UsersTab() {
 
   return (
     <>
-      <SectionHead title="Người dùng">Gán quyền đặt prompt, cấp key và đặt giới hạn chi phí theo tháng cho từng người. Thay đổi được lưu ngay, không cần bấm lưu.</SectionHead>
+      <SectionHead title="Người dùng">Phân quyền sửa hướng dẫn AI, cấp khoá truy cập và đặt giới hạn chi phí theo tháng cho từng người. Thay đổi được lưu ngay, không cần bấm lưu.</SectionHead>
       {issued && (
         <div className="flex flex-col gap-1">
           <span className="text-xs text-muted">Key cho {issued.email}:</span>
@@ -813,12 +513,12 @@ function UsersTab() {
                       />
                     </td>
                     <td className="py-2.5 pr-3 pl-2 text-right whitespace-nowrap">
-                      <span className="badge mr-1 tabular-nums" title={`${u.keys} key đang có`}>
+                      <span className="badge mr-1 tabular-nums" title={`${u.keys} khoá đang có`}>
                         <Icon name="key" size={14} /> {u.keys}
                       </span>
                       <button
                         className="btn btn-text btn-sm"
-                        title="Cấp key mới cho người này"
+                        title="Cấp khoá mới cho người này"
                         onClick={async () => {
                           try {
                             const r = await issueAPIKey(u.id, "web + script");
@@ -841,8 +541,8 @@ function UsersTab() {
       )}
       <dl className="grid gap-x-8 gap-y-2 text-xs text-muted sm:grid-cols-2">
         <div>
-          <dt className="font-medium text-fg">Được đặt prompt</dt>
-          <dd>Viết prompt tuỳ chỉnh, tạo và phát hành mẫu chat dùng chung.</dd>
+          <dt className="font-medium text-fg">Sửa hướng dẫn AI</dt>
+          <dd>Viết hướng dẫn riêng cho trợ lý, phát hành mẫu trả lời dùng chung; sửa loại giấy tờ, mẫu Excel và quy tắc đối chiếu.</dd>
         </div>
         <div>
           <dt className="font-medium text-fg">Người dùng</dt>

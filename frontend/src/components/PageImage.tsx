@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { pageImageURL } from "../api/endpoints";
+import { imageURL, pageImageURL } from "../api/endpoints";
 import type { BBox } from "../api/types";
 import { Spinner } from "./ui";
 
@@ -17,6 +17,7 @@ export interface PageBox {
 export function PageImage({
   docId,
   pageNo,
+  path,
   width,
   height,
   boxes = [],
@@ -27,6 +28,8 @@ export function PageImage({
 }: {
   docId: string;
   pageNo: number;
+  // path of the image when it is not a page of a document (a sample page)
+  path?: string;
   width?: number;
   height?: number;
   boxes?: PageBox[];
@@ -46,14 +49,14 @@ export function PageImage({
     setSrc(null);
     setErr("");
     setNatural(null);
-    pageImageURL(docId, pageNo).then(
+    (path ? imageURL(path) : pageImageURL(docId, pageNo)).then(
       (u) => alive && setSrc(u),
       (e) => alive && setErr((e as Error).message),
     );
     return () => {
       alive = false;
     };
-  }, [docId, pageNo]);
+  }, [docId, pageNo, path]);
 
   useEffect(() => {
     if (!natural || !scrollTo) return;

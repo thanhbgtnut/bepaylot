@@ -1,0 +1,465 @@
+package doctypes
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/thanhenti/bepaylot/docpipe/textutil"
+	dtypes "github.com/thanhenti/bepaylot/docpipe/types"
+	"github.com/thanhenti/bepaylot/internal/application/repository/postgres"
+	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
+	"github.com/thanhenti/bepaylot/internal/llm"
+	"github.com/thanhenti/bepaylot/internal/queue"
+	"github.com/thanhenti/bepaylot/internal/types"
+)
+
+// Run queues a test run of a version (0 = the one in use) on samples of a
+// type (none = every sample that is read).
+func (s *Service) Run(ctx context.Context, owner uuid.UUID, code string, ids []uuid.UUID, version int, by uuid.UUID) (types.DocTypeJob, error) {
+	p, err := s.st.DocTypes.Prompt(ctx, owner, code, version)
+	if err != nil {
+		return types.DocTypeJob{}, notFound(err)
+	}
+	samples, err := s.st.DocTypes.Samples(ctx, owner, code)
+	if err != nil {
+		return types.DocTypeJob{}, err
+	}
+	var pick []uuid.UUID
+	for _, smp := range samples {
+		if smp.Status == types.SampleReady && (len(ids) == 0 || slices.Contains(ids, smp.ID)) {
+			pick = append(pick, smp.ID)
+		}
+	}
+	if len(pick) == 0 {
+		return types.DocTypeJob{}, fmt.Errorf("%w: no sample that is read", ErrBad)
+	}
+	return s.startJob(ctx, owner, types.DocTypeJob{Code: code, Kind: types.JobRun, Version: p.Version, SampleIDs: pick, CreatedBy: by})
+}
+
+// Optimize queues an AI proposal that improves a version (U98); it needs a
+// reviewed sample.
+func (s *Service) Optimize(ctx context.Context, owner uuid.UUID, code string, version int, by uuid.UUID) (types.DocTypeJob, error) {
+	p, err := s.st.DocTypes.Prompt(ctx, owner, code, version)
+	if err != nil {
+		return types.DocTypeJob{}, notFound(err)
+	}
+	samples, err := s.st.DocTypes.Samples(ctx, owner, code)
+	if err != nil {
+		return types.DocTypeJob{}, err
+	}
+	if !slices.ContainsFunc(samples, func(x types.DocTypeSample) bool { return x.Truth != nil && x.Status == types.SampleReady }) {
+		return types.DocTypeJob{}, ErrNoReviewed
+	}
+	return s.startJob(ctx, owner, types.DocTypeJob{Code: code, Kind: types.JobOptimize, Version: p.Version, CreatedBy: by})
+}
+
+func (s *Service) startJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJob) (types.DocTypeJob, error) {
+	if s.llm == nil {
+		return j, ErrNotReady
+	}
+	j, err := s.st.DocTypes.CreateJob(ctx, owner, j)
+	if err != nil {
+		return j, err
+	}
+	if err := s.q.Enqueue(ctx, types.TaskDocTypeJob, jobPayload{JobID: j.ID}, queue.Opts{Interactive: true}); err != nil {
+		_ = s.st.DocTypes.FinishJob(context.WithoutCancel(ctx), j.ID, nil, "could not queue: "+err.Error())
+		return j, err
+	}
+	return j, nil
+}
+
+// Job returns a job of a type.
+func (s *Service) Job(ctx context.Context, owner uuid.UUID, code string, id uuid.UUID) (types.DocTypeJob, error) {
+	j, err := s.st.DocTypes.Job(ctx, owner, id)
+	if err != nil || j.Code != code {
+		return j, ErrNotFound
+	}
+	return j, nil
+}
+
+// Jobs returns the running jobs of a type and the latest finished one of
+// each kind.
+func (s *Service) Jobs(ctx context.Context, owner uuid.UUID, code string) ([]types.DocTypeJob, error) {
+	return s.st.DocTypes.Jobs(ctx, owner, code)
+}
+
+// DropProposal forgets an optimization's proposal.
+func (s *Service) DropProposal(ctx context.Context, owner uuid.UUID, code string, id uuid.UUID) error {
+	if _, err := s.Job(ctx, owner, code, id); err != nil {
+		return err
+	}
+	return s.st.DocTypes.DropProposal(ctx, owner, id)
+}
+
+type jobPayload struct {
+	JobID uuid.UUID `json:"job_id"`
+}
+
+func (s *Service) handleJob(ctx context.Context, payload []byte) error {
+	var p jobPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
+	}
+	j, owner, err := s.st.DocTypes.JobByID(ctx, p.JobID)
+	if errors.Is(err, postgres.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if j.Status != types.JobRunning {
+		return nil
+	}
+	ctx = llm.WithCaller(ctx, llm.Caller{UserID: &j.CreatedBy, Kind: types.UsageParse})
+	var result *types.OptimizeProposal
+	if j.Kind == types.JobOptimize {
+		result, err = s.optimize(ctx, owner, j)
+	} else {
+		err = s.runJob(ctx, owner, j)
+	}
+	if err != nil {
+		if !errors.Is(err, queue.ErrSkipRetry) && !queue.IsFinalAttempt(ctx) {
+			return err
+		}
+		s.log.Warn("doctypes: job failed", "job", j.ID, "kind", j.Kind, "err", err)
+		return s.st.DocTypes.FinishJob(context.WithoutCancel(ctx), j.ID, nil, "AI chưa trả lời được, thử lại sau")
+	}
+	return s.st.DocTypes.FinishJob(ctx, j.ID, result, "")
+}
+
+// runJob runs a version on the job's samples and stores the outputs.
+func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJob) error {
+	t, err := s.st.DocTypes.Get(ctx, owner, j.Code)
+	if err != nil {
+		return fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
+	}
+	p, err := s.st.DocTypes.Prompt(ctx, owner, j.Code, j.Version)
+	if err != nil {
+		return fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
+	}
+	for _, id := range j.SampleIDs {
+		smp, err := s.st.DocTypes.Sample(ctx, owner, id)
+		if errors.Is(err, postgres.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		out, err := s.runOne(ctx, owner, t, p, smp)
+		if err != nil {
+			return err
+		}
+		if err := s.st.DocTypes.SaveRun(ctx, types.SampleRun{SampleID: id, Version: p.Version, Output: out}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runOne is one extraction turn of a version on a sample, as when a sheet
+// is built (§6.9.3), without the sample among the examples. Answers are
+// cached by the text sent, so running a version again costs nothing.
+func (s *Service) runOne(ctx context.Context, owner uuid.UUID, t types.CatalogDocType, p types.DocTypePrompt, smp types.DocTypeSample) (map[string]types.RunValue, error) {
+	g := docmodel.GuideOf(ctx, s.st, owner, p, smp.ID)
+	var lines []postgres.PageLine
+	md := map[int]string{}
+	size := map[int][2]int{}
+	for _, pg := range smp.Pages {
+		md[pg.N] = pg.Markdown
+		size[pg.N] = [2]int{int(pg.Width), int(pg.Height)}
+		for _, l := range pg.Lines {
+			lines = append(lines, postgres.PageLine{PageNo: pg.N, ParsedLine: dtypes.ParsedLine{LineNo: l.N, Text: l.Text, Confidence: l.Conf, BBox: dtypes.BBoxFromArray(l.BBox)}})
+		}
+	}
+	text := docmodel.ExtractPrompt(tableOf(t, p), lines, md, size, s.minConf(), g)
+	var raw json.RawMessage
+	if err := s.complete(ctx, "", text, &raw); err != nil {
+		return nil, err
+	}
+	out, ok := docmodel.RunValues(p.Fields, string(raw))
+	if !ok {
+		return nil, errors.New("the reply is not JSON")
+	}
+	return out, nil
+}
+
+// complete calls the model, through model_cache (U56).
+func (s *Service) complete(ctx context.Context, system, user string, out any) error {
+	sum := sha256.Sum256([]byte(system + "\n" + user))
+	key := "doctype:" + hex.EncodeToString(sum[:])
+	if b, ok, err := s.st.ModelCache.Get(ctx, key); err == nil && ok {
+		if json.Unmarshal(b, out) == nil {
+			return nil
+		}
+	}
+	if err := s.llm.CompleteJSON(ctx, system, user, out); err != nil {
+		return err
+	}
+	if b, err := json.Marshal(out); err == nil {
+		_ = s.st.ModelCache.Put(ctx, key, "doctype", b)
+	}
+	return nil
+}
+
+// miss is a wrong cell of a version: what it read and the reviewed value.
+type miss struct {
+	sample uuid.UUID
+	file   string
+	key    string
+	got    string
+	truth  string
+	line   string
+}
+
+const optimizeSystem = `Bạn giúp cải thiện hướng dẫn cho AI đọc một loại giấy tờ. Bạn nhận hướng dẫn hiện tại, các trường cần lấy và các lần AI đọc sai trên những mẫu đã được người dùng duyệt (giá trị AI đọc và giá trị đúng).
+Tìm các lỗi lặp lại hoặc rõ ràng. Với mỗi trường hay sai, viết MỘT quy tắc ngắn bằng tiếng Việt, lời thường cho người nghiệp vụ đọc được (không cú pháp kỹ thuật), nói cách tìm hoặc cách ghi đúng giá trị. Không viết quy tắc chỉ đúng cho một mẫu (ví dụ chép lại giá trị đúng).
+Chọn tối đa 2 mẫu nên làm ví dụ cho AI (mẫu phủ nhiều lỗi nhất) và nói vì sao.
+Không có lỗi lặp lại rõ ràng thì trả mảng rỗng.
+Trả đúng một JSON: {"patterns":[{"field":"<key>","finding":"<lỗi thấy được>","rule":"<quy tắc>"}],"shots":[{"sample":"<id mẫu>","why":"<vì sao>"}]}`
+
+// optimize asks the model for rules and examples that fix the errors of a
+// version, builds the proposed version and scores both on the reviewed
+// samples (an example is scored without itself, U98).
+func (s *Service) optimize(ctx context.Context, owner uuid.UUID, j types.DocTypeJob) (*types.OptimizeProposal, error) {
+	t, err := s.st.DocTypes.Get(ctx, owner, j.Code)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
+	}
+	p, err := s.st.DocTypes.Prompt(ctx, owner, j.Code, j.Version)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
+	}
+	samples, runs, err := s.scoring(ctx, owner, j.Code)
+	if err != nil {
+		return nil, err
+	}
+	var reviewed []types.DocTypeSample
+	before := map[uuid.UUID]map[string]types.RunValue{}
+	for _, smp := range samples {
+		if smp.Truth == nil || smp.Status != types.SampleReady {
+			continue
+		}
+		reviewed = append(reviewed, smp)
+		if r, ok := runs[smp.ID][p.Version]; ok {
+			before[smp.ID] = r.Output
+			continue
+		}
+		out, err := s.runOne(ctx, owner, t, p, smp)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.st.DocTypes.SaveRun(ctx, types.SampleRun{SampleID: smp.ID, Version: p.Version, Output: out}); err != nil {
+			return nil, err
+		}
+		before[smp.ID] = out
+	}
+	var misses []miss
+	for _, smp := range reviewed {
+		for _, f := range p.Fields {
+			got := before[smp.ID][f.Key]
+			if textutil.ValueKey(got.Value) == textutil.ValueKey(smp.Truth[f.Key]) {
+				continue
+			}
+			m := miss{sample: smp.ID, file: smp.FileName, key: f.Key, got: got.Value, truth: smp.Truth[f.Key]}
+			for _, pg := range smp.Pages {
+				for _, l := range pg.Lines {
+					if pg.N == got.Page && l.N == got.Line {
+						m.line = l.Text
+					}
+				}
+			}
+			misses = append(misses, m)
+		}
+	}
+	none := &types.OptimizeProposal{None: true, Version: p.Version}
+	if len(misses) == 0 {
+		return none, nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Loại giấy tờ: %s\n\nHướng dẫn hiện tại:\n%s\n\nCác trường:\n", t.Title, p.Instruction)
+	for _, f := range p.Fields {
+		fmt.Fprintf(&b, "- %s (key %s, kiểu %s)%s\n", f.Label, f.Key, f.ValueType, map[bool]string{true: ": " + f.Description}[f.Description != ""])
+	}
+	if len(p.Rules) > 0 {
+		b.WriteString("\nQuy tắc đang có:\n")
+		for _, r := range p.Rules {
+			fmt.Fprintf(&b, "- %s\n", r)
+		}
+	}
+	b.WriteString("\nCác mẫu đã duyệt:\n")
+	for _, smp := range reviewed {
+		fmt.Fprintf(&b, "- id %s: %s\n", smp.ID, smp.FileName)
+	}
+	b.WriteString("\nCác lần đọc sai:\n")
+	for _, m := range misses {
+		fmt.Fprintf(&b, "- mẫu %s (%s), trường %s: AI đọc %q, đúng là %q", m.sample, m.file, m.key, m.got, m.truth)
+		if m.line != "" {
+			fmt.Fprintf(&b, " (dòng AI dựa vào: %q)", m.line)
+		}
+		b.WriteByte('\n')
+	}
+	var ans struct {
+		Patterns []struct {
+			Field   string `json:"field"`
+			Finding string `json:"finding"`
+			Rule    string `json:"rule"`
+		} `json:"patterns"`
+		Shots []struct {
+			Sample string `json:"sample"`
+			Why    string `json:"why"`
+		} `json:"shots"`
+	}
+	if err := s.complete(ctx, optimizeSystem, b.String(), &ans); err != nil {
+		return nil, err
+	}
+
+	np := p
+	np.Rules = slices.Clone(p.Rules)
+	np.Shots = slices.Clone(p.Shots)
+	res := &types.OptimizeProposal{Version: p.Version, Instruction: p.Instruction, Fields: p.Fields, Patterns: []types.OptimizePattern{}}
+	hasField := func(k string) bool {
+		return slices.ContainsFunc(p.Fields, func(f types.SheetField) bool { return f.Key == k })
+	}
+	for _, x := range ans.Patterns {
+		rule := strings.TrimSpace(x.Rule)
+		if !hasField(x.Field) || rule == "" || slices.Contains(np.Rules, rule) {
+			continue
+		}
+		np.Rules = append(np.Rules, rule)
+		pat := types.OptimizePattern{Field: x.Field, Finding: strings.TrimSpace(x.Finding), Rule: rule, Samples: []uuid.UUID{}}
+		for _, m := range misses {
+			if m.key == x.Field {
+				pat.Samples = append(pat.Samples, m.sample)
+			}
+		}
+		res.Patterns = append(res.Patterns, pat)
+	}
+	newShots := 0
+	for _, x := range ans.Shots {
+		id, err := uuid.Parse(strings.TrimSpace(x.Sample))
+		if err != nil || newShots >= 2 || !slices.ContainsFunc(reviewed, func(r types.DocTypeSample) bool { return r.ID == id }) ||
+			slices.ContainsFunc(np.Shots, func(sh types.PromptShot) bool { return sh.SampleID == id }) {
+			continue
+		}
+		np.Shots = append(np.Shots, types.PromptShot{SampleID: id, Why: strings.TrimSpace(x.Why)})
+		newShots++
+	}
+	if len(res.Patterns) == 0 && newShots == 0 {
+		return none, nil
+	}
+	res.Rules, res.Shots = np.Rules, np.Shots
+
+	after := map[uuid.UUID]map[string]types.RunValue{}
+	for _, smp := range reviewed {
+		out, err := s.runOne(ctx, owner, t, np, smp)
+		if err != nil {
+			return nil, err
+		}
+		after[smp.ID] = out
+	}
+	score := func(outs map[uuid.UUID]map[string]types.RunValue, only string) *float64 {
+		var cells []cell
+		for _, smp := range reviewed {
+			cells = append(cells, cellsOf(p.Fields, smp.Truth, outs[smp.ID], only)...)
+		}
+		return accuracy(cells)
+	}
+	res.Before, res.After = score(before, ""), score(after, "")
+	res.ByField = []types.FieldScore{}
+	res.Worse = []types.WorseCell{}
+	for _, f := range p.Fields {
+		res.ByField = append(res.ByField, types.FieldScore{Key: f.Key, Before: score(before, f.Key), After: score(after, f.Key)})
+		for _, smp := range reviewed {
+			want := textutil.ValueKey(smp.Truth[f.Key])
+			if textutil.ValueKey(before[smp.ID][f.Key].Value) == want && textutil.ValueKey(after[smp.ID][f.Key].Value) != want {
+				res.Worse = append(res.Worse, types.WorseCell{SampleID: smp.ID, Key: f.Key, Value: after[smp.ID][f.Key].Value, Truth: smp.Truth[f.Key]})
+			}
+		}
+	}
+	oldText := promptText(t, p, docmodel.GuideOf(ctx, s.st, owner, p, uuid.Nil), s.minConf())
+	newText := promptText(t, np, docmodel.GuideOf(ctx, s.st, owner, np, uuid.Nil), s.minConf())
+	res.Diff = diffLines(strings.Split(oldText, "\n"), strings.Split(newText, "\n"))
+	tagDiff(res.Diff, res.Patterns, np.Shots, reviewed)
+	return res, nil
+}
+
+// diffLines is the line diff of two texts by longest common subsequence.
+func diffLines(a, b []string) []types.DiffLine {
+	dp := make([][]int, len(a)+1)
+	for i := range dp {
+		dp[i] = make([]int, len(b)+1)
+	}
+	for i := len(a) - 1; i >= 0; i-- {
+		for j := len(b) - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				dp[i][j] = dp[i+1][j+1] + 1
+			} else {
+				dp[i][j] = max(dp[i+1][j], dp[i][j+1])
+			}
+		}
+	}
+	var out []types.DiffLine
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		switch {
+		case a[i] == b[j]:
+			out = append(out, types.DiffLine{Op: "=", A: i + 1, B: j + 1, T: a[i]})
+			i, j = i+1, j+1
+		case dp[i+1][j] >= dp[i][j+1]:
+			out = append(out, types.DiffLine{Op: "-", A: i + 1, T: a[i]})
+			i++
+		default:
+			out = append(out, types.DiffLine{Op: "+", B: j + 1, T: b[j]})
+			j++
+		}
+	}
+	for ; i < len(a); i++ {
+		out = append(out, types.DiffLine{Op: "-", A: i + 1, T: a[i]})
+	}
+	for ; j < len(b); j++ {
+		out = append(out, types.DiffLine{Op: "+", B: j + 1, T: b[j]})
+	}
+	return out
+}
+
+// tagDiff ties each added line to its reason: the field whose rule it is,
+// or the sample whose example it is part of.
+func tagDiff(diff []types.DiffLine, pats []types.OptimizePattern, shots []types.PromptShot, samples []types.DocTypeSample) {
+	file := map[string]uuid.UUID{}
+	for _, smp := range samples {
+		if slices.ContainsFunc(shots, func(sh types.PromptShot) bool { return sh.SampleID == smp.ID }) {
+			file[smp.FileName] = smp.ID
+		}
+	}
+	var shot uuid.UUID
+	for i := range diff {
+		l := &diff[i]
+		if strings.HasPrefix(l.T, "Ví dụ ") && strings.HasSuffix(l.T, "):") {
+			if k := strings.Index(l.T, "("); k > 0 {
+				shot = file[strings.TrimSuffix(l.T[k+1:], "):")]
+			}
+		} else if strings.HasPrefix(l.T, "Nội dung giấy tờ") {
+			shot = uuid.Nil // the examples end where the document to read starts
+		}
+		if l.Op != "+" {
+			continue
+		}
+		for _, p := range pats {
+			if strings.Contains(l.T, p.Rule) {
+				l.Why = "f:" + p.Field
+			}
+		}
+		if l.Why == "" && shot != uuid.Nil {
+			l.Why = "s:" + shot.String()
+		}
+	}
+}

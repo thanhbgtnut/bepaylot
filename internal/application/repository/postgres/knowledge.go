@@ -45,28 +45,42 @@ func scanKB(row pgx.Row) (types.KnowledgeBase, error) {
 	return kb, nil
 }
 
-// Create inserts a knowledge base.
+// Create inserts a knowledge base; its doc types join the owner's catalogue
+// (§6.9.10) and the KB keeps their codes.
 func (r *KBRepo) Create(ctx context.Context, kb types.KnowledgeBase) (types.KnowledgeBase, error) {
-	cfg, _ := json.Marshal(kb.Config)
+	stored, err := storeDocTypes(ctx, r.pool, kb.OwnerID, kb.Config)
+	if err != nil {
+		return kb, err
+	}
+	cfg, _ := json.Marshal(stored)
 	var schema any
 	if kb.MetadataSchema != nil {
 		b, _ := json.Marshal(kb.MetadataSchema)
 		schema = b
 	}
-	return scanKB(r.pool.QueryRow(ctx, `
+	return r.resolved(ctx, r.pool.QueryRow(ctx, `
 		INSERT INTO knowledge_bases (owner_id, name, description, config, metadata_schema, is_temporary)
 		VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+kbCols,
 		kb.OwnerID, cleanText(kb.Name), cleanText(kb.Description), cfg, schema, kb.IsTemporary))
 }
 
+// resolved scans one KB and fills its doc types from the catalogue.
+func (r *KBRepo) resolved(ctx context.Context, row pgx.Row) (types.KnowledgeBase, error) {
+	kb, err := scanKB(row)
+	if err != nil {
+		return kb, err
+	}
+	return kb, resolveDocTypes(ctx, r.pool, []*types.KnowledgeBase{&kb})
+}
+
 // Get returns a live knowledge base by id (no owner check; workers use it).
 func (r *KBRepo) Get(ctx context.Context, id uuid.UUID) (types.KnowledgeBase, error) {
-	return scanKB(r.pool.QueryRow(ctx, `SELECT `+kbCols+` FROM knowledge_bases WHERE id = $1 AND deleted_at IS NULL`, id))
+	return r.resolved(ctx, r.pool.QueryRow(ctx, `SELECT `+kbCols+` FROM knowledge_bases WHERE id = $1 AND deleted_at IS NULL`, id))
 }
 
 // GetOwned returns the KB only when owner owns it.
 func (r *KBRepo) GetOwned(ctx context.Context, id, owner uuid.UUID) (types.KnowledgeBase, error) {
-	return scanKB(r.pool.QueryRow(ctx, `SELECT `+kbCols+` FROM knowledge_bases WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL`, id, owner))
+	return r.resolved(ctx, r.pool.QueryRow(ctx, `SELECT `+kbCols+` FROM knowledge_bases WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL`, id, owner))
 }
 
 // List returns the owner's knowledge bases, newest first.
@@ -85,7 +99,15 @@ func (r *KBRepo) List(ctx context.Context, owner uuid.UUID, includeTemp bool) ([
 		}
 		out = append(out, kb)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	ptrs := make([]*types.KnowledgeBase, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	return out, resolveDocTypes(ctx, r.pool, ptrs)
 }
 
 // KBPatch holds optional updates.
@@ -109,7 +131,11 @@ func (r *KBRepo) Update(ctx context.Context, id, owner uuid.UUID, p KBPatch) (ty
 		sets = append(sets, "description = "+a.add(cleanText(*p.Description)))
 	}
 	if p.Config != nil {
-		b, _ := json.Marshal(p.Config)
+		stored, err := storeDocTypes(ctx, r.pool, owner, *p.Config)
+		if err != nil {
+			return types.KnowledgeBase{}, err
+		}
+		b, _ := json.Marshal(stored)
 		sets = append(sets, "config = "+a.add(b))
 	}
 	if p.MetadataSchema != nil {
@@ -120,7 +146,7 @@ func (r *KBRepo) Update(ctx context.Context, id, owner uuid.UUID, p KBPatch) (ty
 		}
 		sets = append(sets, "metadata_schema = "+a.add(v))
 	}
-	return scanKB(r.pool.QueryRow(ctx, `UPDATE knowledge_bases SET `+strings.Join(sets, ", ")+`
+	return r.resolved(ctx, r.pool.QueryRow(ctx, `UPDATE knowledge_bases SET `+strings.Join(sets, ", ")+`
 		WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL RETURNING `+kbCols, a.vals...))
 }
 

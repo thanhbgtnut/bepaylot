@@ -22,9 +22,9 @@ export type Tone = "" | "ok" | "warn" | "err" | "info" | "vlm";
 export const STATUS: Record<DocStatus, [string, Tone]> = {
   queued: ["Đang chờ", "info"],
   splitting: ["Tách trang", "info"],
-  parsing: ["Đang OCR", "info"],
+  parsing: ["Đang đọc", "info"],
   assembling: ["Đang ghép", "info"],
-  indexing: ["Lập chỉ mục", "info"],
+  indexing: ["Đang lập mục lục", "info"],
   completed: ["Hoàn tất", "ok"],
   partial: ["Một phần", "warn"],
   failed: ["Lỗi", "err"],

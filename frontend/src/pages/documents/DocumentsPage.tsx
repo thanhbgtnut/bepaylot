@@ -123,11 +123,11 @@ export function DocumentsPage() {
     { divider: true, label: "" },
     {
       icon: "refresh",
-      label: "Parse lại",
+      label: "Đọc lại",
       onClick: async () => {
         try {
           await reparseDocument(d.id);
-          toast(`Đang parse lại “${d.file_name}”`);
+          toast(`Đang đọc lại “${d.file_name}”`);
           load();
         } catch (e) {
           fail(e);

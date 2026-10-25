@@ -5,7 +5,13 @@ import type {
   Document,
   DocumentDetail,
   DocumentPage,
-  CheckConfig,
+  CheckRuleset,
+  DocTypeJob,
+  DocTypePrompt,
+  DocTypeSample,
+  DocTypeView,
+  PromptShot,
+  SheetField,
   CheckRun,
   CompileResult,
   EngineInfo,
@@ -20,6 +26,8 @@ import type {
   TranscriptMessage,
   TreeNode,
   UploadResult,
+  CaseDocFields,
+  CaseFieldView,
   CaseTOC,
   AdminUser,
   LLMKeyView,
@@ -105,6 +113,7 @@ export const reparseDocument = (id: string, body: { pages?: number[]; engine?: s
 export const listPages = (id: string) => request<{ data: DocumentPage[] }>(`/documents/${id}/pages`).then((r) => r.data ?? []);
 export const getPage = (id: string, n: number) => request<PageView>(`/documents/${id}/pages/${n}`);
 export const pageImageURL = (id: string, n: number) => blobURL(`/documents/${id}/pages/${n}/image`);
+export const imageURL = (path: string) => blobURL(path);
 export const getMarkdown = (id: string) => request<{ markdown: string }>(`/documents/${id}/markdown`).then((r) => r.markdown);
 export const getTree = (id: string) => request<{ nodes: TreeNode[] }>(`/documents/${id}/tree`).then((r) => r.nodes ?? []);
 export const downloadOriginal = (d: Document) => download(`/documents/${d.id}/file`, d.file_name);
@@ -159,6 +168,11 @@ export const addTemplateVersion = (id: string, body: { name?: string; descriptio
 export const publishTemplate = (id: string, version: number) => request<PromptTemplate>(`/templates/${id}/publish`, { body: { version } });
 
 // ---- case sheets (§6.9.6)
+
+export const getCaseFields = (caseId: string, documentId: string) =>
+  request<{ data: CaseDocFields[] }>(`/cases/${caseId}/fields` + q({ document_id: documentId })).then((r) => r.data ?? []);
+export const saveCaseField = (caseId: string, body: { segment_id: string; key: string; value: string }) =>
+  request<CaseFieldView>(`/cases/${caseId}/fields`, { method: "PUT", body });
 
 export const createSheet = (caseId: string, tables?: string[], exportTemplateId?: string) =>
   request<Sheet>(`/cases/${caseId}/sheets`, { body: { tables, export_template_id: exportTemplateId } });
@@ -220,10 +234,15 @@ export const downloadSheetForm = (s: { id: string; name: string }, caseCode?: st
   download(`/sheets/${s.id}/form.xlsx`, `${caseCode ? caseCode + "_" : ""}${s.name}.xlsx`);
 
 // ---- cross-checks (§6.9.9)
-export const saveChecks = (kb: string, config: CheckConfig) => request<KnowledgeBase>(`/kbs/${kb}/checks`, { method: "PUT", body: config });
-export const compileCheck = (kb: string, body: { kind: "rule" | "link"; doc_type?: string; anchor: string; text: string }) =>
-  request<CompileResult>(`/kbs/${kb}/checks/compile`, { body });
-export const createCheck = (caseId: string) => request<CheckRun>(`/cases/${caseId}/checks`, { method: "POST" });
+export const listRulesets = (kbId?: string) => request<{ data: CheckRuleset[] }>("/check-rulesets" + q({ kb_id: kbId })).then((r) => r.data ?? []);
+export const getRuleset = (id: string) => request<CheckRuleset>(`/check-rulesets/${id}`);
+export const createRuleset = (body: Partial<CheckRuleset>) => request<CheckRuleset>("/check-rulesets", { body });
+export const updateRuleset = (rs: CheckRuleset) => request<CheckRuleset>(`/check-rulesets/${rs.id}`, { method: "PUT", body: rs });
+export const deleteRuleset = (id: string) => request(`/check-rulesets/${id}`, { method: "DELETE" });
+export const copyRuleset = (id: string) => request<CheckRuleset>(`/check-rulesets/${id}/copy`, { method: "POST" });
+export const compileRuleset = (id: string, body: { kind: "rule" | "link"; doc_type?: string; anchor: string; text: string }) =>
+  request<CompileResult>(`/check-rulesets/${id}/compile`, { body });
+export const createCheck = (caseId: string, rulesetId: string) => request<CheckRun>(`/cases/${caseId}/checks`, { body: { ruleset_id: rulesetId } });
 export const listChecks = (caseId: string) => request<{ data: CheckRun[] }>(`/cases/${caseId}/checks`).then((r) => r.data ?? []);
 export const getCheck = (id: string) => request<CheckRun>(`/checks/${id}`);
 export const rerunCheck = (id: string) => request<CheckRun>(`/checks/${id}/rerun`, { method: "POST" });
@@ -231,3 +250,41 @@ export const setCheckLink = (id: string, body: { segment_id: string; anchor_segm
   request<CheckRun>(`/checks/${id}/links`, { method: "PUT", body });
 export const deleteCheck = (id: string) => request(`/checks/${id}`, { method: "DELETE" });
 
+
+// ---- catalogue of document types (§10.9)
+const dt = (code: string) => `/doc-types/${encodeURIComponent(code)}`;
+// A type without fields comes without the key.
+const withFields = (t: DocTypeView): DocTypeView => ({ ...t, fields: t.fields ?? [], kb_ids: t.kb_ids ?? [] });
+export const listDocTypes = (f: { kb_id?: string; unused?: boolean; q?: string } = {}) =>
+  request<{ data: DocTypeView[] }>("/doc-types" + q({ kb_id: f.kb_id, unused: f.unused ? "true" : undefined, q: f.q })).then((r) => (r.data ?? []).map(withFields));
+export const getDocType = (code: string) => request<DocTypeView>(dt(code)).then(withFields);
+export const createDocType = (body: { title: string; description?: string; kb_ids?: string[] }) => request<DocTypeView>("/doc-types", { body });
+export const updateDocType = (code: string, body: { title?: string; description?: string; fields?: SheetField[] }) =>
+  request<DocTypeView>(dt(code), { method: "PATCH", body });
+export const deleteDocType = (code: string, detach = false) => request(dt(code) + (detach ? "?detach=true" : ""), { method: "DELETE" });
+export const copyDocType = (code: string) => request<DocTypeView>(dt(code) + "/copy", { method: "POST" });
+export const setDocTypeKBs = (code: string, kbIds: string[]) => request(dt(code) + "/kbs", { method: "PUT", body: { kb_ids: kbIds } });
+export const listSamples = (code: string) => request<{ data: DocTypeSample[] }>(dt(code) + "/samples").then((r) => r.data ?? []);
+export function uploadSamples(code: string, files: File[], onProgress?: (p: number) => void) {
+  const fd = new FormData();
+  for (const f of files) fd.append("file", f, f.name);
+  return uploadForm<{ data: DocTypeSample[] }>(dt(code) + "/samples", fd, onProgress).then((r) => r.data ?? []);
+}
+export const getSample = (code: string, id: string) => request<DocTypeSample>(dt(code) + `/samples/${id}`);
+export const deleteSample = (code: string, id: string) => request(dt(code) + `/samples/${id}`, { method: "DELETE" });
+export const samplePagePath = (code: string, id: string, n: number) => dt(code) + `/samples/${id}/pages/${n}/image`;
+export const saveTruth = (code: string, id: string, values: Record<string, string>) =>
+  request<DocTypeSample>(dt(code) + `/samples/${id}/truth`, { method: "PUT", body: { values } });
+export const runSamples = (code: string, sampleIds?: string[], version?: number) =>
+  request<DocTypeJob>(dt(code) + "/samples/run", { body: { sample_ids: sampleIds, version } });
+export const listPrompts = (code: string) =>
+  request<{ data: DocTypePrompt[] }>(dt(code) + "/prompts").then((r) => (r.data ?? []).map((p) => ({ ...p, fields: p.fields ?? [], rules: p.rules ?? [], shots: p.shots ?? [] })));
+export const createPrompt = (code: string, body: { instruction: string; rules: string[]; shots: PromptShot[]; fields?: SheetField[]; note?: string; use?: boolean }) =>
+  request<DocTypePrompt>(dt(code) + "/prompts", { body });
+export const setCurrentPrompt = (code: string, version: number) => request(dt(code) + "/prompts/current", { method: "PUT", body: { version } });
+export const deletePrompt = (code: string, version: number) => request(dt(code) + `/prompts/${version}`, { method: "DELETE" });
+export const getPromptText = (code: string, version: number) => request<{ text: string }>(dt(code) + `/prompts/${version}/text`).then((r) => r.text);
+export const optimizeDocType = (code: string, version = 0) => request<DocTypeJob>(dt(code) + "/optimize", { body: { version } });
+export const listDocTypeJobs = (code: string) => request<{ data: DocTypeJob[] }>(dt(code) + "/jobs").then((r) => r.data ?? []);
+export const getDocTypeJob = (code: string, id: string) => request<DocTypeJob>(dt(code) + `/jobs/${id}`);
+export const dropDocTypeJob = (code: string, id: string) => request(dt(code) + `/jobs/${id}`, { method: "DELETE" });

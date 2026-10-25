@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { deleteSession, getCase, listMessages, listSessions } from "../../api/endpoints";
-import type { Case, SessionBrief } from "../../api/types";
+import { createSession, deleteSession, getCase, listMessages, listSessions, listTemplates, setSessionTemplate } from "../../api/endpoints";
+import { canEditPrompts, type Case, type PromptTemplate, type SessionBrief } from "../../api/types";
 import { useApp } from "../../components/AppContext";
+import { useAuth } from "../../components/AuthContext";
 import { CasePicker } from "../../components/CasePicker";
 import { CitedText, Markdown } from "../../components/Markdown";
 import { useToast } from "../../components/toast";
 import { Icon, Loading, Menu, Spinner } from "../../components/ui";
 import { fmtDate } from "../../lib/format";
-import { argsLine, fromTranscript, pretty, type ChatItem, type TurnBlock } from "./model";
+import { ChatConfigDialog, type ChatConfig } from "./ChatConfigDialog";
+import { fromTranscript, pretty, stepLabel, type ChatItem, type TurnBlock } from "./model";
 import { useChatStream } from "./useChatStream";
 
 const SUGGEST: [string, string][] = [
@@ -19,11 +21,29 @@ const SUGGEST: [string, string][] = [
   ["manage_search", "Tìm trong trang 7–12 các điều khoản về thời hạn thanh toán."],
 ];
 
+// The prompt template (or, for prompt editors, a custom prompt) chosen in
+// "Cấu hình cuộc trò chuyện" (§7.7), remembered per browser.
+function loadConfig(): ChatConfig {
+  try {
+    return JSON.parse(localStorage.getItem("bp.chatConfig") || "null") ?? { templateId: "" };
+  } catch {
+    return { templateId: "" };
+  }
+}
+
 export function ChatPage() {
   const { sessionId = null } = useParams();
   const nav = useNavigate();
   const { kcase, cases } = useApp();
+  const { user } = useAuth();
+  const editor = canEditPrompts(user);
   const { fail } = useToast();
+  const [config, setConfig] = useState<ChatConfig>(loadConfig);
+  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [showConfig, setShowConfig] = useState(false);
+  // The template the open session has; unknown for an earlier session, so
+  // its first message sets it.
+  const sessionTemplate = useRef<string | null>(null);
   const [sessions, setSessions] = useState<SessionBrief[]>([]);
   const [showHistory, setShowHistory] = useState(true);
   // A session is bound to one case for good; a new one takes the case
@@ -89,6 +109,22 @@ export function ChatPage() {
   }, [sessCaseId, cases]);
   const scopeCase = sessionId && sessCaseId ? sessCase : kcase;
 
+  useEffect(() => {
+    listTemplates("chat", scopeCase?.case_type).then(setTemplates, () => {});
+  }, [scopeCase?.case_type]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("bp.chatConfig", JSON.stringify(config));
+    } catch {
+      /* private mode */
+    }
+  }, [config]);
+  useEffect(() => {
+    sessionTemplate.current = sessionId ? null : "";
+  }, [sessionId]);
+  const tpl = templates.find((t) => t.id === config.templateId);
+  const configLabel = config.custom && editor ? "Hướng dẫn riêng" : tpl ? "Mẫu: " + tpl.name : "Mặc định";
+
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -97,11 +133,28 @@ export function ChatPage() {
   const submit = async (text = input) => {
     const t = text.trim();
     if (!t || busy) return;
-    if (!scopeCase) return fail(new Error("Chọn hồ sơ trước khi hỏi: agent chỉ tra cứu trong một hồ sơ"));
+    if (!scopeCase) return fail(new Error("Chọn hồ sơ trước khi hỏi: trợ lý chỉ tra cứu trong một hồ sơ"));
     setInput("");
     if (textarea.current) textarea.current.style.height = "auto";
     stick.current = true;
-    await send(t, { sessionId, caseId: scopeCase.id });
+    try {
+      // The template lives on the session (§8.4): set it before the message.
+      const want = editor && config.custom ? "" : config.templateId;
+      let sid = sessionId;
+      if (!sid && want) {
+        const s = await createSession({ case_id: scopeCase.id, template_id: want, title: t.slice(0, 60) });
+        sid = s.id;
+        sessionTemplate.current = want;
+        selfNav.current = sid;
+        nav(`/chat/${sid}`, { replace: true });
+      } else if (sid && sessionTemplate.current !== want) {
+        await setSessionTemplate(sid, want);
+        sessionTemplate.current = want;
+      }
+      await send(t, { sessionId: sid, caseId: scopeCase.id, system: editor && config.custom ? config.custom : undefined });
+    } catch (e) {
+      fail(e);
+    }
     loadSessions();
   };
 
@@ -177,7 +230,7 @@ export function ChatPage() {
           <CasePicker value={scopeCase} disabled={!!(sessionId && sessCaseId)} />
           <span className="text-xs text-muted">
             <Icon name="lock" size={14} className="align-[-2px]" />{" "}
-            {scopeCase ? "Agent chỉ đọc tài liệu của hồ sơ này" : "Chọn hồ sơ để bắt đầu hỏi"}
+            {scopeCase ? "Trợ lý chỉ đọc tài liệu của hồ sơ này" : "Chọn hồ sơ để bắt đầu hỏi"}
           </span>
         </div>
 
@@ -221,6 +274,18 @@ export function ChatPage() {
 
         {/* composer */}
         <div className="flex-none px-4 pb-4">
+          <div className="mx-auto mb-2 flex max-w-200 items-center gap-2">
+            <button className="chip max-w-80" onClick={() => setShowConfig(true)} title="Cấu hình cuộc trò chuyện">
+              <Icon name="tune" size={18} />
+              <span className="truncate">{configLabel}</span>
+              <Icon name="arrow_drop_down" size={18} className="-mr-1" />
+            </button>
+            {!editor && (
+              <span className="text-xs text-subtle">
+                <Icon name="lock" size={14} className="align-[-2px]" /> dùng mẫu có sẵn
+              </span>
+            )}
+          </div>
           <div className="mx-auto flex max-w-200 items-end gap-2 rounded-[28px] bg-surface-2 py-2 pr-2 pl-6 focus-within:bg-surface-3">
             <textarea
               ref={textarea}
@@ -251,10 +316,23 @@ export function ChatPage() {
             )}
           </div>
           <p className="mx-auto mt-2 max-w-200 text-center text-xs text-subtle">
-            Agent duyệt mục lục của hồ sơ, chỉ đọc đúng các trang cần thiết rồi trả lời. Bấm vào nhãn trích dẫn để xem vùng trên trang gốc.
+            Trợ lý duyệt mục lục của hồ sơ, chỉ đọc đúng các trang cần thiết rồi trả lời. Bấm vào nhãn trích dẫn để xem vùng trên trang gốc.
           </p>
         </div>
       </section>
+      {showConfig && (
+        <ChatConfigDialog
+          templates={templates}
+          caseType={scopeCase?.case_type}
+          value={config}
+          onClose={() => setShowConfig(false)}
+          onSave={(c, list) => {
+            if (list) setTemplates(list);
+            setConfig(c);
+            setShowConfig(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -305,14 +383,11 @@ function WorkGroup({ blocks }: { blocks: TurnBlock[] }) {
   const tools = blocks.filter((b): b is Extract<TurnBlock, { kind: "tool" }> => b.kind === "tool");
   const running = tools.some((t) => t.state === "running");
   const failed = tools.some((t) => t.state === "error");
-  const names = [...new Set(tools.map((t) => t.name))];
   return (
     <details className="group/w rounded-2xl border border-line">
       <summary className="flex h-11 cursor-pointer list-none items-center gap-2 rounded-2xl px-4 text-sm text-muted hover:bg-fg/4 [&::-webkit-details-marker]:hidden">
-        {running ? <Spinner className="size-4 border-2" /> : <Icon name={failed ? "error" : "construction"} size={18} className={failed ? "text-err" : ""} />}
-        <span className="min-w-0 flex-1 truncate">
-          {tools.length ? `${running ? "Đang dùng" : "Đã dùng"} ${tools.length} công cụ · ${names.join(", ")}` : "Suy nghĩ"}
-        </span>
+        {running ? <Spinner className="size-4 border-2" /> : <Icon name={failed ? "error" : "manage_search"} size={18} className={failed ? "text-err" : ""} />}
+        <span className="min-w-0 flex-1 truncate">{tools.length ? (running ? `Trợ lý đang tìm câu trả lời (${tools.length} bước)` : `Trợ lý đã làm ${tools.length} bước để tìm câu trả lời`) : "Suy nghĩ"}</span>
         <Icon name="expand_more" size={20} className="transition-transform group-open/w:rotate-180" />
       </summary>
       <div className="flex flex-col gap-2 border-t border-line p-3">
@@ -341,16 +416,14 @@ function ToolCard({ b }: { b: Extract<TurnBlock, { kind: "tool" }> }) {
   const result = pretty(b.result);
   return (
     <details className="rounded-xl bg-surface-2 text-[13px]">
-      <summary className="flex h-10 cursor-pointer list-none items-center gap-2 px-3 [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <Icon name={b.state === "error" ? "error" : b.state === "running" ? "pending" : "check_circle"} size={18} className={b.state === "error" ? "text-err" : b.state === "done" ? "text-ok" : "text-muted"} />
-        <b className="font-mono font-medium">{b.name}</b>
-        <span className="min-w-0 flex-1 truncate font-mono text-muted">{argsLine(b.input)}</span>
+        <span className="min-w-0 flex-1 text-fg">{stepLabel(b.name, b.input)}</span>
       </summary>
-      <pre className="max-h-75 overflow-auto border-t border-line px-3 py-2.5 font-mono text-xs wrap-break-word whitespace-pre-wrap text-muted">{pretty(b.input)}</pre>
       {result && (
-        <pre className={"max-h-75 overflow-auto border-t border-line px-3 py-2.5 font-mono text-xs wrap-break-word whitespace-pre-wrap " + (b.state === "error" ? "text-err" : "")}>
-          <CitedText text={result} />
-        </pre>
+        <div className={"max-h-75 overflow-auto border-t border-line px-3 py-2.5 text-xs wrap-break-word whitespace-pre-wrap " + (b.state === "error" ? "text-err" : "text-muted")}>
+          <CitedText text={b.state === "error" ? "Bước này không thành công." : result} />
+        </div>
       )}
     </details>
   );

@@ -44,7 +44,7 @@ type fakeExtract struct {
 var (
 	askedRe = regexp.MustCompile(`(?m)^- (\w+) · `)
 	pageRe  = regexp.MustCompile(`^<page n="(\d+)">$`)
-	lineRe  = regexp.MustCompile(`^\[L(\d+)\] (?:\([0-9.]+\) )?(.*)$`)
+	lineRe  = regexp.MustCompile(`^\[L(\d+)\] (?:\([0-9.]+\) )?(?:@[0-9,]+ )?(.*)$`)
 )
 
 // where each key is written in the test documents.
@@ -261,9 +261,10 @@ func TestDocTypeSheetFlow(t *testing.T) {
 		t.Fatalf("fields after delete = %+v %v", fields, err)
 	}
 
-	// A KB whose document types have no field has nothing to build.
-	bare := h.KB(types.KBConfig{DocTypes: []types.DocType{docType("hop_dong", "Hợp đồng")}}, nil)
-	h.PageTypes.Labels = append(h.PageTypes.Labels, "hop_dong")
+	// A KB whose document types have no field has nothing to build. (Types
+	// are shared by the owner's KBs, U97: hop_dong has fields everywhere.)
+	bare := h.KB(types.KBConfig{DocTypes: []types.DocType{docType("bien_ban", "Biên bản")}}, nil)
+	h.PageTypes.Labels = append(h.PageTypes.Labels, "bien_ban")
 	h.UploadTo(bare.ID, "HS-BARE", "a.pdf", nil, []pdftest.Page{{"HOP DONG"}})
 	h.Drain()
 	if _, err := svc.Create(h.Ctx, h.Owner, h.Case(bare.ID, "HS-BARE").ID, nil); !errors.Is(err, sheets.ErrNoTables) {

@@ -57,7 +57,7 @@ func setup(t *testing.T) *testEnv {
 
 	log := logging.New(config.Log{Level: "warn", Format: "text"})
 
-	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 5, MinConns: 1, AutoMigrate: true})
+	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 5, MinConns: 1})
 	if err != nil {
 		t.Fatalf("postgres.Open: %v", err)
 	}

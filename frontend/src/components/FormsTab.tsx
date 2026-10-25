@@ -99,7 +99,7 @@ export function FormsTab() {
               Nhập mẫu Excel
             </button>
           ) : (
-            <span className="text-xs text-subtle">Chỉ người được đặt prompt hoặc quản trị mới nhập và sửa mẫu.</span>
+            <span className="text-xs text-subtle">Chỉ người được sửa hướng dẫn AI hoặc quản trị mới nhập và sửa mẫu.</span>
           )}
           <input ref={fileRef} type="file" accept=".xlsx" hidden onChange={(e) => e.target.files?.[0] && importForm(e.target.files[0])} />
         </div>
@@ -107,7 +107,7 @@ export function FormsTab() {
           <Spinner className="m-6" />
         ) : !forms.length ? (
           <Empty icon="request_page" title="Thư viện này chưa có mẫu">
-            {editor ? "Bấm “Nhập mẫu Excel” và chọn file .xlsx." : "Nhờ người được đặt prompt nhập mẫu cho thư viện này."}
+            {editor ? "Bấm “Nhập mẫu Excel” và chọn file .xlsx." : "Nhờ người được sửa hướng dẫn AI nhập mẫu cho thư viện này."}
           </Empty>
         ) : (
           forms.map((t) => (

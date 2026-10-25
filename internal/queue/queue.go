@@ -55,6 +55,8 @@ var policies = map[string]Policy{
 	// document_callbacks); asynq only retries infrastructure errors.
 	types.TaskDocumentCallback: {3, 2 * time.Minute},
 	types.TaskCaseSheet:        {3, time.Hour},
+	types.TaskDocTypeSample:    {3, 30 * time.Minute},
+	types.TaskDocTypeJob:       {3, time.Hour},
 }
 
 // PolicyFor returns the policy of a task type.

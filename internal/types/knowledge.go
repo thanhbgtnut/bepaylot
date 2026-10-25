@@ -84,9 +84,6 @@ type KBConfig struct {
 	// files are classified into them from their image and they replace the
 	// classification labels of the case type (§6.9.4).
 	DocTypes []DocType `json:"doc_types,omitempty"`
-	// Checks are the cross-checks of the KB (§6.9.9); only PUT
-	// /kbs/{id}/checks changes them.
-	Checks *CheckConfig `json:"checks,omitempty"`
 }
 
 // DocType is one document type of a KB with the fields the pipeline extracts

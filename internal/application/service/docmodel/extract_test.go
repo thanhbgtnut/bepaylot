@@ -32,7 +32,7 @@ func TestExtractPromptMarkdownThenOCR(t *testing.T) {
 	lines := []postgres.PageLine{title, rewritten, poor, made}
 	md := map[int]string{1: "# HOA DON\n\n| Tổng thanh toán | 550.000.000 |", 2: "Ký tên: Nguyễn Văn A"}
 	size := map[int][2]int{1: {2000, 1000}} // page 2 size unknown, L2 has no box: no coordinates
-	got := extractPrompt(table, fields, lines, md, size, 0.6)
+	got := extractPrompt(table, fields, lines, md, size, 0.6, nil)
 	want := "<page n=\"1\">\n<markdown>\n# HOA DON\n\n| Tổng thanh toán | 550.000.000 |\n</markdown>\n" +
 		"<ocr>\n[L1] (0.98) @50,50,550,150 HOA DON\n[L2] (0.90) Tong thanh toan 550.000.000\n</ocr>\n</page>\n" +
 		"<page n=\"2\">\n<markdown>\nKý tên: Nguyễn Văn A\n</markdown>\n</page>\n"

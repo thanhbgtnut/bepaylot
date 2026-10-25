@@ -41,6 +41,8 @@ const (
 	TaskDocumentCallback = "document:callback"
 	TaskCaseSheet        = "case:sheet"
 	TaskDocClassify      = "document:classify"
+	TaskDocTypeSample    = "doctype:sample"
+	TaskDocTypeJob       = "doctype:job"
 )
 
 // QueueDefinition is the single source of truth for queue topology: worker
@@ -60,7 +62,7 @@ var queueDefinitions = []QueueDefinition{
 	{QueuePage, PoolOCR, 1, []string{TaskPageOCR}},
 	{QueuePageInteractive, PoolOCR, 3, []string{TaskPageOCR}},
 	{QueueIndex, PoolIndex, 1, []string{TaskIndexBuild, TaskIndexTree}},
-	{QueueIndexInteractive, PoolIndex, 3, []string{TaskIndexBuild, TaskIndexTree, TaskCaseSheet, TaskDocClassify}},
+	{QueueIndexInteractive, PoolIndex, 3, []string{TaskIndexBuild, TaskIndexTree, TaskCaseSheet, TaskDocClassify, TaskDocTypeSample, TaskDocTypeJob}},
 	{QueueMaintenance, PoolMaintenance, 1, []string{TaskDocumentDelete, TaskCaseDelete, TaskGenCleanup, TaskHousekeeping}},
 	{QueueCallback, PoolCore, 1, []string{TaskDocumentCallback}},
 }

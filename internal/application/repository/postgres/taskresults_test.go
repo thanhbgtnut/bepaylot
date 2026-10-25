@@ -22,7 +22,7 @@ func TestTaskResultsUpsertReplacesByTaskKey(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	st, err := Open(ctx, config.DB{DSN: dsn, MaxConns: 2, MinConns: 1, AutoMigrate: true})
+	st, err := Open(ctx, config.DB{DSN: dsn, MaxConns: 2, MinConns: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

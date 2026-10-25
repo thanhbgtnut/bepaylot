@@ -5,12 +5,13 @@ import { settings } from "../api/client";
 import { useApp } from "./AppContext";
 import { useAuth } from "./AuthContext";
 import { CitationProvider } from "./Citation";
+import { useTrackNav } from "./nav";
 import { Empty, Icon, Menu } from "./ui";
 
 const NAV: [string, string, string][] = [
   ["/documents", "folder_open", "Tài liệu"],
-  ["/chat", "forum", "Hỏi đáp"],
   ["/cases", "account_tree", "Hồ sơ"],
+  ["/chat", "forum", "Hỏi đáp"],
 ];
 
 // BePaylot's own mark (same as the favicon): a "b" monogram on a rounded tile.
@@ -28,6 +29,7 @@ export function Layout() {
   const { user, signOut } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  useTrackNav();
   const [sp] = useSearchParams();
   const [drawer, setDrawer] = useState(false);
   const [q, setQ] = useState(sp.get("q") ?? "");
@@ -175,7 +177,7 @@ export function Layout() {
             { icon: "account_circle", label: user?.email ?? "Tài khoản", disabled: true },
             { divider: true, label: "" },
             { icon: "manage_accounts", label: "Thông tin", onClick: () => openSettings("account") },
-            { icon: "account_balance_wallet", label: "Key & chi phí", onClick: () => openSettings("keys") },
+            { icon: "account_balance_wallet", label: "Chi phí AI", onClick: () => openSettings("keys") },
             { icon: "logout", label: "Đăng xuất", onClick: signOut },
           ]}
         />

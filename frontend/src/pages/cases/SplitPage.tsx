@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { classifyCase, getSplit, pageImageURL, saveSplit } from "../../api/endpoints";
 import type { SplitFile, SplitView } from "../../api/types";
 import { PageImage } from "../../components/PageImage";
+import { BackButton } from "../../components/nav";
 import { useToast } from "../../components/toast";
 import { Empty, FileIcon, Icon, Loading, Spinner } from "../../components/ui";
 
@@ -163,9 +164,7 @@ export function SplitPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex min-h-16 flex-none flex-wrap items-center gap-2 px-4 pt-3 pb-2">
-        <button className="btn btn-text" onClick={() => nav(`/cases/${caseId}`)} title="Quay lại phương án">
-          <Icon name="arrow_back" size={20} /> Phương án
-        </button>
+        <BackButton fallback={`/cases/${caseId}`} fallbackLabel="Hồ sơ" />
         <span className="h-6 border-l border-line max-sm:hidden" />
         <div className="min-w-0 flex-1 px-2">
           <h1 className="flex items-center gap-2 truncate text-[22px] leading-7 font-normal text-fg">

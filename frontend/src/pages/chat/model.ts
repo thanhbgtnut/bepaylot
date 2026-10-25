@@ -89,18 +89,40 @@ export function pretty(x: unknown, max = 8000): string {
   return s.length > max ? s.slice(0, max) + "\n…" : s;
 }
 
-export function argsLine(input: unknown): string {
-  if (input == null || input === "") return "";
-  let o = input;
-  if (typeof o === "string") {
+// The name of an assistant step in plain words (U101): what it did and on
+// which pages, never the tool name or its JSON arguments.
+const STEP: Record<string, string> = {
+  kb_case_toc: "Xem danh sách tài liệu của hồ sơ",
+  kb_list_documents: "Xem danh sách tài liệu",
+  kb_document_tree: "Xem mục lục tài liệu",
+  kb_page_overview: "Xem tổng quan các trang",
+  kb_read_pages: "Đọc trang",
+  kb_search: "Tìm trong hồ sơ",
+  kb_find_in_document: "Tìm trong tài liệu",
+  kb_locate: "Tìm vị trí trên trang",
+  kb_get_fields: "Xem thông tin đã lấy",
+  kb_save_fields: "Lưu thông tin đã lấy",
+  kb_metadata_values: "Xem thông tin thêm",
+  calculate: "Tính toán",
+  current_time: "Xem ngày giờ",
+  web_search: "Tìm trên web",
+  http_fetch: "Đọc trang web",
+  load_skill: "Dùng kỹ năng",
+};
+
+export function stepLabel(name: string, input: unknown): string {
+  let o: Record<string, unknown> = {};
+  if (typeof input === "string") {
     try {
-      o = JSON.parse(o);
+      o = JSON.parse(input) ?? {};
     } catch {
-      return o as string;
+      /* not JSON */
     }
-  }
-  if (typeof o !== "object") return String(o);
-  return Object.entries(o as Record<string, unknown>)
-    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
-    .join("  ");
+  } else if (input && typeof input === "object") o = input as Record<string, unknown>;
+  const parts = [STEP[name] ?? (name.startsWith("mcp__") ? "Dùng công cụ ngoài" : "Tra cứu")];
+  if (typeof o.query === "string" && o.query) parts.push(`“${o.query}”`);
+  const from = Number(o.page_from) || 0, to = Number(o.page_to) || 0;
+  if (from) parts.push(to && to !== from ? `trang ${from}–${to}` : `trang ${from}`);
+  else if (Array.isArray(o.pages) && o.pages.length) parts.push("trang " + o.pages.join(", "));
+  return parts.join(" · ");
 }

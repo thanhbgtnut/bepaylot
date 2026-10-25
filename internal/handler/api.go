@@ -15,6 +15,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
+	"github.com/thanhenti/bepaylot/internal/application/service/docmodel/doctypes"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
 	"github.com/thanhenti/bepaylot/internal/application/service/usage"
@@ -53,6 +54,8 @@ type Handlers struct {
 	Usage  *usage.Service
 	// U48, U49: tách & gom trang. Nil makes its routes answer 503.
 	Split *docmodel.Split
+	// U94, U97, U98: catalogue of document types. Nil makes its routes answer 503.
+	DocTypes *doctypes.Service
 }
 
 func (h *Handlers) badRequest(c *app.RequestContext, msg string) {

@@ -26,6 +26,7 @@ import (
 	"github.com/thanhenti/bepaylot/internal/application/service/auth"
 	"github.com/thanhenti/bepaylot/internal/application/service/cases"
 	"github.com/thanhenti/bepaylot/internal/application/service/docmodel"
+	"github.com/thanhenti/bepaylot/internal/application/service/docmodel/doctypes"
 	"github.com/thanhenti/bepaylot/internal/application/service/document"
 	"github.com/thanhenti/bepaylot/internal/application/service/index"
 	"github.com/thanhenti/bepaylot/internal/application/service/sheets"
@@ -219,6 +220,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 
 	// PDF renderer: workers only.
 	var renderer document.Renderer
+	var sampleRenderer doctypes.Renderer
 	if cfg.Workers.RunsWorkers() {
 		rc := cfg.Parser.Render
 		r, err := pdf.New(pdf.Config{Mode: rc.Mode, WorkerBin: rc.WorkerBin, Workers: rc.Workers, RecycleAfterPages: rc.RecycleAfterPages,
@@ -226,7 +228,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		if err != nil {
 			return fmt.Errorf("pdf renderer: %w", err)
 		}
-		renderer = r
+		renderer, sampleRenderer = r, r
 		app.closers = append(app.closers, func() { r.Close() })
 		log.Info("pdf renderer ready", "mode", rc.Mode, "workers", rc.Workers)
 	}
@@ -272,6 +274,9 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Extractor: extractor, Config: cfg, Log: log,
 		Objects: objects, FormLLM: completer(cfg.LLM.DefaultProvider, "", 4096)})
 	h.Sheets, h.Split = sh, split
+	dts := doctypes.New(doctypes.Deps{Store: st, Objects: objects, Queue: app.enqueuer, Renderer: sampleRenderer, Engines: engines,
+		LLM: completer(cfg.LLM.DefaultProvider, "", 4096), Config: cfg, Log: log})
+	h.DocTypes = dts
 
 	if cfg.Workers.RunsWorkers() {
 		handlers := map[string]queue.Handler{}
@@ -282,7 +287,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 			}
 		}
 		billParse(meter, pipeline)
-		for _, m := range []map[string]queue.Handler{pipeline, cs.Handlers(), sh.Handlers(), split.Handlers()} {
+		for _, m := range []map[string]queue.Handler{pipeline, cs.Handlers(), sh.Handlers(), split.Handlers(), dts.Handlers()} {
 			for k, v := range m {
 				handlers[k] = v
 			}

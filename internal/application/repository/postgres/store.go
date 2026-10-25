@@ -43,6 +43,8 @@ type Store struct {
 	Sheets    *SheetsRepo
 	Forms     *ExportTemplatesRepo
 	Checks    *ChecksRepo
+	Rulesets  *RulesetsRepo
+	DocTypes  *DocTypesRepo
 	Usage     *UsageRepo
 
 	ModelCache *ModelCacheRepo
@@ -70,7 +72,7 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 
-	if cfg.AutoMigrate {
+	if cfg.AutoMigrateEnabled() {
 		if err := Migrate(cfg.DSN); err != nil {
 			pool.Close()
 			return nil, err
@@ -105,6 +107,8 @@ func Open(ctx context.Context, cfg config.DB) (*Store, error) {
 		Sheets:     &SheetsRepo{pool},
 		Forms:      &ExportTemplatesRepo{pool},
 		Checks:     &ChecksRepo{pool},
+		Rulesets:   &RulesetsRepo{pool},
+		DocTypes:   &DocTypesRepo{pool},
 		Usage:      &UsageRepo{pool},
 	}, nil
 }

@@ -107,7 +107,7 @@ func NewWithEngines(t *testing.T, extra []parser.Engine, tweak ...func(*config.C
 		t.Skip("set TEST_DATABASE_URL to run integration tests")
 	}
 	ctx := context.Background()
-	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 8, MinConns: 1, AutoMigrate: true})
+	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 8, MinConns: 1}) // auto_migrate defaults to on
 	if err != nil {
 		t.Fatal(err)
 	}

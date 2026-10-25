@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { createCheck, createSheet, deleteCheck, deleteSheet, downloadSheetForm, listChecks, listExportTemplates, listSheets } from "../../api/endpoints";
-import type { Case, CheckRun, ExportTemplate, Sheet, SplitView } from "../../api/types";
+import { createCheck, createSheet, deleteCheck, deleteSheet, downloadSheetForm, listChecks, listExportTemplates, listRulesets, listSheets } from "../../api/endpoints";
+import type { Case, CheckRuleset, CheckRun, ExportTemplate, Sheet, SplitView } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { useToast } from "../../components/toast";
-import { Icon, Modal, Spinner } from "../../components/ui";
+import { Icon, Menu, Modal, Spinner } from "../../components/ui";
 import { fmtDate } from "../../lib/format";
 
 const XL = "#107c41"; // the Excel accent of the Studio card
@@ -91,13 +91,35 @@ export function Studio({ kcase, split, className }: { kcase: Case; split: SplitV
     }
   };
 
-  const checkCfg = kbs.find((k) => k.id === kcase.kb_id)?.config.checks;
-  const nRules = checkCfg?.rules.filter((r) => !r.off).length ?? 0;
+  // The rule sets the case's library uses (U105); the last one picked for
+  // the case is remembered per browser.
+  const [sets, setSets] = useState<CheckRuleset[]>([]);
+  useEffect(() => {
+    listRulesets(kcase.kb_id).then(setSets, () => setSets([]));
+  }, [kcase.kb_id]);
+  const setKey = "bp.caseRuleset." + kcase.id;
+  const [setId, setSetId] = useState(() => {
+    try {
+      return localStorage.getItem(setKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const ruleset = sets.find((x) => x.id === setId) ?? sets[0];
+  const pickSet = (id: string) => {
+    setSetId(id);
+    try {
+      localStorage.setItem(setKey, id);
+    } catch {
+      /* private mode */
+    }
+  };
+  const nRules = ruleset?.rules.filter((r) => !r.off).length ?? 0;
   const startCheck = async () => {
-    if (!nRules) return openSettings("checks");
+    if (!ruleset) return nav("/settings/checks");
     setChecking(true);
     try {
-      const c = await createCheck(kcase.id);
+      const c = await createCheck(kcase.id, ruleset.id);
       setChecks((xs) => [c, ...xs]);
       loadSheets();
       nav(`/cases/${kcase.id}/checks/${c.id}`);
@@ -192,18 +214,38 @@ export function Studio({ kcase, split, className }: { kcase: Case; split: SplitV
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-fg">Đối chiếu chứng từ</div>
-            <div className="text-xs text-muted">
-              {nRules ? `Gom chứng từ theo hợp đồng và kiểm ${nRules} quy tắc` : "Kiểm tra chéo hoá đơn, hợp đồng, uỷ nhiệm chi…"}
-            </div>
+            <div className="text-xs text-muted">Gom chứng từ theo giấy tờ gốc và kiểm theo bộ quy tắc đã chọn</div>
           </div>
-          <button className="btn-icon btn-sm" onClick={() => openSettings("checks")} title="Quy tắc đối chiếu">
+          <button className="btn-icon btn-sm" onClick={() => nav(ruleset ? `/settings/checks/${ruleset.id}` : "/settings/checks")} title="Sửa bộ quy tắc">
             <Icon name="tune" size={18} />
           </button>
         </div>
-        <button className="btn mt-3 w-full border-transparent bg-[#5b47c9] text-white hover:shadow-1" disabled={checking || (nRules > 0 && !usable)} onClick={startCheck}>
-          {checking ? <Spinner className="size-4 border-2 border-white/40 border-t-white" /> : <Icon name={nRules ? "play_arrow" : "tune"} size={18} />}
-          {nRules ? "Chạy đối chiếu" : "Cài đặt quy tắc đối chiếu"}
-        </button>
+        {ruleset ? (
+          <>
+            <Menu
+              trigger={(open) => (
+                <button className="mt-3 flex w-full items-center gap-2 rounded-xl bg-surface px-3 py-2 text-left hover:bg-surface-2" aria-label="Chọn bộ quy tắc" onClick={open}>
+                  <Icon name="rule" size={18} className="text-[#5b47c9]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[11px] text-muted">Bộ quy tắc</span>
+                    <span className="block truncate text-sm text-fg">{ruleset.name}</span>
+                  </span>
+                  <span className="text-xs whitespace-nowrap text-muted">{nRules} quy tắc</span>
+                  <Icon name="arrow_drop_down" size={20} className="text-muted" />
+                </button>
+              )}
+              items={sets.map((x) => ({ label: `${x.name} · ${x.rules.filter((r) => !r.off).length} quy tắc`, checked: x.id === ruleset.id, onClick: () => pickSet(x.id) }))}
+            />
+            <button className="btn mt-2 w-full border-transparent bg-[#5b47c9] text-white hover:shadow-1" disabled={checking || !nRules || !usable} onClick={startCheck}>
+              {checking ? <Spinner className="size-4 border-2 border-white/40 border-t-white" /> : <Icon name="play_arrow" size={18} />}
+              Chạy đối chiếu
+            </button>
+          </>
+        ) : (
+          <button className="btn mt-3 w-full" onClick={() => nav("/settings/checks")}>
+            <Icon name="add" size={18} /> Thêm bộ quy tắc cho thư viện
+          </button>
+        )}
         {checks.slice(0, 5).map((c) => {
           const busy = c.status === "pending" || c.status === "running";
           const n = c.result?.counts;
@@ -220,7 +262,7 @@ export function Studio({ kcase, split, className }: { kcase: Case; split: SplitV
                     ? "Đang đối chiếu…"
                     : c.status === "failed"
                       ? "Lỗi: " + (c.error || "không đối chiếu được")
-                      : `${n?.groups ?? 0} hợp đồng · ${n?.fail ?? 0} không đạt${n?.unlinked ? ` · ${n.unlinked} chưa xác định` : ""}`}
+                      : `${(n?.fail ?? 0) + (n?.unknown ?? 0) + (n?.unlinked ?? 0)} vấn đề${c.result?.ruleset_name ? " · " + c.result.ruleset_name : ""}`}
                 </span>
                 <span className="text-[11px] whitespace-nowrap text-muted">{fmtDate(c.created_at)}</span>
               </button>

@@ -48,7 +48,9 @@ db:
   max_conns: 10
   min_conns: 1
   max_conn_lifetime: 1h
-  auto_migrate: true
+  # empty/true = apply migrations at start (needs DDL and CREATE EXTENSION rights);
+  # false = run `server -migrate-only` separately with an owner account.
+  auto_migrate: ${BEPAYLOT_DB_AUTO_MIGRATE}
 
 llm:
   default_provider: ${BEPAYLOT_DEFAULT_PROVIDER}
@@ -160,7 +162,9 @@ storage:
     access_key: ${S3_ACCESS_KEY}
     secret_key: ${S3_SECRET_KEY}
     use_path_style: true            # MinIO
-    create_bucket: true             # create the bucket when missing (dev)
+    # true = create the bucket when missing (local MinIO, BEPAYLOT_S3_CREATE_BUCKET=true);
+    # empty/false = the bucket must exist and the keys need only read/write on its objects.
+    create_bucket: ${BEPAYLOT_S3_CREATE_BUCKET}
     part_size_mb: 16
     upload_concurrency: 4
   presign: true

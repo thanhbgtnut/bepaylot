@@ -13,15 +13,15 @@ import { Icon, Modal, Spinner } from "../../components/ui";
 
 type Mode = "login" | "register";
 
-const TAGS = ["OCR + text layer", "Mục lục PageIndex", "Search vectorless", "Agent theo hồ sơ"];
+const TAGS = ["Đọc mọi trang", "Mục lục theo hồ sơ", "Hỏi đáp có trích dẫn", "Đối chiếu chứng từ"];
 
 const SLIDES: { icon: string; title: string; text: string }[] = [
-  { icon: "document_scanner", title: "Parse mọi trang hồ sơ", text: "TurboOCR lấy layout, VLM đọc từng vùng, text layer PDF/A bổ sung — mỗi dòng giữ trang và toạ độ." },
-  { icon: "account_tree", title: "Mục lục cho từng hồ sơ", text: "Mỗi file có cây mục lục kèm tóm tắt; agent duyệt cây, chỉ đọc đúng các trang cần để trả lời." },
-  { icon: "forum", title: "Hỏi agent, nhận trích dẫn", text: "Agent chỉ tìm trong đúng một case, bóc tách trường thông tin và kiểm rule kèm nguồn." },
+  { icon: "document_scanner", title: "Đọc mọi trang hồ sơ", text: "Hệ thống đọc từng trang, nhận ra từng loại giấy tờ và giữ vị trí của mỗi dòng trên trang gốc." },
+  { icon: "account_tree", title: "Mục lục cho từng hồ sơ", text: "Mỗi file có mục lục theo giấy tờ; trợ lý duyệt mục lục, chỉ đọc đúng các trang cần để trả lời." },
+  { icon: "forum", title: "Hỏi trợ lý, nhận trích dẫn", text: "Trợ lý chỉ tìm trong đúng một hồ sơ, lấy thông tin và đối chiếu chứng từ kèm trang gốc." },
 ];
 
-const FEATURES = ["Parse đa định dạng, tra ngược tới trang và dòng", "Tìm kiếm không cần embedding, cứng trong một case", "Hỏi đáp có trích dẫn tới trang gốc"];
+const FEATURES = ["Đọc PDF và ảnh scan, chỉ ra đúng trang và dòng", "Tìm trong đúng một hồ sơ, không lẫn hồ sơ khác", "Hỏi đáp có trích dẫn tới trang gốc"];
 
 // Background nodes: position (%), icon, drift offset and delay.
 const NODES: [number, number, string, number, number, number][] = [
@@ -113,7 +113,7 @@ export function LoginPage() {
         <Logo />
         <span className="text-[22px] text-muted">BePaylot</span>
         <div className="flex-1" />
-        <button className="btn btn-text btn-sm text-muted" onClick={() => setServerOpen(true)} title="Địa chỉ máy chủ API">
+        <button className="btn btn-text btn-sm text-muted" onClick={() => setServerOpen(true)} title="Địa chỉ máy chủ">
           <Icon name="dns" size={18} />
           <span className="max-sm:hidden">{settings.base || location.host}</span>
         </button>
@@ -374,7 +374,7 @@ function ServerDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   const [base, setBase] = useState(settings.base);
   return (
     <Modal
-      title="Máy chủ API"
+      title="Máy chủ"
       icon="dns"
       onClose={onClose}
       width={480}

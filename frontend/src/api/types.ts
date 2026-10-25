@@ -12,7 +12,6 @@ export interface KBConfig {
   /** Loại giấy tờ của KB: trang của file được phân loại theo ảnh vào các loại này. */
   doc_types?: DocType[];
   /** Quy tắc đối chiếu chứng từ (§6.9.9); chỉ sửa qua PUT /kbs/:id/checks. */
-  checks?: CheckConfig;
 }
 
 /** Loại giấy tờ của KB kèm các trường bóc tách từ mỗi giấy tờ loại đó (§6.9.3); cũng là cột của bảng Excel. */
@@ -595,20 +594,37 @@ export interface CheckLink {
   steps: CheckStep[];
 }
 
+// A field of a document type.
+export interface FieldRef {
+  type: string;
+  key: string;
+}
+
+// A rule compares field A with field B (U104), or is a sentence the AI judges.
 export interface CheckRule {
   id?: string;
-  name: string;
-  text: string;
+  name?: string;
+  a?: FieldRef;
+  op?: string;
+  b?: FieldRef;
+  text?: string;
   formula?: string;
   ai?: boolean;
   off?: boolean;
   explanation?: string;
 }
 
-export interface CheckConfig {
+// A rule set shared by every knowledge base (U105).
+export interface CheckRuleset {
+  id: string;
+  name: string;
+  description: string;
+  kb_ids: string[];
   anchor: string;
   links: CheckLink[];
   rules: CheckRule[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CompileResult {
@@ -642,11 +658,37 @@ export interface CheckMember extends CheckDoc {
   candidates?: string[];
 }
 
+export interface CheckSide {
+  type: string;
+  type_title: string;
+  key: string;
+  label: string;
+}
+
+// One comparison of a rule on one document (U108).
+export interface CheckRow {
+  segment: string;
+  document_id: string;
+  label: string;
+  page: number;
+  value_a: string;
+  value_b?: string;
+  status?: "pass" | "fail" | "unknown";
+  unsure?: boolean;
+}
+
 export interface CheckOutcome {
   rule_id: string;
   name: string;
-  text: string;
+  text?: string;
   ai?: boolean;
+  op?: string;
+  op_text?: string;
+  a?: CheckSide;
+  b?: CheckSide;
+  rows?: CheckRow[];
+  total?: { a: string; b: string; note?: string };
+  hint?: string;
   status: "pass" | "fail" | "unknown" | "error";
   detail?: string;
   failing?: { note: string; refs: CheckRef[] }[];
@@ -661,6 +703,8 @@ export interface CheckGroup {
 }
 
 export interface CheckResult {
+  ruleset_id?: string;
+  ruleset_name?: string;
   anchor: string;
   anchor_title: string;
   groups: CheckGroup[];
@@ -673,6 +717,7 @@ export interface CheckRun {
   id: string;
   case_id: string;
   sheet_id: string;
+  ruleset_id?: string;
   status: "pending" | "running" | "done" | "failed";
   error?: string;
   result?: CheckResult;
@@ -680,3 +725,139 @@ export interface CheckRun {
   updated_at: string;
 }
 
+// ---- fields of a file on the case page (§7.2, U99)
+
+export interface CaseFieldView {
+  key: string;
+  label: string;
+  value_type: string;
+  value: string;
+  ai_value: string;
+  asked: boolean;
+  edited: boolean;
+  low: boolean;
+  page_no?: number;
+  line_no?: number;
+}
+
+export interface CaseDocFields {
+  segment_id: string;
+  document_id: string;
+  label: string;
+  page_start: number;
+  page_end: number;
+  fields: CaseFieldView[];
+}
+
+// ---- catalogue of document types (§6.9.10, U94, U97, U98)
+
+export interface DocTypeView extends DocType {
+  fields: SheetField[];
+  prompt_version: number;
+  updated_at: string;
+  kb_ids: string[];
+  samples: number;
+  reviewed: number;
+  accuracy: number | null;
+}
+
+export interface SampleLine {
+  n: number;
+  text: string;
+  conf: number;
+  bbox?: number[];
+}
+
+export interface SamplePage {
+  n: number;
+  width?: number;
+  height?: number;
+  markdown: string;
+  lines: SampleLine[];
+}
+
+export interface RunValue {
+  value: string;
+  page?: number;
+  line?: number;
+}
+
+export interface SampleRun {
+  sample_id: string;
+  version: number;
+  output: Record<string, RunValue>;
+  ran_at: string;
+}
+
+export interface DocTypeSample {
+  id: string;
+  code: string;
+  file_name: string;
+  mime_type: string;
+  status: "processing" | "ready" | "failed";
+  error?: string;
+  pages: SamplePage[];
+  truth?: Record<string, string> | null;
+  reviewed_at?: string;
+  created_at: string;
+  // list only
+  page_count?: number;
+  ran?: boolean;
+  score?: number | null;
+  // detail only
+  runs?: SampleRun[];
+}
+
+export interface PromptShot {
+  sample_id: string;
+  why?: string;
+}
+
+export interface DocTypePrompt {
+  code: string;
+  version: number;
+  instruction: string;
+  fields: SheetField[];
+  rules: string[];
+  shots: PromptShot[];
+  note: string;
+  created_at: string;
+  current?: boolean;
+  accuracy?: number | null;
+}
+
+export interface DiffLine {
+  op: "=" | "-" | "+";
+  a?: number;
+  b?: number;
+  t: string;
+  why?: string;
+}
+
+export interface OptimizeProposal {
+  none?: boolean;
+  version: number;
+  instruction: string;
+  fields: SheetField[];
+  rules: string[];
+  shots: PromptShot[];
+  patterns: { field: string; finding: string; rule: string; samples: string[] }[];
+  diff: DiffLine[];
+  before: number | null;
+  after: number | null;
+  by_field: { key: string; before: number | null; after: number | null }[];
+  worse: { sample_id: string; key: string; value: string; truth: string }[];
+}
+
+export interface DocTypeJob {
+  id: string;
+  code: string;
+  kind: "run" | "optimize";
+  status: "running" | "done" | "failed";
+  version: number;
+  sample_ids?: string[];
+  result?: OptimizeProposal;
+  error?: string;
+  created_at: string;
+  finished_at?: string;
+}

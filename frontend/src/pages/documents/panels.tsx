@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { getTree, searchInDocument } from "../../api/endpoints";
 import type { Document, PageBlock, PageLine, PageSearchHit, TreeNode } from "../../api/types";
-import { Badge, Empty, Loading, SourceBadge } from "../../components/ui";
+import { Badge, Empty, Loading } from "../../components/ui";
 import { splitMatch } from "../../lib/format";
 
 // ---------------------------------------------------------------- lines
@@ -40,17 +40,18 @@ export function LinesPanel({
             onClick={() => onPick(l.line_no)}
             className={"grid cursor-pointer grid-cols-[40px_1fr] gap-2 border-b border-line px-5 py-2 " + (on ? "bg-warn-soft" : "")}
           >
-            <div className="pt-0.5 font-mono text-[11.5px] text-muted">L{l.line_no}</div>
+            <div className="pt-0.5 text-[11.5px] text-muted">Dòng {l.line_no}</div>
             <div className="min-w-0">
               <div className={"wrap-break-word " + (l.low_confidence ? "underline decoration-warn decoration-wavy underline-offset-4" : "")}>{l.text}</div>
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
-                <SourceBadge source={l.text_source} />
-                <span className="font-mono text-muted" title="bbox (px)">
-                  [{[l.bbox.x0, l.bbox.y0, l.bbox.x1, l.bbox.y1].map((v) => Math.round(v)).join(", ")}]
-                </span>
-                {l.confidence > 0 && l.confidence < 1 && <span className="text-muted">conf {(l.confidence * 100).toFixed(0)}%</span>}
+                {l.text_source === "vlm" && <Badge tone="vlm">AI đọc lại</Badge>}
+                {l.confidence > 0 && l.confidence < 1 && (
+                  <Badge tone={l.low_confidence ? "warn" : ""} title="Mức độ chắc chắn">
+                    {(l.confidence * 100).toFixed(0)}%
+                  </Badge>
+                )}
               </div>
-              {l.text_ocr && l.text_ocr !== l.text && <div className="text-xs text-muted">OCR gốc: {l.text_ocr}</div>}
+              {l.text_ocr && l.text_ocr !== l.text && <div className="text-xs text-muted">Bản đọc đầu: {l.text_ocr}</div>}
             </div>
           </div>
         );
@@ -60,18 +61,30 @@ export function LinesPanel({
 }
 
 // ---------------------------------------------------------------- blocks
+const BLOCK_LABEL: Record<string, string> = {
+  title: "Tiêu đề",
+  heading: "Đề mục",
+  paragraph: "Đoạn",
+  table: "Bảng",
+  formula: "Công thức",
+  figure: "Hình",
+  caption: "Chú thích",
+  header: "Đầu trang",
+  footer: "Chân trang",
+  page_number: "Số trang",
+  footnote: "Ghi chú",
+};
 export function BlocksPanel({ blocks }: { blocks: PageBlock[] }) {
-  if (!blocks.length) return <Empty>Không có block</Empty>;
+  if (!blocks.length) return <Empty>Trang không có nội dung</Empty>;
   return (
     <div>
       {blocks.map((b) => (
         <div key={b.block_no} className="border-b border-line px-3 py-2">
           <div className="flex flex-wrap items-center gap-1.5">
-            <b className="text-xs">#{b.block_no}</b>
-            <span className="tag">{b.type}</span>
-            {b.raw_class && <span className="tag font-mono">{b.raw_class}</span>}
-            <SourceBadge source={b.text_source} />
-            {b.is_furniture && <Badge tone="warn">header/footer</Badge>}
+            <Badge tone={b.type === "title" || b.type === "heading" ? "info" : ""}>
+              {BLOCK_LABEL[b.type] ?? "Khác"} {b.block_no}
+            </Badge>
+            {b.is_furniture && <Badge tone="warn">đầu/chân trang</Badge>}
           </div>
           <div className="mt-1 text-xs whitespace-pre-wrap">{(b.text || "").slice(0, 600)}</div>
         </div>

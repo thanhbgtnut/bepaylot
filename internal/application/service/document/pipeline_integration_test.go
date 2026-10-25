@@ -68,7 +68,7 @@ func setup(t *testing.T) (*Service, *queue.Inline, *postgres.Store, uuid.UUID, *
 		t.Skip("short mode")
 	}
 	ctx := context.Background()
-	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 8, MinConns: 1, AutoMigrate: true})
+	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 8, MinConns: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

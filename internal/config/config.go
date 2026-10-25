@@ -242,8 +242,11 @@ type DB struct {
 	MaxConns        int32         `yaml:"max_conns"`
 	MinConns        int32         `yaml:"min_conns"`
 	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime"`
-	AutoMigrate     bool          `yaml:"auto_migrate"`
+	AutoMigrate     *bool         `yaml:"auto_migrate"` // nil = true
 }
+
+// AutoMigrateEnabled reports whether auto_migrate is on (default true).
+func (d DB) AutoMigrateEnabled() bool { return d.AutoMigrate == nil || *d.AutoMigrate }
 
 // ProviderCfg configures one LLM provider implementation.
 type ProviderCfg struct {

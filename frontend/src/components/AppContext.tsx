@@ -1,13 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { settings } from "../api/client";
-import { createKB, listCases, listEngines, listKBs, updateKB } from "../api/endpoints";
-import type { Case, ClassLabel, DocType, EngineInfo, KnowledgeBase } from "../api/types";
+import { createKB, listCases, listDocTypes, listEngines, listKBs, updateKB } from "../api/endpoints";
+import type { Case, DocTypeView, EngineInfo, KnowledgeBase } from "../api/types";
 import { SettingsDialog, type SettingsTab } from "./SettingsDialog";
 import { useToast } from "./toast";
-import { toCode, uniqueCode } from "../lib/format";
-import { Icon, Modal } from "./ui";
+import { Modal, Spinner } from "./ui";
 
 interface AppState {
   kbs: KnowledgeBase[];
@@ -166,38 +165,21 @@ function KBDialog({
   const [name, setName] = useState(kb?.name ?? "");
   const [desc, setDesc] = useState(kb?.description ?? "");
   const [engine, setEngine] = useState(kb?.config.parser_engine ?? "");
-  // auto: a type added here, whose code follows its name (U65); a saved type
-  // keeps its code, the pages already classified carry it.
-  const [docTypes, setDocTypes] = useState<(DocType & { auto?: boolean })[]>(kb?.config.doc_types ?? []);
+  // The types of the catalogue this library uses (U97), in its order.
+  const [docTypes, setDocTypes] = useState<string[]>((kb?.config.doc_types ?? []).map((t) => t.name));
+  const [catalog, setCatalog] = useState<DocTypeView[] | null>(null);
   const [busy, setBusy] = useState(false);
   // A second click lands before `busy` disables the button; the ref stops it
   // from sending the request twice.
   const sending = useRef(false);
-  // The list always ends with one empty row (i === docTypes.length): typing
-  // in it adds the type and the next empty row appears, so there is no "add"
-  // button.
-  const withRow = (xs: (DocType & { auto?: boolean })[], i: number) => (i >= xs.length ? [...xs, { name: "", title: "", auto: true }] : xs);
-  const setType = (i: number, patch: Partial<ClassLabel>) => setDocTypes((xs) => withRow(xs, i).map((x, k) => (k === i ? { ...x, ...patch } : x)));
-  const setTitle = (i: number, title: string) =>
-    setDocTypes((xs) =>
-      withRow(xs, i).map((x, k, all) => {
-        if (k !== i) return x;
-        if (!x.auto) return { ...x, title };
-        const c = toCode(title);
-        const taken = ["other", "unknown", ...all.filter((_, j) => j !== i).map((y) => y.name)];
-        return { ...x, title, name: c ? uniqueCode(c, taken) : "" };
-      }),
-    );
   useEffect(() => {
     listEngines().then(setEngines, () => {});
+    listDocTypes().then(setCatalog, () => setCatalog([]));
   }, []);
   const submit = async () => {
     if (!name.trim()) return onError(new Error("Nhập tên thư viện"));
-    const types = docTypes
-      .map((t) => ({ name: t.name.trim(), title: t.title.trim(), description: t.description?.trim() || undefined, fields: t.fields }))
-      .filter((t) => t.name || t.title);
-    if (types.some((t) => !/^[a-z0-9_][a-z0-9_-]*$/.test(t.name) || !t.title))
-      return onError(new Error("Mỗi loại giấy tờ cần tên có chữ hoặc số (mã tự sinh từ tên)"));
+    // Only the codes: title, description and fields stay in the catalogue.
+    const types = docTypes.map((name) => ({ name, title: "" }));
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
@@ -249,31 +231,37 @@ function KBDialog({
           ))}
         </select>
       </label>
-      <div className="field">
-        <span>Loại giấy tờ</span>
+      <fieldset className="field">
+        <legend className="mb-1">Loại giấy tờ</legend>
         <span className="font-normal">
-          Mỗi trang của file được phân loại theo ảnh vào các loại này; trang liền nhau cùng loại gom thành một giấy tờ trên cây hồ sơ.
-          {kb && " Thay đổi áp dụng cho file tải lên hoặc xử lý lại sau khi lưu."}
+          Chọn từ danh mục chung. Trang được phân loại theo các loại đã chọn.
+          {kb && " Thay đổi áp dụng cho file tải lên hoặc xử lý lại sau khi lưu."} Tạo loại mới hoặc sửa trường, hướng dẫn AI ở{" "}
+          <Link to="/settings/doctypes" className="text-accent hover:underline" onClick={onClose}>
+            Cài đặt → Loại giấy tờ
+          </Link>
+          .
         </span>
-        {[...docTypes, null].map((t, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              className="input w-36"
-              value={t?.title ?? ""}
-              onChange={(e) => setTitle(i, e.target.value)}
-              placeholder={t ? "Tên loại" : docTypes.length ? "Loại tiếp theo…" : "Tên, vd Hợp đồng"}
-              aria-label={t ? `Tên loại giấy tờ ${i + 1}` : "Tên loại giấy tờ mới"}
-            />
-            <span className="w-32 flex-none truncate font-mono text-xs text-muted" title="Mã tự sinh từ tên">
-              {t?.name || "mã tự sinh"}
-            </span>
-            <input className="input min-w-0 flex-1" value={t?.description ?? ""} onChange={(e) => setType(i, { description: e.target.value })} placeholder="Mô tả (tuỳ chọn)" aria-label="Mô tả loại giấy tờ" />
-            <button className={"btn-icon " + (t ? "" : "invisible")} tabIndex={-1} title="Xoá loại" onClick={() => setDocTypes((xs) => xs.filter((_, k) => k !== i))}>
-              <Icon name="close" size={18} />
-            </button>
+        {!catalog ? (
+          <Spinner className="size-4 border-2" />
+        ) : !catalog.length ? (
+          <span className="text-xs font-normal text-subtle">Danh mục chưa có loại giấy tờ nào.</span>
+        ) : (
+          <div className="flex max-h-56 flex-col overflow-auto">
+            {catalog.map((t) => (
+              <label key={t.name} className="flex min-h-9 items-center gap-3 text-sm font-normal text-fg">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-accent"
+                  checked={docTypes.includes(t.name)}
+                  onChange={(e) => setDocTypes((xs) => (e.target.checked ? [...xs, t.name] : xs.filter((x) => x !== t.name)))}
+                />
+                <span className="min-w-0 flex-1 truncate">{t.title}</span>
+                <span className="text-xs text-subtle">{t.fields.length ? `${t.fields.length} trường` : "chưa có trường"}</span>
+              </label>
+            ))}
           </div>
-        ))}
-      </div>
+        )}
+      </fieldset>
     </Modal>
   );
 }

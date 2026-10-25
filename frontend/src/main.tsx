@@ -5,6 +5,8 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 import "./index.css";
 import { AppProvider } from "./components/AppContext";
 import { AuthProvider, RequireAuth } from "./components/AuthContext";
+import { RulesetPage } from "./components/ChecksTab";
+import { DocTypePage } from "./components/DocTypes";
 import { Layout } from "./components/Layout";
 import { SettingsPage } from "./components/SettingsDialog";
 import { ToastProvider } from "./components/toast";
@@ -39,6 +41,8 @@ const router = createBrowserRouter([
       { path: "cases/:caseId/sheets/:sheetId", element: <SheetPage /> },
       { path: "cases/:caseId/split", element: <SplitPage /> },
       { path: "cases/:caseId/checks/:checkId", element: <CheckPage /> },
+      { path: "settings/checks/:id", element: <RulesetPage /> },
+      { path: "settings/doctypes/:code", element: <DocTypePage /> },
       { path: "settings/:tab?", element: <SettingsPage /> },
       { path: "*", element: <Navigate to="/documents" replace /> },
     ],

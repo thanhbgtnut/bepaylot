@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { downloadSheet, getSheet, importSheet, saveSheetEdits } from "../../api/endpoints";
 import type { SheetCellView, SheetImport, SheetRowView, SheetTableView, SheetView } from "../../api/types";
 import { PageImage } from "../../components/PageImage";
+import { BackButton } from "../../components/nav";
 import { useToast } from "../../components/toast";
 import { Empty, FileIcon, Icon, Loading, Modal } from "../../components/ui";
 import { fmtDate } from "../../lib/format";
@@ -60,7 +61,6 @@ interface Cell {
 // makes them confirmed fields and records the AI's errors.
 export function SheetPage() {
   const { caseId = "", sheetId = "" } = useParams();
-  const nav = useNavigate();
   const { toast, fail } = useToast();
   const [sheet, setSheet] = useState<SheetView | null>(null);
   const [err, setErr] = useState("");
@@ -197,10 +197,7 @@ export function SheetPage() {
     }
   };
 
-  const back = () => {
-    if (unsaved.length) toast("Còn chỉnh sửa chưa lưu, chúng vẫn được giữ trong bản nháp");
-    nav(`/cases/${caseId}`);
-  };
+  const onLeave = () => unsaved.length && toast("Còn chỉnh sửa chưa lưu, chúng vẫn được giữ trong bản nháp");
 
   if (err)
     return (
@@ -216,9 +213,7 @@ export function SheetPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex min-h-16 flex-none flex-wrap items-center gap-2 px-4 pt-3 pb-2">
-        <button className="btn btn-text" onClick={back} title="Quay lại phương án">
-          <Icon name="arrow_back" size={20} /> Phương án {sheet.case_code}
-        </button>
+        <BackButton fallback={`/cases/${caseId}`} fallbackLabel={`Hồ sơ ${sheet.case_code}`} onLeave={onLeave} />
         <span className="h-6 border-l border-line max-sm:hidden" />
         <div className="min-w-0 flex-1 px-2">
           <h1 className="flex items-center gap-2 truncate text-[22px] leading-7 font-normal text-fg">
@@ -251,7 +246,7 @@ export function SheetPage() {
 
       {sheet.status !== "done" ? (
         <Empty icon={sheet.status === "failed" ? "error" : "hourglass_top"} title={sheet.status === "failed" ? "Không tạo được bảng" : `Đang bóc tách ${sheet.filled}/${sheet.total} ô…`}>
-          {sheet.error || "Ô đã duyệt được dùng lại; agent đọc các trang của từng bộ cho ô còn thiếu."}
+          {sheet.error || "Ô đã duyệt được dùng lại; AI đọc các trang của từng bộ cho ô còn thiếu."}
         </Empty>
       ) : (
         <div className="flex min-h-0 flex-1 border-t border-line max-lg:flex-col">
@@ -298,7 +293,7 @@ export function SheetPage() {
                   <i className="inline-block size-3 rounded-sm bg-warn-soft" /> cần xem
                 </span>
                 <span className="flex items-center gap-1">
-                  <i className="inline-block size-3 rounded-sm bg-vlm-soft" /> agent tính
+                  <i className="inline-block size-3 rounded-sm bg-vlm-soft" /> AI tính
                 </span>
               </div>
             </div>
@@ -370,7 +365,7 @@ function StatusBadge({ cv, edited }: { cv?: SheetCellView; edited: boolean }) {
   if (edited) return <span className="badge badge-info">người dùng sửa</span>;
   if (!cv?.field_id) return <span className="badge">không tìm thấy</span>;
   if (cv.status === "confirmed") return <span className="badge badge-ok">đã duyệt</span>;
-  if (cv.calc) return <span className="badge badge-vlm">agent tính</span>;
+  if (cv.calc) return <span className="badge badge-vlm">AI tính</span>;
   if (cv.low) return <span className="badge badge-warn">cần xem</span>;
   return <span className="badge">AI đề xuất</span>;
 }
@@ -398,7 +393,7 @@ function Source({ c, value }: { c: Cell; value: string }) {
       </div>
       {!e ? (
         <div className="rounded-lg bg-surface-2 p-3 text-[13px] text-muted">
-          {cv?.note ? "Agent: " + cv.note : cv?.field_id ? "Giá trị do người dùng nhập, không có nguồn." : "Agent không tìm thấy trường này trong giấy tờ. Ô vẫn lưu được dù không có nguồn."}
+          {cv?.note ? "AI: " + cv.note : cv?.field_id ? "Giá trị do người dùng nhập, không có nguồn." : "AI không tìm thấy trường này trong giấy tờ. Ô vẫn lưu được dù không có nguồn."}
         </div>
       ) : (
         <>
@@ -419,7 +414,7 @@ function Source({ c, value }: { c: Cell; value: string }) {
             {e.quote}
           </div>
           {cv && !cv.value_matched && cv.source === "agent" && (
-            <div className="rounded-lg bg-warn-soft p-2 text-xs text-warn">{cv.field_note ? "Giá trị do agent tính: " + cv.field_note : "Giá trị AI không xuất hiện nguyên văn trong câu gốc."}</div>
+            <div className="rounded-lg bg-warn-soft p-2 text-xs text-warn">{cv.field_note ? "Giá trị do AI tính: " + cv.field_note : "Giá trị AI không xuất hiện nguyên văn trong câu gốc."}</div>
           )}
         </>
       )}

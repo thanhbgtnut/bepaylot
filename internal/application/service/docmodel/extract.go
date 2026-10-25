@@ -150,7 +150,7 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 			}
 			user = &u
 		}
-		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md, size, e.MinOCRConfidence))
+		reply, err := e.runner.RunExtract(ctx, *user, d.CaseID, d.ID, extractPrompt(t, missing, lines, md, size, e.MinOCRConfidence, e.guide(ctx, d, g.Label)))
 		if err != nil {
 			return saved, err
 		}
@@ -169,6 +169,53 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 	return saved, nil
 }
 
+// guide is the version in use of the instructions of a type of the
+// catalogue of the document's KB owner (U103); nil when the type is not in
+// the catalogue.
+func (e *Extractor) guide(ctx context.Context, d types.Document, code string) *types.Guide {
+	kb, err := e.st.KBs.Get(ctx, d.KBID)
+	if err != nil {
+		return nil
+	}
+	p, err := e.st.DocTypes.Prompt(ctx, kb.OwnerID, code, 0)
+	if err != nil {
+		return nil
+	}
+	return GuideOf(ctx, e.st, kb.OwnerID, p, uuid.Nil)
+}
+
+// GuideOf makes the guide of a version: its reviewed examples are read from
+// their samples; skip is a sample left out (scoring a sample never shows it
+// its own values, U98).
+func GuideOf(ctx context.Context, st *postgres.Store, owner uuid.UUID, p types.DocTypePrompt, skip uuid.UUID) *types.Guide {
+	g := &types.Guide{Instruction: p.Instruction, Rules: p.Rules}
+	for _, sh := range p.Shots {
+		if sh.SampleID == skip {
+			continue
+		}
+		s, err := st.DocTypes.Sample(ctx, owner, sh.SampleID)
+		if err != nil || s.Truth == nil {
+			continue
+		}
+		g.Shots = append(g.Shots, types.GuideShot{SampleID: s.ID, Name: s.FileName, Content: SampleContent(s), Truth: s.Truth})
+	}
+	return g
+}
+
+// SampleContent is the content (VLM markdown) of a sample, page by page.
+func SampleContent(s types.DocTypeSample) string {
+	var b strings.Builder
+	for _, p := range s.Pages {
+		if t := strings.TrimSpace(p.Markdown); t != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(t)
+		}
+	}
+	return b.String()
+}
+
 // extractPrompt is the message of one extraction turn: the document type, the
 // fields to find, each with the description that guides the agent (U81), and
 // the text of the document, page by page: the markdown the VLM read from the
@@ -176,14 +223,20 @@ func (e *Extractor) Extract(ctx context.Context, docID uuid.UUID, tables []types
 // confidence and box, are a reference to catch what the VLM misread. Boxes
 // are scaled to 0-1000 of the page size (pageSize: page → width, height) so the
 // agent can tell columns and rows apart where the lines lose the layout.
-// Lines read below minConf are left out.
-func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string, pageSize map[int][2]int, minConf float64) string {
+// Lines read below minConf are left out. A guide (the version of the type's
+// instructions in use, U98) adds its general instruction, its per-field rules
+// and its reviewed examples.
+func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgres.PageLine, md map[int]string, pageSize map[int][2]int, minConf float64, g *types.Guide) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bóc tách thông tin từ một giấy tờ thuộc loại: %s", t.Title)
 	if t.Description != "" {
 		fmt.Fprintf(&b, " (%s)", t.Description)
 	}
-	b.WriteString(".\n\nCác trường cần lấy (key · tên trường · kiểu · mô tả). Mô tả, nếu có, là hướng dẫn cách tìm và cách ghi giá trị của trường đó:\n")
+	b.WriteString(".\n")
+	if g != nil && strings.TrimSpace(g.Instruction) != "" {
+		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(g.Instruction))
+	}
+	b.WriteString("\nCác trường cần lấy (key · tên trường · kiểu · mô tả). Mô tả, nếu có, là hướng dẫn cách tìm và cách ghi giá trị của trường đó:\n")
 	for _, f := range fields {
 		vt := f.ValueType
 		if vt == "" {
@@ -194,6 +247,9 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 			fmt.Fprintf(&b, " · %s", desc)
 		}
 		b.WriteByte('\n')
+	}
+	if g != nil {
+		writeGuide(&b, g, fields)
 	}
 	b.WriteString("\nNội dung giấy tờ, theo trang, ở hai nguồn đọc cùng một trang:\n" +
 		"- <markdown>: bản markdown mô hình thị giác đọc từ ảnh trang, giữ bố cục (tiêu đề, bảng, cột). Đây là dữ liệu chính: lấy giá trị từ đây.\n" +
@@ -260,6 +316,75 @@ func extractPrompt(t types.SheetTable, fields []types.SheetField, lines []postgr
 		`{"fields":[{"key":"<key>","value":<giá trị, hoặc null khi giấy tờ không có>,"confidence":<0-1>,` +
 		`"page":<số trang>,"line":<số dòng [L] OCR ứng với giá trị, hoặc null khi không có dòng nào>,"note":"<cách tính, nếu có>"}]}`)
 	return b.String()
+}
+
+// writeGuide writes the rules and examples of a guide, in plain words.
+func writeGuide(b *strings.Builder, g *types.Guide, fields []types.SheetField) {
+	var rules []string
+	for _, r := range g.Rules {
+		if r = strings.TrimSpace(r); r != "" {
+			rules = append(rules, r)
+		}
+	}
+	if len(rules) > 0 {
+		b.WriteString("\nQuy tắc theo trường:\n")
+		for _, r := range rules {
+			fmt.Fprintf(b, "- %s\n", r)
+		}
+	}
+	if len(g.Shots) == 0 {
+		return
+	}
+	b.WriteString("\nVí dụ: giấy tờ cùng loại đã được người dùng duyệt, kèm kết quả đúng.\n")
+	for i, sh := range g.Shots {
+		fmt.Fprintf(b, "Ví dụ %d (%s):\nNội dung tài liệu:\n%s\nKết quả đúng:\n", i+1, sh.Name, textutil.Truncate(strings.TrimSpace(sh.Content), extractMaxChars/4))
+		for _, f := range fields {
+			v := strings.TrimSpace(sh.Truth[f.Key])
+			if v == "" {
+				v = "(để trống)"
+			}
+			fmt.Fprintf(b, "- %s: %s\n", f.Label, v)
+		}
+	}
+}
+
+// ExtractPrompt is the message of one extraction turn (extractPrompt), for
+// the test runs on the samples of a type (§6.9.10).
+func ExtractPrompt(t types.SheetTable, lines []postgres.PageLine, md map[int]string, pageSize map[int][2]int, minConf float64, g *types.Guide) string {
+	return extractPrompt(t, t.Fields, lines, md, pageSize, minConf, g)
+}
+
+// RunValues reads the JSON reply of an extraction turn into the value of
+// each asked key, with where it was read; a key with no value is "".
+func RunValues(asked []types.SheetField, reply string) (map[string]types.RunValue, bool) {
+	var out struct {
+		Fields []struct {
+			Key   string `json:"key"`
+			Value any    `json:"value"`
+			Page  int    `json:"page"`
+			Line  int    `json:"line"`
+		} `json:"fields"`
+	}
+	if err := llm.DecodeJSON(reply, &out); err != nil {
+		return nil, false
+	}
+	res := map[string]types.RunValue{}
+	for _, f := range out.Fields {
+		if _, dup := res[f.Key]; dup {
+			continue
+		}
+		v := strings.TrimSpace(textutil.ValueText(f.Value))
+		if f.Value == nil {
+			v = ""
+		}
+		res[f.Key] = types.RunValue{Value: v, Page: f.Page, Line: f.Line}
+	}
+	for _, a := range asked {
+		if _, ok := res[a.Key]; !ok {
+			res[a.Key] = types.RunValue{}
+		}
+	}
+	return res, true
 }
 
 // ocrText is what TurboOCR read on a line: lines the VLM rewrote keep it in

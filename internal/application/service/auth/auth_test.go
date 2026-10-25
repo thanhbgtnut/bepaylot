@@ -55,7 +55,7 @@ func newTestService(t *testing.T, tweak func(*config.Auth)) (*Service, *postgres
 		t.Skip("set TEST_DATABASE_URL to run integration tests")
 	}
 	ctx := context.Background()
-	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 4, MinConns: 1, AutoMigrate: true})
+	st, err := postgres.Open(ctx, config.DB{DSN: dsn, MaxConns: 4, MinConns: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

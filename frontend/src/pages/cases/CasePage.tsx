@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { getCaseTOC, getSplit, getTree } from "../../api/endpoints";
-import type { CaseTOC, SplitFile, SplitView, TOCDoc, TreeNode } from "../../api/types";
+import { getCaseFields, getCaseTOC, getPage, getSplit, getTree, saveCaseField } from "../../api/endpoints";
+import type { CaseDocFields, CaseFieldView, CaseTOC, DocType, SplitFile, SplitView, TOCDoc, TreeNode } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { CasePicker, caseLabel } from "../../components/CasePicker";
 import { NeedKB, TopBar } from "../../components/Layout";
 import { PageImage } from "../../components/PageImage";
-import { Empty, FileIcon, Icon, Loading, MetaChips, Spinner, StatusBadge } from "../../components/ui";
-import { CaseChat } from "./CaseChat";
+import { useToast } from "../../components/toast";
+import { Badge, Empty, FileIcon, Icon, Loading, Spinner, StatusBadge } from "../../components/ui";
+import { typeColor, typeTitle } from "../../lib/doctype";
 import { Studio } from "./Studio";
 
-// One case (phương án / hồ sơ), laid out like NotebookLM (§7.2): Nguồn (the
-// files and their trees; a file or node opens over the chat), Trò chuyện (the
-// agent bound to the case) and Studio (Excel sheets of the case). The trees
-// come from the stored cards; only the chat and Studio call the agent.
+// One case (hồ sơ, §7.2): Nguồn (the files, their documents and sections),
+// the pages of the chosen source, the fields read from its documents
+// (editable) and Studio. The chat lives on the Hỏi đáp page (U96).
 
 const casePath = (caseId: string) => `/cases/${caseId}`;
 const pages = (a: number, b: number) => (a === b ? `tr. ${a}` : `tr. ${a}–${b}`);
@@ -45,35 +45,48 @@ function useTree(docId: string | null) {
   return { nodes, err };
 }
 
-// Tree helpers: children by parent, in order, and the path to a node.
+// Tree helpers: children by parent, in order, and the ids on the path to a node.
 function childrenOf(nodes: TreeNode[]) {
   const m = new Map<string, TreeNode[]>();
   for (const n of nodes) if (n.parent_id) m.set(n.parent_id, [...(m.get(n.parent_id) ?? []), n]);
   for (const list of m.values()) list.sort((a, b) => a.ord - b.ord);
   return m;
 }
-function pathTo(nodes: TreeNode[], id: string) {
+function pathIds(nodes: TreeNode[], shortId: string | null) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const out: TreeNode[] = [];
-  for (let n = byId.get(id); n; n = n.parent_id ? byId.get(n.parent_id) : undefined) out.unshift(n);
+  const out = new Set<string>();
+  for (let n = nodes.find((x) => x.short_id === shortId); n; n = n.parent_id ? byId.get(n.parent_id) : undefined) out.add(n.id);
   return out;
 }
+
+// Whether the field column is folded, remembered per browser.
+const FIELDS_KEY = "bp.caseFieldsOpen";
+function readOpen() {
+  try {
+    return localStorage.getItem(FIELDS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+type Col = "sources" | "view" | "fields" | "studio";
 
 export function CasePage() {
   const { caseId } = useParams();
   const [sp, setSp] = useSearchParams();
-  const docId = sp.get("doc");
-  const nodeId = sp.get("node"); // short id (n<k>); none = the file itself
+  const nodeId = sp.get("node"); // short id (n<k>); none = the whole file
+  const hl = sp.get("hl"); // "page:line" of the field the user picked
   const nav = useNavigate();
-  const { kb, kcase, cases, selectCase } = useApp();
+  const { kb, kbs, kcase, cases, selectCase } = useApp();
   const [toc, setToc] = useState<CaseTOC | null>(null);
   const [err, setErr] = useState("");
   const [reload, setReload] = useState(0);
   // How the files split into documents and bundles (§6.9.7); null when the
   // case type has no classification.
   const [split, setSplit] = useState<SplitView | null>(null);
-  // Narrow screens show one column at a time, like NotebookLM's tabs.
-  const [col, setCol] = useState<"sources" | "chat" | "studio">("chat");
+  // Narrow screens show one column at a time.
+  const [col, setCol] = useState<Col>("view");
+  const [fieldsOpen, setFieldsOpen] = useState(readOpen);
 
   // The URL names the case; without one, open the case picked last.
   useEffect(() => {
@@ -116,15 +129,27 @@ export function CasePage() {
     return () => clearInterval(t);
   }, [busy]);
 
-  // A file or node opens over the chat; closing it goes back to the chat.
-  const select = useCallback(
-    (doc: string, node?: string) => {
-      setSp(node ? { doc, node } : { doc });
-      setCol("chat");
+  useEffect(() => {
+    try {
+      localStorage.setItem(FIELDS_KEY, fieldsOpen ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+  }, [fieldsOpen]);
+
+  // The source shown: the file (and section) in the URL, else the first file.
+  const docId = sp.get("doc") || toc?.documents[0]?.document_id || null;
+  const select = useCallback((doc: string, node?: string) => setSp(node ? { doc, node } : { doc }), [setSp]);
+  const pickLine = useCallback(
+    (page: number, line: number) => {
+      const next = new URLSearchParams(sp);
+      next.set("doc", docId ?? "");
+      next.set("hl", `${page}:${line}`);
+      setSp(next, { replace: true });
+      setCol("view");
     },
-    [setSp],
+    [sp, setSp, docId],
   );
-  const closeSource = () => setSp({});
 
   if (!kb)
     return (
@@ -136,7 +161,8 @@ export function CasePage() {
 
   const c = toc?.case ?? kcase;
   const doc = toc?.documents.find((d) => d.document_id === docId) ?? null;
-  const show = (k: typeof col) => (col === k ? "flex" : "hidden lg:flex");
+  const types = kbs.find((k) => k.id === c?.kb_id)?.config.doc_types ?? kb.config.doc_types ?? [];
+  const show = (k: Col) => (col === k ? "flex" : "hidden lg:flex");
 
   return (
     <>
@@ -153,6 +179,11 @@ export function CasePage() {
           ) : undefined
         }
       >
+        {c && (
+          <button className="btn btn-text" title="Hỏi trợ lý AI về hồ sơ này" onClick={() => (selectCase(c.id), nav("/chat"))}>
+            <Icon name="forum" size={18} /> Hỏi đáp
+          </button>
+        )}
         <CasePicker value={c} onChange={(x) => nav(casePath(x.id))} />
       </TopBar>
       {cases && !cases.length ? (
@@ -176,7 +207,8 @@ export function CasePage() {
             {(
               [
                 ["sources", "Nguồn"],
-                ["chat", "Trò chuyện"],
+                ["view", "Xem"],
+                ["fields", "Trường"],
                 ["studio", "Studio"],
               ] as const
             ).map(([k, l]) => (
@@ -186,24 +218,20 @@ export function CasePage() {
             ))}
           </div>
           <div className="flex min-h-0 flex-1 border-t border-line">
-            <Sidebar toc={toc} split={split} caseId={c.id} docId={docId} nodeId={nodeId} onSelect={select} className={show("sources")} />
-            <section className={show("chat") + " min-w-0 flex-1 flex-col"}>
-              {doc ? (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="flex flex-none items-center gap-2 border-b border-line px-4 py-1.5">
-                    <button className="btn btn-text btn-sm" onClick={closeSource}>
-                      <Icon name="arrow_back" size={18} /> Trò chuyện
-                    </button>
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted">{doc.file_name}</span>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-auto">
-                    <NodeView key={doc.document_id} doc={doc} nodeId={nodeId} onSelect={select} />
-                  </div>
-                </div>
-              ) : (
-                <CaseChat key={c.id} kcase={c} toc={toc} />
-              )}
+            <Sidebar toc={toc} split={split} types={types} caseId={c.id} docId={docId} nodeId={nodeId} onSelect={(d, n) => (select(d, n), setCol("view"))} className={show("sources")} />
+            <section className={show("view") + " min-w-0 flex-1 flex-col"}>
+              {doc ? <Viewer key={doc.document_id} doc={doc} nodeId={nodeId} hl={hl} /> : <Empty icon="folder_off">Hồ sơ chưa có nguồn nào có mục lục</Empty>}
             </section>
+            {doc && (fieldsOpen || col === "fields") ? (
+              <FieldsColumn key={doc.document_id} caseId={c.id} doc={doc} nodeId={nodeId} hl={hl} types={types} onPick={pickLine} onFold={() => setFieldsOpen(false)} className={show("fields")} />
+            ) : doc ? (
+              <aside className="hidden w-12 flex-none flex-col items-center gap-2 border-l border-line py-3 lg:flex">
+                <button className="btn-icon" title="Hiện trường trích xuất" onClick={() => setFieldsOpen(true)}>
+                  <Icon name="right_panel_open" />
+                </button>
+                <span className="text-xs text-muted [writing-mode:vertical-rl]">Trường trích xuất</span>
+              </aside>
+            ) : null}
             <Studio key={c.id} kcase={c} split={split} className={show("studio")} />
           </div>
         </>
@@ -212,14 +240,12 @@ export function CasePage() {
   );
 }
 
-// ---------------------------------------------------------------- sidebar
-
-const rowCls = (active: boolean) =>
-  "flex min-h-8 w-full items-center gap-2 rounded-full py-1 pr-3 text-left text-sm " + (active ? "bg-accent-soft font-medium text-on-accent-soft" : "text-fg hover:bg-fg/8");
+// ---------------------------------------------------------------- sources
 
 function Sidebar({
   toc,
   split,
+  types,
   caseId,
   docId,
   nodeId,
@@ -228,6 +254,7 @@ function Sidebar({
 }: {
   toc: CaseTOC;
   split: SplitView | null;
+  types: DocType[];
   caseId: string;
   docId: string | null;
   nodeId: string | null;
@@ -243,7 +270,7 @@ function Sidebar({
         </Link>
       </div>
       {split && (
-        <Link className="btn btn-tonal btn-sm mx-2 mb-2" to={`/cases/${caseId}/split`}>
+        <Link className="btn btn-tonal btn-sm mx-2 mb-2 flex-none" to={`/cases/${caseId}/split`}>
           <Icon name="content_cut" size={18} /> Tách & gom trang
           {!split.reviewed && <span className="badge badge-warn">{split.files.filter((f) => f.indexed && f.status !== "reviewed").length}</span>}
         </Link>
@@ -254,7 +281,7 @@ function Sidebar({
           key={d.document_id}
           d={d}
           sf={split?.files.find((f) => f.document_id === d.document_id)}
-          labels={split?.labels}
+          types={types}
           open={d.document_id === docId}
           nodeId={d.document_id === docId ? nodeId : null}
           onSelect={onSelect}
@@ -276,17 +303,20 @@ function Sidebar({
   );
 }
 
+// A file is a group header; under it its documents (a dot of the type's
+// color), whose sections stay folded until opened and open by themselves along
+// the path of the chosen section (U96).
 function FileEntry({
   d,
   sf,
-  labels,
+  types,
   open,
   nodeId,
   onSelect,
 }: {
   d: TOCDoc;
   sf?: SplitFile;
-  labels?: { name: string; title: string }[];
+  types: DocType[];
   open: boolean;
   nodeId: string | null;
   onSelect: (doc: string, node?: string) => void;
@@ -297,173 +327,366 @@ function FileEntry({
   }, [open]);
   const { nodes } = useTree(expanded ? d.document_id : null);
   const kids = useMemo(() => (nodes ? childrenOf(nodes) : null), [nodes]);
+  const onPath = useMemo(() => (nodes ? pathIds(nodes, nodeId) : new Set<string>()), [nodes, nodeId]);
   const root = nodes?.find((n) => !n.parent_id);
+  const status = sf?.status === "reviewed" ? (
+    <span title="Tách & gom đã duyệt">
+      <Icon name="check_circle" size={16} fill className="text-ok" />
+    </span>
+  ) : sf?.status === "proposed" ? (
+    <span title="AI đề xuất tách, cần duyệt">
+      <Icon name="auto_awesome" size={16} className="text-warn" />
+    </span>
+  ) : null;
 
   return (
-    <div className="mb-px">
-      <div className={rowCls(open && !nodeId)}>
-        <button className="btn-icon btn-sm -my-1 ml-0.5 flex-none" onClick={() => setExpanded((v) => !v)} aria-label={expanded ? "Thu gọn" : "Mở mục lục"}>
+    <div className="mb-2">
+      <div className={"flex h-9 items-center gap-1 rounded-lg pr-2 " + (open && !nodeId ? "bg-accent-soft text-on-accent-soft" : "text-fg hover:bg-fg/6")}>
+        <button className="btn-icon size-7 flex-none" onClick={() => setExpanded((v) => !v)} aria-label={expanded ? "Thu gọn" : "Mở mục lục"}>
           <Icon name="arrow_right" size={20} className={"transition-transform " + (expanded ? "rotate-90" : "")} />
         </button>
-        <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => (onSelect(d.document_id), setExpanded(true))} title={d.summary || d.file_name}>
+        <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => (onSelect(d.document_id), setExpanded(true))} title={d.file_name}>
           <FileIcon name={d.file_name} size={18} />
-          <span className="min-w-0 flex-1 truncate">{d.file_name}</span>
-          <span className="text-xs whitespace-nowrap text-muted">{d.page_count} tr.</span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.file_name}</span>
         </button>
+        <span className="text-xs whitespace-nowrap text-muted">{d.page_count} tr</span>
+        {status}
       </div>
-      {sf && (
-        <div className="py-0.5 pl-11">
-          {sf.status === "reviewed" ? (
-            <span className="badge badge-ok">
-              <Icon name="check" size={14} /> {sf.segments.filter((g) => g.label !== "other").length} giấy tờ · đã duyệt
-            </span>
-          ) : sf.status === "proposed" ? (
-            <span className="badge badge-warn">
-              <Icon name="auto_awesome" size={14} /> AI đề xuất · cần duyệt
-            </span>
-          ) : (
-            <span className="badge">chưa tách</span>
-          )}
-        </div>
-      )}
-      {sf?.status === "reviewed" &&
-        sf.segments
-          .filter((g) => g.label !== "other")
-          .map((g) => (
-            <button key={g.id ?? g.page_start} onClick={() => onSelect(d.document_id)} className={rowCls(false) + " text-[13px]"} style={{ paddingLeft: 44 }}>
-              <span className="min-w-0 flex-1 truncate">{labels?.find((l) => l.name === g.label)?.title ?? g.label}</span>
-              <span className="text-xs whitespace-nowrap text-muted">{pages(g.page_start, g.page_end)}</span>
-              {g.bundle && <span className="badge">{g.bundle}</span>}
-            </button>
-          ))}
       {expanded &&
         (!nodes ? (
-          <div className="py-1 pl-12">
+          <div className="py-1 pl-10">
             <Spinner className="size-3.5 border-2" />
           </div>
         ) : root && kids ? (
-          <NodeList parent={root.id} kids={kids} depth={1} docId={d.document_id} nodeId={nodeId} onSelect={onSelect} />
+          <div className="ml-5 border-l border-line pl-2">
+            {(kids.get(root.id) ?? []).map((n) => (
+              <NodeRow key={n.id} n={n} kids={kids} top types={types} docId={d.document_id} nodeId={nodeId} onPath={onPath} onSelect={onSelect} />
+            ))}
+          </div>
         ) : null)}
     </div>
   );
 }
 
-function NodeList({
-  parent,
+function NodeRow({
+  n,
   kids,
-  depth,
+  top = false,
+  types,
   docId,
   nodeId,
+  onPath,
   onSelect,
 }: {
-  parent: string;
+  n: TreeNode;
   kids: Map<string, TreeNode[]>;
-  depth: number;
+  top?: boolean;
+  types: DocType[];
   docId: string;
   nodeId: string | null;
+  onPath: Set<string>;
   onSelect: (doc: string, node?: string) => void;
 }) {
+  const sub = kids.get(n.id) ?? [];
+  const [open, setOpen] = useState<boolean | null>(null);
+  const expanded = open ?? onPath.has(n.id);
+  const cur = n.short_id === nodeId;
   return (
     <>
-      {(kids.get(parent) ?? []).map((n) => (
-        <div key={n.id}>
-          <button
-            onClick={() => onSelect(docId, n.short_id)}
-            title={n.summary}
-            className={rowCls(n.short_id === nodeId)}
-            style={{ paddingLeft: 12 + depth * 16 }}
-          >
-            {n.doc_type && <Icon name="description" size={16} />}
-            <span className={"min-w-0 flex-1 truncate " + (n.doc_type ? "font-medium" : "")}>{n.title || n.short_id}</span>
-            <span className="text-xs whitespace-nowrap text-muted">{pages(n.page_start, n.page_end)}</span>
+      <div className={"group flex h-8 items-center rounded-lg pr-1 " + (cur ? "bg-accent-soft text-on-accent-soft" : "text-fg hover:bg-fg/6")}>
+        <button onClick={() => onSelect(docId, n.short_id)} title={n.summary || n.title} className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left">
+          {top && n.doc_type && <i className="size-2 flex-none rounded-full" style={{ background: typeColor(n.doc_type, types) }} title={typeTitle(n.doc_type, types)} />}
+          <span className={"min-w-0 flex-1 truncate " + (top ? "text-sm" : "text-[13px] " + (cur ? "" : "text-muted"))}>{n.title || n.short_id}</span>
+          <span className={"text-[11px] whitespace-nowrap tabular-nums " + (cur ? "" : "text-subtle")}>{n.page_start === n.page_end ? n.page_start : `${n.page_start}–${n.page_end}`}</span>
+        </button>
+        {sub.length ? (
+          <button className="btn-icon size-6 flex-none" onClick={() => setOpen(!expanded)} aria-label={expanded ? "Thu gọn" : "Mục con"}>
+            <Icon name="chevron_right" size={18} className={"transition-transform " + (expanded ? "rotate-90" : "")} />
           </button>
-          <NodeList parent={n.id} kids={kids} depth={depth + 1} docId={docId} nodeId={nodeId} onSelect={onSelect} />
+        ) : (
+          <span className="w-6 flex-none" />
+        )}
+      </div>
+      {sub.length > 0 && expanded && (
+        <div className="ml-3 border-l border-line pl-2">
+          {sub.map((x) => (
+            <NodeRow key={x.id} n={x} kids={kids} types={types} docId={docId} nodeId={nodeId} onPath={onPath} onSelect={onSelect} />
+          ))}
         </div>
-      ))}
+      )}
     </>
   );
 }
 
-// ---------------------------------------------------------------- node view
+// ---------------------------------------------------------------- viewer
 
-// A file (its card) or one node of its tree: summary, sub-sections and the
-// pages of the node, one page image at a time.
-function NodeView({ doc, nodeId, onSelect }: { doc: TOCDoc; nodeId: string | null; onSelect: (doc: string, node?: string) => void }) {
-  const { nodes, err } = useTree(doc.document_id);
-  const kids = useMemo(() => (nodes ? childrenOf(nodes) : null), [nodes]);
-  const node = nodes?.find((n) => (nodeId ? n.short_id === nodeId : !n.parent_id)) ?? null;
-  const path = useMemo(() => (nodes && node ? pathTo(nodes, node.id).slice(1) : []), [nodes, node]);
+// The pages of the chosen file, light and without a summary (U96): the chosen
+// section's pages are outlined and scrolled to; a field's line is highlighted.
+function Viewer({ doc, nodeId, hl }: { doc: TOCDoc; nodeId: string | null; hl: string | null }) {
+  const { nodes } = useTree(doc.document_id);
+  const node = nodeId ? nodes?.find((n) => n.short_id === nodeId) : undefined;
   const from = node?.page_start ?? 1;
   const to = node?.page_end ?? doc.page_count;
-  const [page, setPage] = useState(from);
-  useEffect(() => setPage(from), [from, nodeId]);
+  const [hlPage, hlLine] = (hl ?? "").split(":").map(Number);
+  const box = useRef<HTMLDivElement>(null);
 
-  if (err) return <Empty icon="error">{err}</Empty>;
-  if (!nodes || !kids) return <Loading />;
-  const isFile = !node?.parent_id;
-  const children = node ? (kids.get(node.id) ?? []) : [];
+  // Scroll to the first page of the section (or the highlighted page), again
+  // once the images above it have their real height.
+  const target = hlPage || from;
+  useLayoutEffect(() => {
+    const go = () => box.current?.querySelector<HTMLElement>(`[data-page="${target}"]`)?.scrollIntoView({ block: "start" });
+    go();
+    const t = setTimeout(go, 400);
+    return () => clearTimeout(t);
+  }, [target, nodeId]);
 
   return (
-    <div className="mx-auto flex max-w-240 flex-col gap-5 px-6 py-5">
-      <div>
-        <div className="flex flex-wrap items-center gap-1 text-xs text-muted">
-          <button className="hover:text-fg hover:underline" onClick={() => onSelect(doc.document_id)}>
-            {doc.file_name}
-          </button>
-          {path.map((p) => (
-            <span key={p.id} className="flex items-center gap-1">
-              <Icon name="chevron_right" size={16} />
-              <button className="hover:text-fg hover:underline" onClick={() => onSelect(doc.document_id, p.short_id)}>
-                {p.title || p.short_id}
-              </button>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-11 flex-none items-center gap-2 border-b border-line px-4 text-sm text-fg">
+        <FileIcon name={doc.file_name} size={18} />
+        <span className="min-w-0 flex-1 truncate">
+          {doc.file_name}
+          {node && (
+            <span className="text-muted">
+              {" "}
+              · {node.title || node.short_id} · {pages(from, to)}
             </span>
+          )}
+        </span>
+        <Link className="btn-icon btn-sm" to={`/documents/${doc.document_id}?page=${target}`} title="Mở trong trình xem tài liệu">
+          <Icon name="open_in_new" size={18} />
+        </Link>
+      </div>
+      <div ref={box} className="min-h-0 flex-1 overflow-auto bg-surface-2/50 px-6 py-4">
+        <div className="mx-auto flex max-w-200 flex-col gap-4">
+          {Array.from({ length: doc.page_count }, (_, i) => i + 1).map((n) => (
+            <div key={n} data-page={n} className="relative scroll-mt-2">
+              <div className={"overflow-hidden rounded-md border border-line bg-white " + (node && n >= from && n <= to ? "outline-3 outline-offset-2 outline-accent" : "")}>
+                <LazyPage docId={doc.document_id} pageNo={n} line={n === hlPage ? hlLine : undefined} />
+              </div>
+              <span className="absolute right-2 bottom-2 rounded bg-black/60 px-1.5 text-xs text-white">
+                {n} / {doc.page_count}
+              </span>
+            </div>
           ))}
         </div>
-        <h2 className="mt-1 text-[22px] leading-8 text-fg">{isFile ? doc.title || doc.file_name : node?.title || node?.short_id}</h2>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-          <span>{pages(from, to)}</span>
-          {isFile && <StatusBadge status={doc.status} />}
-          {isFile && <MetaChips meta={doc.metadata} />}
-          <Link className="ml-auto flex items-center gap-1 text-accent hover:underline" to={`/documents/${doc.document_id}?page=${page}`}>
-            <Icon name="open_in_new" size={16} /> Mở trong trình xem tài liệu
-          </Link>
-        </div>
-        {(isFile ? doc.summary : node?.summary) && <p className="mt-3 text-[15px] leading-6 text-fg">{isFile ? doc.summary : node?.summary}</p>}
       </div>
+    </div>
+  );
+}
 
-      {children.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-medium text-muted">Mục con</h3>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {children.map((n) => (
-              <button key={n.id} onClick={() => onSelect(doc.document_id, n.short_id)} className="rounded-xl border border-line px-4 py-3 text-left hover:bg-fg/5">
-                <div className="flex items-baseline gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">{n.title || n.short_id}</span>
-                  <span className="text-xs whitespace-nowrap text-muted">{pages(n.page_start, n.page_end)}</span>
-                </div>
-                {n.summary && <div className="mt-1 line-clamp-2 text-xs text-muted">{n.summary}</div>}
-              </button>
-            ))}
-          </div>
-        </section>
+// A page image mounted only near the viewport; with a line, that line's box
+// is highlighted.
+function LazyPage({ docId, pageNo, line }: { docId: string; pageNo: number; line?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(!!line);
+  const [box, setBox] = useState<{ width: number; height: number; bbox: { x0: number; y0: number; x1: number; y1: number } } | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || visible) return;
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setVisible(true), { rootMargin: "600px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible]);
+  useEffect(() => {
+    setBox(null);
+    if (!line) return;
+    setVisible(true);
+    let alive = true;
+    getPage(docId, pageNo).then(
+      (p) => {
+        const l = p.lines?.find((x) => x.line_no === line);
+        if (alive && l) setBox({ width: p.width, height: p.height, bbox: l.bbox });
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [docId, pageNo, line]);
+  return (
+    <div ref={ref} className={visible ? "" : "aspect-[1/1.414]"}>
+      {visible && (
+        <PageImage
+          docId={docId}
+          pageNo={pageNo}
+          width={box?.width}
+          height={box?.height}
+          boxes={box ? [{ key: String(line), bbox: box.bbox, className: "hl" }] : []}
+          hideBoxes={!!box}
+          scrollTo={box ? "hl" : undefined}
+        />
       )}
+    </div>
+  );
+}
 
-      <section>
-        <div className="mb-2 flex items-center gap-1">
-          <h3 className="flex-1 text-sm font-medium text-muted">
-            Trang {page} <span className="text-subtle">({pages(from, to)})</span>
-          </h3>
-          <button className="btn-icon btn-sm" disabled={page <= from} onClick={() => setPage((p) => p - 1)} aria-label="Trang trước">
-            <Icon name="chevron_left" />
-          </button>
-          <button className="btn-icon btn-sm" disabled={page >= to} onClick={() => setPage((p) => p + 1)} aria-label="Trang sau">
-            <Icon name="chevron_right" />
-          </button>
-        </div>
-        <div className="overflow-hidden rounded-xl border border-line bg-surface-2">
-          <PageImage docId={doc.document_id} pageNo={page} />
-        </div>
-      </section>
+// ---------------------------------------------------------------- fields
+
+// The fields read from the documents in view (the file, or the section
+// chosen): label above, value below and wrapping; edited in place (U99).
+// Reading costs no model call: fields are extracted when a sheet is built.
+function FieldsColumn({
+  caseId,
+  doc,
+  nodeId,
+  hl,
+  types,
+  onPick,
+  onFold,
+  className,
+}: {
+  caseId: string;
+  doc: TOCDoc;
+  nodeId: string | null;
+  hl: string | null;
+  types: DocType[];
+  onPick: (page: number, line: number) => void;
+  onFold: () => void;
+  className: string;
+}) {
+  const { fail, toast } = useToast();
+  const { nodes } = useTree(doc.document_id);
+  const [list, setList] = useState<CaseDocFields[] | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getCaseFields(caseId, doc.document_id).then(
+      (l) => alive && setList(l),
+      (e) => alive && (fail(e), setList([])),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [caseId, doc.document_id, fail]);
+
+  const node = nodeId ? nodes?.find((n) => n.short_id === nodeId) : undefined;
+  const shown = (list ?? []).filter((g) => !node || (g.page_start <= node.page_end && g.page_end >= node.page_start));
+  const titleOf = (g: CaseDocFields) => nodes?.find((n) => n.doc_type === g.label && n.page_start === g.page_start)?.title || typeTitle(g.label, types);
+
+  const save = async (g: CaseDocFields, f: CaseFieldView, value: string) => {
+    setEditing(null);
+    if (value.trim() === f.value.trim()) return;
+    try {
+      const v = await saveCaseField(caseId, { segment_id: g.segment_id, key: f.key, value });
+      setList((l) => l?.map((x) => (x.segment_id === g.segment_id ? { ...x, fields: x.fields.map((y) => (y.key === f.key ? v : y)) } : x)) ?? null);
+      toast(`Đã lưu ${f.label}`);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  return (
+    <aside className={className + " w-full flex-none flex-col border-l border-line lg:w-80"}>
+      <div className="flex h-11 flex-none items-center gap-2 border-b border-line pr-2 pl-4">
+        <span className="flex-1 text-sm font-medium text-fg">Trường trích xuất</span>
+        <button className="btn-icon btn-sm max-lg:hidden" title="Thu gọn" onClick={onFold}>
+          <Icon name="right_panel_close" size={20} />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto px-3">
+        {!list ? (
+          <Loading />
+        ) : !shown.length ? (
+          <div className="px-2 py-8 text-center text-sm text-subtle">
+            Chưa có trường nào được trích xuất cho {node ? "mục" : "file"} này.
+            <div className="mt-1 text-xs">Trường được lấy khi tạo bảng ở Studio → Xuất Excel.</div>
+          </div>
+        ) : (
+          shown.map((g) => (
+            <section key={g.segment_id} className="border-b border-line pb-3 last:border-b-0">
+              <div className="flex items-start gap-2 px-1 pt-3 pb-2">
+                <i className="mt-1.5 size-2 flex-none rounded-full" style={{ background: typeColor(g.label, types) }} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium wrap-break-word text-fg">{titleOf(g)}</div>
+                  <div className="text-xs text-muted">
+                    {typeTitle(g.label, types)} · {pages(g.page_start, g.page_end)}
+                  </div>
+                </div>
+              </div>
+              <dl className="flex flex-col">
+                {g.fields.map((f) => {
+                  const id = g.segment_id + ":" + f.key;
+                  if (editing === id) return <FieldEditor key={id} f={f} onSave={(v) => save(g, f, v)} onCancel={() => setEditing(null)} />;
+                  const cur = !!f.page_no && hl === `${f.page_no}:${f.line_no}`;
+                  const canSee = !!f.page_no && !!f.line_no;
+                  return (
+                    <div key={id} className="group relative">
+                      <div
+                        role={canSee ? "button" : undefined}
+                        tabIndex={canSee ? 0 : undefined}
+                        title={canSee ? `Xem trên trang ${f.page_no} · nháy đúp để sửa` : "Nháy đúp để sửa"}
+                        onClick={() => canSee && onPick(f.page_no!, f.line_no!)}
+                        onDoubleClick={() => setEditing(id)}
+                        className={"rounded-lg px-2 py-1.5 " + (cur ? "bg-warn-soft" : "hover:bg-fg/5") + (canSee ? " cursor-pointer" : "")}
+                      >
+                        <dt className="pr-7 text-xs text-muted">{f.label}</dt>
+                        <dd className={"mt-0.5 text-sm wrap-break-word whitespace-pre-wrap " + (f.value ? "text-fg" : "text-subtle italic")}>
+                          {f.value || (f.asked ? "không thấy" : "chưa lấy")}{" "}
+                          {f.edited ? <Badge tone="info">đã sửa</Badge> : f.low ? <Badge tone="warn">kiểm tra lại</Badge> : null}
+                        </dd>
+                      </div>
+                      <button
+                        className="btn-icon absolute top-1 right-1 size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-lg:opacity-100"
+                        title={"Sửa " + f.label}
+                        aria-label={"Sửa " + f.label}
+                        onClick={() => setEditing(id)}
+                      >
+                        <Icon name="edit" size={16} />
+                      </button>
+                      {f.edited && (
+                        <div className="flex items-center gap-2 px-2 pb-1 text-[11px] text-muted">
+                          <span className="min-w-0 wrap-break-word">
+                            AI: <s>{f.ai_value || "không thấy"}</s>
+                          </span>
+                          <button className="flex-none text-accent hover:underline" onClick={() => save(g, f, f.ai_value)}>
+                            Hoàn tác
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </dl>
+            </section>
+          ))
+        )}
+      </div>
+    </aside>
+  );
+}
+
+// Edit in place: Enter or leaving the box saves, Esc cancels, Shift+Enter
+// starts a new line.
+function FieldEditor({ f, onSave, onCancel }: { f: CaseFieldView; onSave: (v: string) => void; onCancel: () => void }) {
+  const done = useRef(false);
+  return (
+    <div className="rounded-lg bg-accent/5 px-2 py-1.5">
+      <dt className="text-xs font-medium text-accent">{f.label}</dt>
+      <textarea
+        autoFocus
+        rows={1}
+        aria-label={f.label}
+        defaultValue={f.value}
+        className="input field-sizing-content mt-1 h-auto w-full resize-none py-1.5 text-sm"
+        onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+          if (e.key === "Escape") {
+            done.current = true;
+            onCancel();
+          }
+        }}
+        onBlur={(e) => {
+          if (done.current) return;
+          done.current = true;
+          onSave(e.currentTarget.value);
+        }}
+      />
+      <div className="mt-1 text-[11px] text-subtle">Enter để lưu · Esc để huỷ</div>
     </div>
   );
 }
