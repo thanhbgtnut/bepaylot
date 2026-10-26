@@ -67,7 +67,7 @@ func (s *Service) Optimize(ctx context.Context, owner uuid.UUID, code string, ve
 }
 
 func (s *Service) startJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJob) (types.DocTypeJob, error) {
-	if s.llm == nil {
+	if s.llm == nil || s.extract == nil {
 		return j, ErrNotReady
 	}
 	j, err := s.st.DocTypes.CreateJob(ctx, owner, j)
@@ -131,11 +131,11 @@ func (s *Service) handleJob(ctx context.Context, payload []byte) error {
 		err = s.runJob(ctx, owner, j)
 	}
 	if err != nil {
-		if !errors.Is(err, queue.ErrSkipRetry) && !queue.IsFinalAttempt(ctx) {
+		if !errors.Is(err, queue.ErrSkipRetry) && !authFailed(err) && !queue.IsFinalAttempt(ctx) {
 			return err
 		}
 		s.log.Warn("doctypes: job failed", "job", j.ID, "kind", j.Kind, "err", err)
-		return s.st.DocTypes.FinishJob(context.WithoutCancel(ctx), j.ID, nil, "AI chưa trả lời được, thử lại sau")
+		return s.st.DocTypes.FinishJob(context.WithoutCancel(ctx), j.ID, nil, failReason(err))
 	}
 	return s.st.DocTypes.FinishJob(ctx, j.ID, result, "")
 }
@@ -161,7 +161,7 @@ func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJo
 		if err != nil {
 			return err
 		}
-		out, err := s.runOne(ctx, owner, t, p, smp)
+		out, err := s.runOne(ctx, owner, j.CreatedBy, t, p, smp)
 		if err != nil {
 			return err
 		}
@@ -173,9 +173,11 @@ func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJo
 }
 
 // runOne is one extraction turn of a version on a sample, as when a sheet
-// is built (§6.9.3), without the sample among the examples. Answers are
-// cached by the text sent, so running a version again costs nothing.
-func (s *Service) runOne(ctx context.Context, owner uuid.UUID, t types.CatalogDocType, p types.DocTypePrompt, smp types.DocTypeSample) (map[string]types.RunValue, error) {
+// is built (§6.9.3): the same message (page content and lines of the
+// sample) goes to the same agent turn, run as the user who started the job,
+// without the sample among the examples. Replies are cached by the text
+// sent, so running a version again costs nothing.
+func (s *Service) runOne(ctx context.Context, owner, by uuid.UUID, t types.CatalogDocType, p types.DocTypePrompt, smp types.DocTypeSample) (map[string]types.RunValue, error) {
 	g := docmodel.GuideOf(ctx, s.st, owner, p, smp.ID)
 	var lines []postgres.PageLine
 	md := map[int]string{}
@@ -188,15 +190,67 @@ func (s *Service) runOne(ctx context.Context, owner uuid.UUID, t types.CatalogDo
 		}
 	}
 	text := docmodel.ExtractPrompt(tableOf(t, p), lines, md, size, s.minConf(), g)
-	var raw json.RawMessage
-	if err := s.complete(ctx, "", text, &raw); err != nil {
+	reply, err := s.askExtract(ctx, by, smp.ID, text)
+	if err != nil {
 		return nil, err
 	}
-	out, ok := docmodel.RunValues(p.Fields, string(raw))
+	out, ok := docmodel.RunValues(p.Fields, reply)
 	if !ok {
-		return nil, errors.New("the reply is not JSON")
+		s.log.Warn("doctypes: the reply has no JSON", "sample", smp.ID, "reply", textutil.Truncate(reply, 500))
+		return nil, errNotJSON
 	}
 	return out, nil
+}
+
+var errNotJSON = errors.New("the reply is not JSON")
+
+// askExtract runs the extraction turn of the agent on text, through
+// model_cache (U56); only a reply that parses is cached.
+func (s *Service) askExtract(ctx context.Context, by, sample uuid.UUID, text string) (string, error) {
+	sum := sha256.Sum256([]byte(text))
+	key := "doctype-run:" + hex.EncodeToString(sum[:])
+	if b, ok, err := s.st.ModelCache.Get(ctx, key); err == nil && ok {
+		var reply string
+		if json.Unmarshal(b, &reply) == nil {
+			return reply, nil
+		}
+	}
+	u, err := s.st.Users.Get(ctx, by)
+	if err != nil {
+		return "", fmt.Errorf("%w: user %s: %v", queue.ErrSkipRetry, by, err)
+	}
+	reply, err := s.extract.RunExtract(ctx, u, uuid.Nil, sample, text)
+	if err != nil {
+		return "", err
+	}
+	if _, ok := docmodel.RunValues(nil, reply); ok {
+		if b, err := json.Marshal(reply); err == nil {
+			_ = s.st.ModelCache.Put(ctx, key, "doctype", b)
+		}
+	}
+	return reply, nil
+}
+
+// failReason tells the user, in plain words, why a job did not finish.
+func failReason(err error) string {
+	m := strings.ToLower(err.Error())
+	switch {
+	case authFailed(err):
+		return "Khoá AI không hợp lệ hoặc đã hết hạn, kiểm tra khoá AI trong Cài đặt"
+	case strings.Contains(m, "429") || strings.Contains(m, "rate limit") || strings.Contains(m, "quota"):
+		return "AI đang quá tải hoặc đã hết hạn mức, thử lại sau"
+	case errors.Is(err, errNotJSON):
+		return "AI trả lời không đúng dạng, thử chạy lại"
+	case strings.Contains(m, "timeout") || strings.Contains(m, "deadline"):
+		return "AI trả lời quá lâu, thử lại sau"
+	}
+	return "AI chưa trả lời được, thử lại sau"
+}
+
+// authFailed: the provider refused the key; retrying cannot help.
+func authFailed(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "status code: 401") || strings.Contains(m, "status code: 403") || strings.Contains(m, "invalid api key")
 }
 
 // complete calls the model, through model_cache (U56).
@@ -260,7 +314,7 @@ func (s *Service) optimize(ctx context.Context, owner uuid.UUID, j types.DocType
 			before[smp.ID] = r.Output
 			continue
 		}
-		out, err := s.runOne(ctx, owner, t, p, smp)
+		out, err := s.runOne(ctx, owner, j.CreatedBy, t, p, smp)
 		if err != nil {
 			return nil, err
 		}
@@ -368,7 +422,7 @@ func (s *Service) optimize(ctx context.Context, owner uuid.UUID, j types.DocType
 
 	after := map[uuid.UUID]map[string]types.RunValue{}
 	for _, smp := range reviewed {
-		out, err := s.runOne(ctx, owner, t, np, smp)
+		out, err := s.runOne(ctx, owner, j.CreatedBy, t, np, smp)
 		if err != nil {
 			return nil, err
 		}

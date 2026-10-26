@@ -33,21 +33,37 @@ func (fakeOCR) ParsePage(_ context.Context, in parser.PageImage, _ parser.PageOp
 		Raw:   []byte("{}")}, nil
 }
 
-// readLLM reads the amount wrong until the instructions have a rule, and
-// proposes that rule when asked to optimize.
+// readLLM proposes a rule when asked to optimize.
 type readLLM struct{ calls map[string]int }
 
 func (f *readLLM) CompleteJSON(_ context.Context, system, user string, out any) error {
-	if strings.Contains(system, "cải thiện hướng dẫn") {
-		f.calls["optimize"]++
-		return json.Unmarshal([]byte(`{"patterns":[{"field":"so_tien","finding":"AI giữ chữ đồng","rule":"Số tiền chỉ ghi chữ số, bỏ chữ đồng"},{"field":"khong_co","finding":"x","rule":"y"}],"shots":[]}`), out)
+	f.calls["optimize"]++
+	return json.Unmarshal([]byte(`{"patterns":[{"field":"so_tien","finding":"AI giữ chữ đồng","rule":"Số tiền chỉ ghi chữ số, bỏ chữ đồng"},{"field":"khong_co","finding":"x","rule":"y"}],"shots":[]}`), out)
+}
+
+// agentExtract stands for the agent's extraction turn of a test run: it
+// answers like the agent (prose around a fenced JSON block), reads the
+// amount wrong until the instructions have a rule, and checks it gets the
+// sample's page content and no case. fail makes the provider refuse the key.
+type agentExtract struct {
+	t     *testing.T
+	calls int
+	fail  error
+}
+
+func (f *agentExtract) RunExtract(_ context.Context, _ types.User, caseID, _ uuid.UUID, text string) (string, error) {
+	f.calls++
+	if f.fail != nil {
+		return "", f.fail
 	}
-	f.calls["run"]++
+	if caseID != uuid.Nil || !strings.Contains(text, "UỶ NHIỆM CHI") || !strings.Contains(text, "So tien: 1.500.000 dong") {
+		f.t.Errorf("extract turn: case %s, text:\n%s", caseID, text)
+	}
 	v := "1.500.000 đồng"
-	if strings.Contains(user, "bỏ chữ đồng") {
+	if strings.Contains(text, "bỏ chữ đồng") {
 		v = "1500000"
 	}
-	return json.Unmarshal([]byte(`{"fields":[{"key":"so_tien","value":"`+v+`","page":1,"line":2},{"key":"ngan_hang","value":null}]}`), out)
+	return "Kết quả trích xuất:\n```json\n" + `{"fields":[{"key":"so_tien","value":"` + v + `","page":1,"line":2},{"key":"ngan_hang","value":null}]}` + "\n```", nil
 }
 
 func pngBytes(t *testing.T) []byte {
@@ -70,7 +86,8 @@ func TestDocTypeCatalogAndLab(t *testing.T) {
 	h := testkit.NewWithEngines(t, []parser.Engine{fakeOCR{}}, func(c *config.Config) { c.Parser.DefaultEngine = "fake" })
 	ctx, owner := h.Ctx, h.Owner.ID
 	ai := &readLLM{calls: map[string]int{}}
-	svc := doctypes.New(doctypes.Deps{Store: h.Store, Objects: h.Objects, Queue: h.Queue, Engines: engines(h), LLM: ai, Config: h.Config})
+	ex := &agentExtract{t: t}
+	svc := doctypes.New(doctypes.Deps{Store: h.Store, Objects: h.Objects, Queue: h.Queue, Engines: engines(h), LLM: ai, Extract: ex, Config: h.Config})
 	h.Queue.Register(svc.Handlers(), func(context.Context, string, string, []byte, error, int) {})
 
 	kbA := h.KB(types.KBConfig{}, nil)
@@ -132,6 +149,22 @@ func TestDocTypeCatalogAndLab(t *testing.T) {
 	if _, err := svc.Optimize(ctx, owner, unc.Name, 0, owner); !errors.Is(err, doctypes.ErrNoReviewed) {
 		t.Fatalf("optimize without reviewed: %v", err)
 	}
+	// A provider that refuses the key: the run fails at once with the reason.
+	// Replies cached by an earlier run of this test would answer instead.
+	if _, err := h.Store.Pool.Exec(ctx, `DELETE FROM model_cache WHERE key LIKE 'doctype-run:%'`); err != nil {
+		t.Fatal(err)
+	}
+	ex.fail = errors.New("error, status code: 401, status: 401 Unauthorized, message: Invalid API Key")
+	bad, err := svc.Run(ctx, owner, unc.Name, nil, 0, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Drain()
+	if bad, _ = svc.Job(ctx, owner, unc.Name, bad.ID); bad.Status != types.JobFailed || !strings.Contains(bad.Error, "Khoá AI không hợp lệ") || ex.calls != 1 {
+		t.Fatalf("refused key: job %s %q after %d calls", bad.Status, bad.Error, ex.calls)
+	}
+	ex.fail = nil
+
 	if _, err := svc.Run(ctx, owner, unc.Name, nil, 0, owner); err != nil {
 		t.Fatal(err)
 	}

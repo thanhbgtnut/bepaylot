@@ -269,13 +269,14 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 	split := docmodel.NewSplit(docmodel.SplitDeps{Store: st, Queue: app.enqueuer, Cases: cs, Tree: idx,
 		LLM: completer(cfg.Classify.Provider, cfg.Classify.Model, 4096), Config: cfg, Log: log})
 	idx.SetSplit(split)
-	extractor := docmodel.NewExtractor(st, extractRunner{ag: ag, st: st, cfg: cfg.LLM}, log)
+	runner := extractRunner{ag: ag, st: st, cfg: cfg.LLM}
+	extractor := docmodel.NewExtractor(st, runner, log)
 	extractor.MinOCRConfidence = cfg.Parser.LowConfThreshold
 	sh := sheets.New(sheets.Deps{Store: st, Queue: app.enqueuer, Cases: cs, Extractor: extractor, Config: cfg, Log: log,
 		Objects: objects, FormLLM: completer(cfg.LLM.DefaultProvider, "", 4096)})
 	h.Sheets, h.Split = sh, split
 	dts := doctypes.New(doctypes.Deps{Store: st, Objects: objects, Queue: app.enqueuer, Renderer: sampleRenderer, Engines: engines,
-		LLM: completer(cfg.LLM.DefaultProvider, "", 4096), Config: cfg, Log: log})
+		LLM: completer(cfg.LLM.DefaultProvider, "", 4096), Extract: runner, Config: cfg, Log: log})
 	h.DocTypes = dts
 
 	if cfg.Workers.RunsWorkers() {

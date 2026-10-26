@@ -28,10 +28,16 @@ type extractRunner struct {
 	cfg config.LLM
 }
 
+// RunExtract runs one hidden extraction turn. caseID is uuid.Nil for a test
+// run on a sample of a document type, which belongs to no case.
 func (r extractRunner) RunExtract(ctx context.Context, user types.User, caseID, doc uuid.UUID, text string) (string, error) {
+	var cid *uuid.UUID
+	if caseID != uuid.Nil {
+		cid = &caseID
+	}
 	sess, err := r.st.Sessions.Create(ctx, postgres.CreateParams{
 		UserID: user.ID, Title: "Trích xuất trường", Provider: r.cfg.DefaultProvider, Model: r.cfg.DefaultModel,
-		Metadata: map[string]any{types.SessionExtract: doc.String()}, CaseID: &caseID,
+		Metadata: map[string]any{types.SessionExtract: doc.String()}, CaseID: cid,
 	})
 	if err != nil {
 		return "", err

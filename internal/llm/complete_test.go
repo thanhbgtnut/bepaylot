@@ -10,6 +10,7 @@ func TestDecodeJSON(t *testing.T) {
 		`{"select":["n1","n2"]}`,
 		"Here you go:\n```json\n{\"select\": [\"n1\", \"n2\"]}\n```",
 		`Sure. {"select":["n1","n2"]} Hope this helps {x}`,
+		"<think>Shape is {\"select\": [...]}; draft {n1}.</think>\nAnswer: {\"select\":[\"n1\",\"n2\"]}",
 	}
 	for _, c := range cases {
 		v.Select = nil

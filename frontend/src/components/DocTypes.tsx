@@ -885,15 +885,27 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
     Promise.all(reviewed.map((s) => getSample(t.name, s.id))).then((xs) => setDetails(Object.fromEntries(xs.map((x) => [x.id, x]))), () => {});
   }, [t.name, reviewedKey, cur?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const saveAndRun = async () => {
+  // Lưu: the instructions and fields become a new version in use; nothing runs.
+  const save = async () => {
     if (!draft) return;
     setBusy(true);
     try {
       const fields = draft.fields.filter((f) => f.label.trim()).map((f) => ({ key: f.key, label: f.label.trim(), value_type: f.value_type || "string", description: f.description?.trim() || undefined }));
       const p = await createPrompt(t.name, { instruction: draft.instruction, rules: draft.rules, shots: draft.shots, fields, note: "Sửa tay", use: true });
-      const run = ready.length > 0 && fields.length > 0;
-      if (run) await runSamples(t.name);
-      toast(`Đã lưu hướng dẫn v${p.version}${run ? ` và chạy thử trên ${ready.length} mẫu` : ""}`);
+      toast(`Đã lưu hướng dẫn v${p.version}`);
+      reload();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Chạy thử: AI reads every sample with the version in use.
+  const run = async () => {
+    setBusy(true);
+    try {
+      await runSamples(t.name);
+      toast(`Đang chạy thử hướng dẫn v${cur?.version} trên ${ready.length} mẫu`);
       reload();
     } catch (e) {
       fail(e);
@@ -951,8 +963,16 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
           <button className="btn btn-tonal btn-sm" disabled={!reviewed.length || !!optimizing || dirty} title={!reviewed.length ? "Cần mẫu đã duyệt" : dirty ? "Lưu thay đổi trước" : undefined} onClick={optimize}>
             <Icon name="auto_awesome" size={18} /> Tối ưu bằng AI
           </button>
-          <button className="btn btn-primary btn-sm" disabled={busy || !!optimizing || runningRun || !dirty} title={`Lưu thành v${nextV}${ready.length ? ` rồi chạy trên ${ready.length} mẫu` : ""}`} onClick={saveAndRun}>
-            {busy || runningRun ? <Spinner className="size-4 border-2" /> : <Icon name="play_arrow" size={18} />} Lưu &amp; chạy thử
+          <button
+            className="btn btn-sm"
+            disabled={busy || !!optimizing || runningRun || dirty || !ready.length || !cur.fields.length}
+            title={dirty ? "Lưu thay đổi trước" : !cur.fields.length ? "Thêm trường cần lấy trước" : !ready.length ? "Cần mẫu đã xử lý xong" : `Chạy hướng dẫn v${cur.version} trên ${ready.length} mẫu`}
+            onClick={run}
+          >
+            {runningRun ? <Spinner className="size-4 border-2" /> : <Icon name="play_arrow" size={18} />} Chạy thử
+          </button>
+          <button className="btn btn-primary btn-sm" disabled={busy || !!optimizing || runningRun || !dirty} title={`Lưu thành v${nextV}`} onClick={save}>
+            {busy ? <Spinner className="size-4 border-2" /> : <Icon name="save" size={18} />} Lưu
           </button>
         </>
       )}
@@ -1157,7 +1177,7 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
         </details>
         {editor && dirty && (
           <div className="sticky bottom-0 -mx-6 -mb-6 flex items-center gap-2 border-t border-line bg-surface px-6 py-3">
-            <span className="flex-1 text-xs text-muted">Có thay đổi chưa lưu. Lưu thành v{nextV} rồi chạy thử để xem độ chính xác.</span>
+            <span className="flex-1 text-xs text-muted">Có thay đổi chưa lưu. Bấm Lưu để thành v{nextV}, rồi Chạy thử để xem độ chính xác.</span>
             <button className="btn btn-text btn-sm" onClick={reset}>
               Hoàn tác
             </button>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
 
@@ -68,10 +69,15 @@ func (c *JSONCompleter) CompleteJSON(ctx context.Context, system, user string, o
 	return DecodeJSON(resp.Content, out)
 }
 
+// reasoning is the thinking a reasoning model (qwen3, deepseek-r1) writes
+// before its answer; braces in it are not the answer.
+var reasoning = regexp.MustCompile(`(?s)<think>.*?</think>`)
+
 // DecodeJSON extracts the first JSON object or array from text (tolerating
-// code fences and surrounding prose) and unmarshals it into out.
+// a thinking block, code fences and surrounding prose) and unmarshals it
+// into out.
 func DecodeJSON(text string, out any) error {
-	s := strings.TrimSpace(text)
+	s := strings.TrimSpace(reasoning.ReplaceAllString(text, ""))
 	if i := strings.Index(s, "```"); i >= 0 {
 		rest := s[i+3:]
 		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {

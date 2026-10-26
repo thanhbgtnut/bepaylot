@@ -55,8 +55,11 @@ type Deps struct {
 	Renderer Renderer
 	Engines  *parser.Registry
 	LLM      interfaces.Completer
-	Config   *config.Config
-	Log      *slog.Logger
+	// Extract runs a test run as one extraction turn of the agent, the same
+	// turn a sheet build runs for a document (§6.9.3).
+	Extract docmodel.ExtractRunner
+	Config  *config.Config
+	Log     *slog.Logger
 }
 
 // Service implements the catalogue use cases.
@@ -67,6 +70,7 @@ type Service struct {
 	renderer Renderer
 	engines  *parser.Registry
 	llm      interfaces.Completer
+	extract  docmodel.ExtractRunner
 	cfg      *config.Config
 	log      *slog.Logger
 }
@@ -77,7 +81,7 @@ func New(d Deps) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{st: d.Store, objects: d.Objects, q: d.Queue, renderer: d.Renderer, engines: d.Engines, llm: d.LLM, cfg: d.Config, log: log}
+	return &Service{st: d.Store, objects: d.Objects, q: d.Queue, renderer: d.Renderer, engines: d.Engines, llm: d.LLM, extract: d.Extract, cfg: d.Config, log: log}
 }
 
 // Handlers returns the task handlers.
