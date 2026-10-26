@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
-import { listCaseTypes, listDocuments, reparseDocument, uploadDocuments } from "../../api/endpoints";
-import type { CaseType, KnowledgeBase, UploadResult } from "../../api/types";
+import { getDocument, listCaseTypes, listDocuments, reparseDocument, uploadDocuments } from "../../api/endpoints";
+import type { CaseType, Document, KnowledgeBase, UploadResult } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { useToast } from "../../components/toast";
 import { FileIcon, Icon, Modal, Spinner } from "../../components/ui";
-import { fmtSize } from "../../lib/format";
+import { fmtSize, STATUS, TERMINAL } from "../../lib/format";
 import { PagePicker, type PickFile } from "./PagePicker";
 
 // Bước của hộp thoại tải lên (U111): 1. tải file lên, 2. chọn trang cần xử lý.
@@ -85,25 +85,43 @@ export function UploadDialog({
   const [pick, setPick] = useState<PickFile[] | null>(null);
 
   // Files are uploaded on hold: the server only counts their pages. Wait for
-  // the count, then let the user pick the pages to process (U111).
+  // the count, then let the user pick the pages to process (U111). A file
+  // already in the case (duplicate) joins the same step: still on hold it is
+  // ticked like a new one; already read it is listed unticked, to read again.
   useEffect(() => {
-    if (!result?.batch_id || !result.documents?.some((a) => !a.duplicate)) return;
-    const ids = new Set(result.documents.filter((a) => !a.duplicate).map((a) => a.document_id));
+    const docs = result?.documents ?? [];
+    if (!docs.length) return;
+    const ids = new Set(docs.filter((a) => !a.duplicate).map((a) => a.document_id));
+    const dups = docs.filter((a) => a.duplicate).map((a) => a.document_id);
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
+    let old: Document[] | null = null;
     setCounting(true);
     const poll = async () => {
       try {
-        const { data } = await listDocuments(kb.id, { batchId: result.batch_id, limit: 500 });
+        old ??= await Promise.all(dups.map((id) => getDocument(id)));
+        const mine = ids.size ? (await listDocuments(kb.id, { batchId: result!.batch_id, limit: 500 })).data.filter((d) => ids.has(d.id)) : [];
         if (!alive) return;
-        const mine = data.filter((d) => ids.has(d.id));
         if (mine.length < ids.size || mine.some((d) => d.status === "queued" || d.status === "splitting")) {
           timer = setTimeout(poll, 1000);
           return;
         }
         const failed = mine.filter((d) => d.status === "failed");
         if (failed.length) fail(new Error(`${failed.length} file không đọc được số trang: ${failed.map((d) => d.file_name).join(", ")}`));
-        setPick(mine.filter((d) => d.status === "not_started").map((d) => ({ id: d.id, name: d.file_name, mime: d.mime_type, pages: d.page_count })));
+        const busy = old.filter((d) => !TERMINAL.has(d.status));
+        if (busy.length) toast(`${busy.length} file đã có trong hồ sơ và đang được xử lý: ${busy.map((d) => d.file_name).join(", ")}`);
+        const again = old.filter((d) => TERMINAL.has(d.status) && d.status !== "cancelled" && d.status !== "deleting" && d.page_count > 0);
+        setPick([
+          ...mine.filter((d) => d.status === "not_started").map((d) => ({ id: d.id, name: d.file_name, mime: d.mime_type, pages: d.page_count })),
+          ...again.map((d) => ({
+            id: d.id,
+            name: d.file_name,
+            mime: d.mime_type,
+            pages: d.page_count,
+            off: d.status !== "not_started",
+            note: d.status === "not_started" ? "Đã có trong hồ sơ, chưa xử lý" : `Đã có trong hồ sơ · ${STATUS[d.status]?.[0] ?? d.status} — tick để đọc lại`,
+          })),
+        ]);
         setCounting(false);
       } catch (e) {
         if (alive) (fail(e), setCounting(false));
@@ -114,7 +132,7 @@ export function UploadDialog({
       alive = false;
       clearTimeout(timer);
     };
-  }, [result, kb.id, fail]);
+  }, [result, kb.id, fail, toast]);
 
   // Copy the FileList now: it is live, and clearing the input (so the same
   // file can be picked again) empties it before a deferred state update runs.
@@ -153,7 +171,9 @@ export function UploadDialog({
   };
 
   const total = files.reduce((n, f) => n + f.size, 0);
-  if (pick?.length)
+  if (pick?.length) {
+    // Files not picked stay on hold, except those read before (off).
+    const held = (ids: Set<string>) => pick.filter((f) => !f.off && !ids.has(f.id)).length;
     return (
       <PagePicker
         title="Tải file lên"
@@ -161,25 +181,28 @@ export function UploadDialog({
           <>
             <Stepper step={2} />
             <p className="text-sm">
-              Đã tải lên <b className="font-medium text-fg">{pick.length} file</b>. Bỏ tick file không cần xử lý, sửa khoảng trang của từng file nếu chỉ cần một phần.
+              <b className="font-medium text-fg">{pick.length} file</b> sẵn sàng chọn trang. Bỏ tick file không cần xử lý, sửa khoảng trang của từng file nếu chỉ cần một phần.
             </p>
           </>
         }
         files={pick}
         later
         onClose={() => {
-          toast(`Đã lưu ${pick.length} file ở trạng thái Chưa xử lý`);
+          const n = held(new Set());
+          if (n) toast(`Đã lưu ${n} file ở trạng thái Chưa xử lý`);
           onClose();
         }}
         onSubmit={async (picked) => {
           await eachLimit(picked, 6, (p) => reparseDocument(p.id, { pages: p.pages }));
           const n = picked.reduce((a, p) => a + p.pages.length, 0);
-          toast(`Đang đọc & phân loại ${picked.length} file (${n} trang)${picked.length < pick.length ? ` · ${pick.length - picked.length} file để Chưa xử lý` : ""}`);
+          const left = held(new Set(picked.map((p) => p.id)));
+          toast(`Đang đọc & phân loại ${picked.length} file (${n} trang)${left ? ` · ${left} file để Chưa xử lý` : ""}`);
           onUploaded();
           onClose();
         }}
       />
     );
+  }
   return (
     <Modal
       title="Tải file lên"

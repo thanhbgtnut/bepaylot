@@ -11,7 +11,7 @@ import {
   listPages,
   reparseDocument,
 } from "../../api/endpoints";
-import type { DocumentDetail as Doc, DocumentPage, PageView, TreeNode } from "../../api/types";
+import type { Document, DocumentDetail as Doc, DocumentPage, PageView, TreeNode } from "../../api/types";
 import { Markdown } from "../../components/Markdown";
 import { PageImage } from "../../components/PageImage";
 import { PageSteps, pageSummary, pagesWith, skippedRun } from "../../components/PageState";
@@ -209,7 +209,7 @@ export function DocumentDetail() {
     <div className="flex min-h-0 flex-1 flex-col bg-surface-2/60 text-fg">
       {/* viewer chrome */}
       <header className="flex min-h-16 flex-none items-center gap-1 px-2 py-2">
-        <BackButton fallback="/documents" fallbackLabel="Tài liệu" className={barBtn} />
+        <BackButton fallback="/documents" fallbackLabel="Tài liệu" className="btn btn-text max-w-64 flex-none" />
         <FileIcon mime={doc.mime_type} name={doc.file_name} />
         <div className="ml-2 min-w-0 flex-1">
           <div className="truncate text-base">{doc.file_name}</div>
@@ -566,7 +566,7 @@ function FullMarkdown({ docId, onClose }: { docId: string; onClose: () => void }
 // Đọc lại cùng hộp chọn trang như lúc tải lên (U111); còn trang chưa xử lý
 // thì điền sẵn khoảng đó. Chỉ trang trong khoảng được xử lý; chọn đủ mọi
 // trang thì đọc lại cả file như trước.
-function ReparseDialog({ doc, pages, range, onClose, onDone }: { doc: Doc; pages: DocumentPage[]; range?: [number, number]; onClose: () => void; onDone: () => void }) {
+export function ReparseDialog({ doc, pages, range, onClose, onDone }: { doc: Document; pages: DocumentPage[]; range?: [number, number]; onClose: () => void; onDone: () => void }) {
   const skipped = pagesWith(pages, "skipped");
   const fresh = skipped.length === doc.page_count;
   return (

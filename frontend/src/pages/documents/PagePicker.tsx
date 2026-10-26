@@ -10,6 +10,8 @@ export interface PickFile {
   mime?: string;
   pages: number;
   note?: ReactNode;
+  /** Không tick sẵn (file đã xử lý trước đó). Bỏ qua khi chỉ có một file. */
+  off?: boolean;
 }
 
 export interface Picked {
@@ -50,7 +52,7 @@ export function PagePicker({
 }) {
   const { fail } = useToast();
   const one = files.length === 1;
-  const [sel, setSel] = useState(() => new Set(files.map((_, i) => i)));
+  const [sel, setSel] = useState(() => new Set(files.map((_, i) => i).filter((i) => one || !files[i].off)));
   const [ranges, setRanges] = useState<[number, number][]>(() => files.map((f) => (one && range ? range : [1, f.pages])));
   const [q, setQ] = useState("");
   const [last, setLast] = useState<number | null>(null);

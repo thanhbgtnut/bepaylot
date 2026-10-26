@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { deleteDocument, downloadOriginal, listDocuments, reparseDocument } from "../../api/endpoints";
-import type { Case, Document } from "../../api/types";
+import { deleteDocument, downloadOriginal, listDocuments, listPages, reparseDocument } from "../../api/endpoints";
+import type { Case, Document, DocumentPage } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { caseLabel } from "../../components/CasePicker";
 import { NeedKB, TopBar } from "../../components/Layout";
@@ -10,6 +10,7 @@ import { Thumb } from "../../components/Thumb";
 import { useToast } from "../../components/toast";
 import { Empty, FileIcon, Icon, Loading, Menu, MetaChips, StatusBadge, type MenuItem } from "../../components/ui";
 import { fmtDate, fmtSize, isBusy, parseKeyValues, STATUS, TERMINAL } from "../../lib/format";
+import { ReparseDialog } from "./DocumentDetail";
 import { UploadDialog } from "./UploadDialog";
 
 const STATUS_FILTERS: [string, string][] = [
@@ -52,6 +53,8 @@ export function DocumentsPage() {
   const [view, setView] = useState<View>(loadView);
   const [sort, setSort] = useState<{ by: Sort; desc: boolean }>({ by: "date", desc: true });
   const [upload, setUpload] = useState<File[] | null>(sp.get("upload") ? [] : null);
+  // File whose pages to process is being picked (⋮ → Chọn trang xử lý).
+  const [pickFor, setPickFor] = useState<{ doc: Document; pages: DocumentPage[] } | null>(null);
   const [dragging, setDragging] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -122,6 +125,13 @@ export function DocumentsPage() {
     { icon: "download", label: "Tải xuống", onClick: () => downloadOriginal(d).catch(fail) },
     { icon: "forum", label: "Hỏi đáp về thư viện", onClick: () => nav("/chat") },
     { divider: true, label: "" },
+    {
+      icon: "tune",
+      label: "Chọn trang xử lý…",
+      // Pages are picked on a finished file only, as in the file viewer.
+      disabled: !TERMINAL.has(d.status) || d.status === "cancelled" || d.status === "deleting" || !d.page_count,
+      onClick: () => listPages(d.id).then((pages) => setPickFor({ doc: d, pages }), fail),
+    },
     {
       icon: "refresh",
       label: "Đọc lại",
@@ -338,6 +348,19 @@ export function DocumentsPage() {
             Thả file để tải lên <b>{kb.name}</b>
           </div>
         </div>
+      )}
+
+      {pickFor && (
+        <ReparseDialog
+          doc={pickFor.doc}
+          pages={pickFor.pages}
+          onClose={() => setPickFor(null)}
+          onDone={() => {
+            setPickFor(null);
+            toast(`Đang xử lý “${pickFor.doc.file_name}” theo trang đã chọn`);
+            load();
+          }}
+        />
       )}
 
       {upload && (
