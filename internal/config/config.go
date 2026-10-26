@@ -177,7 +177,12 @@ func (s MCPServerSpec) Validate() error {
 
 // HTTP holds the Hertz server settings.
 type HTTP struct {
-	Addr            string        `yaml:"addr"`
+	Addr string `yaml:"addr"`
+	// ContextRoot is the path prefix the app lives under when an ingress
+	// serves several web apps on one domain (https://host/bepaylot/…):
+	// API, Swagger and web app are mounted under it. "" = the domain root.
+	// The ingress forwards the path unchanged (no rewrite).
+	ContextRoot     string        `yaml:"context_root"`
 	ReadTimeout     time.Duration `yaml:"read_timeout"`
 	WriteTimeout    time.Duration `yaml:"write_timeout"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
@@ -215,9 +220,12 @@ type OIDC struct {
 	// Provider is the stable id stored on users created through it.
 	Provider string `yaml:"provider"`
 	// DisplayName labels the login button ("Đăng nhập bằng <DisplayName>").
-	DisplayName  string   `yaml:"display_name"`
-	IssuerURL    string   `yaml:"issuer_url"`
-	ClientID     string   `yaml:"client_id"`
+	DisplayName string `yaml:"display_name"`
+	// IssuerURL is the issuer, or a Keycloak realm URL in any usual shape
+	// (…/realms/<realm>, …/auth/realms/<realm>, an endpoint under it).
+	IssuerURL string `yaml:"issuer_url"`
+	ClientID  string `yaml:"client_id"`
+	// ClientSecret is empty for a public client (PKCE only).
 	ClientSecret string   `yaml:"client_secret"`
 	Scopes       []string `yaml:"scopes"`
 	// RedirectURL is the callback registered at the provider
@@ -331,6 +339,17 @@ func Load(path string) (*Config, error) {
 func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("BEPAYLOT_HTTP_ADDR"); v != "" {
 		c.HTTP.Addr = v
+	}
+	if v := os.Getenv("BEPAYLOT_OIDC_REALM_URL"); v != "" && c.Auth.OIDC.IssuerURL == "" {
+		c.Auth.OIDC.IssuerURL = v
+	}
+	if v := os.Getenv("BEPAYLOT_CONTEXT_ROOT"); v != "" {
+		c.HTTP.ContextRoot = v
+	}
+	c.HTTP.ContextRoot = NormalizeContextRoot(c.HTTP.ContextRoot)
+	// After OIDC sign-in the browser returns to the app's login page.
+	if c.HTTP.ContextRoot != "" && c.Auth.OIDC.FrontendURL == "" {
+		c.Auth.OIDC.FrontendURL = c.HTTP.ContextRoot + "/login"
 	}
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		c.DB.DSN = v
@@ -474,6 +493,16 @@ func (c *Config) applyDefaults() {
 
 	c.applyPipelineDefaults()
 	c.applyCasesDefaults()
+}
+
+// NormalizeContextRoot turns "bepaylot", "/bepaylot/" or "/bepaylot" into
+// "/bepaylot", and "" or "/" into "".
+func NormalizeContextRoot(p string) string {
+	p = strings.Trim(strings.TrimSpace(p), "/")
+	if p == "" {
+		return ""
+	}
+	return "/" + p
 }
 
 func (c *Config) validate() error {

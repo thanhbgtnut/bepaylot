@@ -17,11 +17,18 @@ const keepPlaceholder: Plugin = {
 // In dev, /v1 is proxied to the bepaylot API so the browser stays same-origin
 // (no CORS, and the session tokens never leave localhost). Override the target with
 // BEPAYLOT_API=http://host:port npm run dev.
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const target = env.BEPAYLOT_API || "http://localhost:8080";
+  // BEPAYLOT_CONTEXT_ROOT (e.g. /bepaylot): the dev server serves the app
+  // and proxies the API under it, like the server behind an ingress.
+  const root = "/" + (env.BEPAYLOT_CONTEXT_ROOT ?? "").replace(/^\/+|\/+$/g, "");
+  const prefix = root === "/" ? "" : root;
   return {
     plugins: [react(), tailwindcss(), keepPlaceholder],
+    // Relative asset URLs: the server puts <base href="{context root}/"> in
+    // index.html (BEPAYLOT_CONTEXT_ROOT), so one build runs under any path.
+    base: command === "build" ? "./" : prefix + "/",
     // The graph route lazy-loads three.js (~1 MB); the rest stays small.
     build: { chunkSizeWarningLimit: 1200, outDir, emptyOutDir: true },
     server: {
@@ -29,8 +36,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // xfwd: the API sees the browser's host (X-Forwarded-Host), so the
         // OIDC callback URL it derives points back at this dev server.
-        "/v1": { target, changeOrigin: true, xfwd: true },
-        "/healthz": { target, changeOrigin: true },
+        [prefix + "/v1"]: { target, changeOrigin: true, xfwd: true },
+        [prefix + "/healthz"]: { target, changeOrigin: true },
       },
     },
   };

@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -21,7 +23,10 @@ import (
 //
 //  1. GET /v1/auth/oidc/start → a random nonce goes into an HttpOnly cookie
 //     and, with the callback URL and the frontend page to return to, into a
-//     signed "state"; 302 to the provider.
+//     signed "state"; 302 to the provider. Every flow uses PKCE (S256), so a
+//     public client (client id only, no secret, e.g. an internal Keycloak
+//     client) works; the verifier is derived from the nonce and the server
+//     secret, so it needs no storage.
 //  2. The provider redirects to GET /v1/auth/oidc/callback?code&state. The
 //     state signature, age and nonce cookie are checked (the cookie binds the
 //     flow to this browser), the code is exchanged, the ID token verified
@@ -72,19 +77,115 @@ func (s *Service) provider(ctx context.Context) (*oidcProvider, error) {
 	}
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
-	p, err := oidc.NewProvider(dctx, s.cfg.OIDC.IssuerURL)
+	p, err := discover(dctx, s.cfg.OIDC.IssuerURL)
 	if err != nil {
-		return nil, fmt.Errorf("oidc discovery %s: %w", s.cfg.OIDC.IssuerURL, err)
+		return nil, err
 	}
 	s.oidcProv = &oidcProvider{provider: p, verifier: p.Verifier(&oidc.Config{ClientID: s.cfg.OIDC.ClientID})}
 	return s.oidcProv, nil
 }
 
+// issuerCandidates turns the URL an admin pastes for the provider into the
+// issuer URLs to try for discovery, most likely first. Besides an exact
+// issuer it accepts a Keycloak realm URL in its usual shapes: with or
+// without the legacy /auth prefix or a trailing /auth, "realm" for
+// "realms", an endpoint under the realm (…/protocol/openid-connect/auth) or
+// the discovery URL itself.
+func issuerCandidates(raw string) []string {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	u = strings.TrimSuffix(u, "/.well-known/openid-configuration")
+	if i := strings.Index(u, "/protocol/openid-connect"); i >= 0 {
+		u = u[:i]
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(c string) {
+		if c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	bases := []string{u}
+	if t := strings.TrimSuffix(u, "/auth"); t != u {
+		bases = append(bases, t)
+	}
+	for _, b := range bases {
+		add(b)
+		if strings.Contains(b, "/realm/") {
+			add(strings.Replace(b, "/realm/", "/realms/", 1))
+		}
+	}
+	// Keycloak before 17 serves realms under /auth.
+	for _, c := range append([]string(nil), out...) {
+		if i := strings.Index(c, "/realms/"); i >= 0 && !strings.HasSuffix(c[:i], "/auth") {
+			add(c[:i] + "/auth" + c[i:])
+		}
+	}
+	return out
+}
+
+// discover finds the provider from the configured URL (issuerCandidates).
+// The issuer the provider names in its discovery document is trusted even
+// when it differs from the URL used to reach it (an internal Keycloak
+// reached by another host name than its public one); ID tokens are then
+// checked against that issuer.
+func discover(ctx context.Context, raw string) (*oidc.Provider, error) {
+	var errs []string
+	for _, c := range issuerCandidates(raw) {
+		issuer, err := discoveryIssuer(ctx, c)
+		if err == nil {
+			var p *oidc.Provider
+			if p, err = oidc.NewProvider(oidc.InsecureIssuerURLContext(ctx, issuer), c); err == nil {
+				return p, nil
+			}
+		}
+		errs = append(errs, c+": "+err.Error())
+	}
+	return nil, fmt.Errorf("oidc discovery failed for %s (%s)", raw, strings.Join(errs, "; "))
+}
+
+// discoveryIssuer reads the issuer of a discovery document.
+func discoveryIssuer(ctx context.Context, base string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("discovery answered %s", resp.Status)
+	}
+	var doc struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil || doc.Issuer == "" {
+		return "", fmt.Errorf("not a discovery document")
+	}
+	return doc.Issuer, nil
+}
+
+// pkceVerifier is the PKCE code verifier of a flow: an HMAC of its nonce,
+// so the callback recomputes it from the state and the provider never sees
+// it before the code exchange.
+func (s *Service) pkceVerifier(nonce string) string {
+	m := hmac.New(sha256.New, append([]byte("oidc-pkce:"), s.secret...))
+	m.Write([]byte(nonce))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
 func (s *Service) oauth2Config(p *oidcProvider, redirectURL string) *oauth2.Config {
+	ep := p.provider.Endpoint()
+	if s.cfg.OIDC.ClientSecret == "" {
+		// Public client: client_id goes in the form body, no Basic auth.
+		ep.AuthStyle = oauth2.AuthStyleInParams
+	}
 	return &oauth2.Config{
 		ClientID:     s.cfg.OIDC.ClientID,
 		ClientSecret: s.cfg.OIDC.ClientSecret,
-		Endpoint:     p.provider.Endpoint(),
+		Endpoint:     ep,
 		RedirectURL:  redirectURL,
 		Scopes:       s.cfg.OIDC.Scopes,
 	}
@@ -111,7 +212,7 @@ func (s *Service) OIDCStart(ctx context.Context, redirectURL, returnTo string) (
 	if err != nil {
 		return "", "", err
 	}
-	return s.oauth2Config(p, redirectURL).AuthCodeURL(state, oidc.Nonce(nonce)), nonce, nil
+	return s.oauth2Config(p, redirectURL).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(s.pkceVerifier(nonce))), nonce, nil
 }
 
 // OIDCUserError is an OIDC failure whose Code is safe to show in the UI.
@@ -146,7 +247,7 @@ func (s *Service) OIDCCallback(ctx context.Context, code, rawState, cookieNonce 
 		return Tokens{}, false, oidcErr("provider_unavailable", err)
 	}
 	cfg := s.oauth2Config(p, st.RedirectURI)
-	tok, err := cfg.Exchange(ctx, code)
+	tok, err := cfg.Exchange(ctx, code, oauth2.VerifierOption(s.pkceVerifier(st.Nonce)))
 	if err != nil {
 		return Tokens{}, false, oidcErr("exchange_failed", err)
 	}

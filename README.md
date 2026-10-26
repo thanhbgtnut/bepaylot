@@ -531,7 +531,7 @@ có ở Swagger `/docs` và `/openapi.yaml`.
 | Skill, MCP | `POST /skills/sync`, `GET /skills`, `GET/POST /mcp/servers`, `DELETE /mcp/servers/{name}` |
 | Vận hành | `GET /admin/queues`, `GET /admin/dead-letters`, `POST /admin/dead-letters/{id}/retry`; chỉ cho email trong `http.admin_emails` |
 
-Công khai, không cần key: `/healthz`, `/readyz`, `/docs`, `/openapi.yaml`.
+Công khai, không cần key: `/healthz`, `/readyz`, `/docs`, `/openapi.yaml` (có `BEPAYLOT_CONTEXT_ROOT` thì nằm dưới tiền tố đó, vd `/bepaylot/docs`).
 
 Các API tài liệu trả `503` nếu server không cấu hình được S3 hoặc Redis
 (ngoài môi trường `development`).
@@ -546,6 +546,7 @@ Cấu hình nằm trong `configs/config.yaml`; mọi giá trị `${VAR}` đượ
 |---|---|---|
 | `DATABASE_URL` | Postgres | bắt buộc |
 | `BEPAYLOT_HTTP_ADDR` | địa chỉ API | `:8080` |
+| `BEPAYLOT_CONTEXT_ROOT` | tiền tố đường dẫn khi chạy sau ingress một domain nhiều web (vd `/bepaylot` → `https://bepay.com/bepaylot/`); API, Swagger, web app đều dưới tiền tố, ingress không rewrite; `/healthz`, `/readyz` có cả ở gốc | rỗng = gốc domain |
 | `BEPAYLOT_ROLE` | `api` \| `worker` \| `all` | `all` |
 | `REDIS_ADDR` | Redis cho asynq | rỗng = chạy task trong process (chỉ dev, 1 instance) |
 | `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_DB` | tài khoản Redis (ACL user, mật khẩu) và số DB | container dev dùng mật khẩu `REDIS_PASSWORD` (mặc định `bepaylot`); username rỗng = `default`; DB `0` |

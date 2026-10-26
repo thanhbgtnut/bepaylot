@@ -11,6 +11,7 @@ import (
 	hertzSwagger "github.com/hertz-contrib/swagger"
 	swaggerFiles "github.com/swaggo/files"
 
+	"github.com/thanhenti/bepaylot/docs"
 	appcfg "github.com/thanhenti/bepaylot/internal/config"
 	"github.com/thanhenti/bepaylot/internal/handler"
 	"github.com/thanhenti/bepaylot/internal/middleware"
@@ -43,17 +44,29 @@ func New(cfg appcfg.HTTP, h *handler.Handlers, log *slog.Logger) *server.Hertz {
 		middleware.CORS(cfg.CORSOrigins),
 	)
 
-	hz.GET("/healthz", h.Healthz)
-	hz.GET("/readyz", h.Readyz)
+	// Everything lives under the context root (http.context_root, e.g.
+	// /bepaylot) so an ingress can serve several apps on one domain. Probes
+	// also answer at the domain root, where the kubelet calls them.
+	base := cfg.ContextRoot
+	root := &hz.RouterGroup
+	if base != "" {
+		// Swagger UI's "Try it out" calls the API under the context root.
+		docs.SwaggerInfo.BasePath = base
+		root = hz.Group(base)
+		hz.GET("/healthz", h.Healthz)
+		hz.GET("/readyz", h.Readyz)
+	}
+	root.GET("/healthz", h.Healthz)
+	root.GET("/readyz", h.Readyz)
 
 	// API documentation (no auth). Swagger UI at /swagger/index.html; the raw
 	// generated spec at /openapi.yaml; /docs redirects to the UI.
-	hz.GET("/swagger/*any", hertzSwagger.WrapHandler(swaggerFiles.Handler))
-	hz.GET("/openapi.yaml", h.OpenAPISpec)
-	hz.GET("/docs", h.DocsRedirect)
+	root.GET("/swagger/*any", hertzSwagger.WrapHandler(swaggerFiles.Handler))
+	root.GET("/openapi.yaml", h.OpenAPISpec)
+	root.GET("/docs", h.DocsRedirect)
 
 	// Sign-in (no auth): the login page, token refresh and the OIDC flow.
-	pub := hz.Group("/v1/auth")
+	pub := root.Group("/v1/auth")
 	{
 		pub.GET("/config", h.AuthConfig)
 		pub.POST("/register", h.Register)
@@ -68,7 +81,7 @@ func New(cfg appcfg.HTTP, h *handler.Handlers, log *slog.Logger) *server.Hertz {
 	if h.Auth != nil {
 		tokens = h.Auth
 	}
-	v1 := hz.Group("/v1", middleware.Auth(tokens, h.Store.APIKeys, h.Store.Users, cfg.AuthBypass))
+	v1 := root.Group("/v1", middleware.Auth(tokens, h.Store.APIKeys, h.Store.Users, cfg.AuthBypass))
 	{
 		v1.GET("/auth/me", h.Me)
 		v1.POST("/auth/change-password", h.ChangePassword)
@@ -102,7 +115,7 @@ func New(cfg appcfg.HTTP, h *handler.Handlers, log *slog.Logger) *server.Hertz {
 
 	// The web app (frontend/, embedded at build time) on every other path.
 	if ui, ok := webui.FS(); ok {
-		hz.NoRoute(webui.Handler(ui))
+		hz.NoRoute(webui.Handler(ui, base))
 	} else {
 		log.Info("web app not embedded (run make ui before go build); serving the API only")
 	}

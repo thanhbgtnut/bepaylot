@@ -221,12 +221,12 @@ func (h *Handlers) OIDCStart(ctx context.Context, c *app.RequestContext) {
 		h.badRequest(c, "return_to is not a trusted origin (add it to http.cors_origins)")
 		return
 	}
-	authURL, nonce, err := h.Auth.OIDCStart(ctx, h.Auth.OIDCRedirectURL(origin+"/v1/auth/oidc/callback"), returnTo)
+	authURL, nonce, err := h.Auth.OIDCStart(ctx, h.Auth.OIDCRedirectURL(origin+h.contextRoot()+"/v1/auth/oidc/callback"), returnTo)
 	if err != nil {
 		h.authError(c, err)
 		return
 	}
-	c.SetCookie(oidcNonceCookie, nonce, 600, "/v1/auth/oidc", "", protocol.CookieSameSiteLaxMode, isHTTPS(c), true)
+	c.SetCookie(oidcNonceCookie, nonce, 600, h.contextRoot()+"/v1/auth/oidc", "", protocol.CookieSameSiteLaxMode, isHTTPS(c), true)
 	c.Redirect(consts.StatusFound, []byte(authURL))
 }
 
@@ -255,7 +255,7 @@ func (h *Handlers) OIDCCallback(ctx context.Context, c *app.RequestContext) {
 	}
 	// The nonce cookie is single use.
 	nonce := string(c.Cookie(oidcNonceCookie))
-	c.SetCookie(oidcNonceCookie, "", -1, "/v1/auth/oidc", "", protocol.CookieSameSiteLaxMode, isHTTPS(c), true)
+	c.SetCookie(oidcNonceCookie, "", -1, h.contextRoot()+"/v1/auth/oidc", "", protocol.CookieSameSiteLaxMode, isHTTPS(c), true)
 
 	if e := string(c.Query("error")); e != "" {
 		fail(e, string(c.Query("error_description")))

@@ -190,7 +190,22 @@ Cần `curl`; `jq` và `redis-cli` nếu có sẽ cho kết quả chi tiết hơ
 | `GET /v1/admin/dead-letters?task_type=&scope_id=&limit=` | admin | task đã hết lượt retry | xem lỗi, retry (§6) |
 | `POST /v1/admin/dead-letters/{id}/retry` | admin | đưa lại task vào hàng đợi | sau khi đã sửa nguyên nhân |
 
-Probe Kubernetes gợi ý: liveness `GET /healthz` (period 10 s, fail 3), readiness `GET /readyz` (period 10 s). Worker không mở cổng HTTP khi `role=worker`: dùng liveness theo process, và theo dõi hàng đợi (§4.6).
+Probe Kubernetes gợi ý: liveness `GET /healthz` (period 10 s, fail 3), readiness `GET /readyz` (period 10 s). Hai đường dẫn này luôn có ở gốc pod, kể cả khi đặt `BEPAYLOT_CONTEXT_ROOT`.
+
+**Chạy sau ingress một domain nhiều web (U112).** Đặt `BEPAYLOT_CONTEXT_ROOT=/bepaylot`; ingress chuyển nguyên đường dẫn, **không** dùng `rewrite-target`:
+
+```yaml
+spec:
+  rules:
+    - host: bepay.com
+      http:
+        paths:
+          - path: /bepaylot
+            pathType: Prefix
+            backend: { service: { name: bepaylot-api, port: { number: 8080 } } }
+```
+
+Web ở `https://bepay.com/bepaylot/`, API ở `https://bepay.com/bepaylot/v1/…`, Swagger ở `https://bepay.com/bepaylot/docs`. SSE (`/v1/documents/:id/events`, chat) cần ingress không đệm phản hồi (vd nginx `proxy-buffering: "off"`) và timeout đọc đủ dài. OIDC: đăng ký callback `https://bepay.com/bepaylot/v1/auth/oidc/callback`. Worker không mở cổng HTTP khi `role=worker`: dùng liveness theo process, và theo dõi hàng đợi (§4.6).
 
 ### 4.4 Kiểm tra từng phụ thuộc bằng tay
 
@@ -279,12 +294,13 @@ Mỗi mục: tính năng làm gì, cấu hình, cách kiểm tra, sự cố thư
 - **API key** (`sk-bepaylot-…`) **không hết hạn**: dùng được tới khi bị thu hồi. Đăng xuất, đổi mật khẩu, đổi `BEPAYLOT_JWT_SECRET` **không** ảnh hưởng API key.
 - Dữ liệu (knowledge base, hồ sơ, phiên hỏi đáp) thuộc về **tài khoản** tạo ra nó; tài khoản khác không thấy.
 
-**Cấu hình:** `auth.*` trong `config.yaml`; `BEPAYLOT_JWT_SECRET`, `BEPAYLOT_REGISTRATION`, `BEPAYLOT_OIDC_ENABLED`, `BEPAYLOT_OIDC_DISPLAY_NAME`, `BEPAYLOT_OIDC_ISSUER_URL`, `BEPAYLOT_OIDC_CLIENT_ID`, `BEPAYLOT_OIDC_CLIENT_SECRET`, `BEPAYLOT_OIDC_SCOPES`, `BEPAYLOT_OIDC_REDIRECT_URL`, `BEPAYLOT_OIDC_FRONTEND_URL`.
+**Cấu hình:** `auth.*` trong `config.yaml`; `BEPAYLOT_JWT_SECRET`, `BEPAYLOT_REGISTRATION`, `BEPAYLOT_OIDC_ENABLED`, `BEPAYLOT_OIDC_DISPLAY_NAME`, `BEPAYLOT_OIDC_ISSUER_URL` (hoặc `BEPAYLOT_OIDC_REALM_URL`), `BEPAYLOT_OIDC_CLIENT_ID`, `BEPAYLOT_OIDC_CLIENT_SECRET`, `BEPAYLOT_OIDC_SCOPES`, `BEPAYLOT_OIDC_REDIRECT_URL`, `BEPAYLOT_OIDC_FRONTEND_URL`.
 
 **Bật OIDC (Keycloak, Azure AD, Google…):**
 
-1. Tạo client loại *confidential*, grant *authorization code*, scope `openid email profile`.
-2. Redirect URI ở provider = `https://<domain-web>/v1/auth/oidc/callback`. Đặt đúng giá trị này vào `BEPAYLOT_OIDC_REDIRECT_URL` ở production (không để hệ thống tự suy từ header).
+1. Tạo client grant *authorization code*, scope `openid email profile`. Client *confidential* (có secret) hoặc *public* (chỉ có client id, như Keycloak nội bộ): public thì để trống `BEPAYLOT_OIDC_CLIENT_SECRET`, đăng nhập dùng PKCE S256 (bật "PKCE Code Challenge Method = S256" ở client Keycloak cũng được).
+   - Provider: `BEPAYLOT_OIDC_ISSUER_URL` (issuer chính xác) hoặc với Keycloak chỉ cần **`BEPAYLOT_OIDC_REALM_URL`** = URL realm ở dạng nào cũng được (`http://keycloak-internal.abc.com/realms/internal`, `…/auth/realms/internal`, `…/realm/internal/auth`, cả URL endpoint dưới realm). Server thử các dạng đó, lấy issuer từ tài liệu discovery của realm (chấp nhận issuer khác host khi Keycloak gọi nội bộ bằng tên khác). Không thấy realm thì log `oidc discovery failed for … (…)` ghi từng URL đã thử.
+2. Redirect URI ở provider = `https://<domain-web>/v1/auth/oidc/callback` (có context root thì `https://<domain-web>/bepaylot/v1/auth/oidc/callback`); "Web origins" của client Keycloak thêm `https://<domain-web>`. Đặt đúng giá trị này vào `BEPAYLOT_OIDC_REDIRECT_URL` ở production (không để hệ thống tự suy từ header).
 3. Nếu web và API khác domain: thêm domain web vào `http.cors_origins`, và đặt `BEPAYLOT_OIDC_FRONTEND_URL=https://<domain-web>/login`.
 4. Khởi động lại `api`; trang login hiện nút "Đăng nhập bằng <DISPLAY_NAME>".
 5. Người dùng OIDC được nhận ra theo `sub`, rồi theo email (gắn vào tài khoản cùng email có sẵn); chưa có thì tự tạo. Provider phải trả email đã xác minh.

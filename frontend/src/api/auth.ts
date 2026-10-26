@@ -1,4 +1,5 @@
 // Sign-in endpoints (/v1/auth/*), modelled on WeKnora's auth API.
+import { CONTEXT_ROOT } from "../lib/contextRoot";
 import { request, session, settings } from "./client";
 import type { APIKey, AuthConfig, AuthTokens, AuthUser } from "./types";
 
@@ -31,7 +32,7 @@ export const revokeAPIKey = (id: string) => request(`/auth/api-keys/${id}`, { me
 // The browser navigates here (not fetch): the server sets a nonce cookie
 // and redirects to the OIDC provider. return_to brings the browser back to
 // this page even when the API is on another origin.
-export const oidcStartURL = () => settings.base + "/v1/auth/oidc/start?return_to=" + encodeURIComponent(location.origin + "/login");
+export const oidcStartURL = () => settings.base + "/v1/auth/oidc/start?return_to=" + encodeURIComponent(location.origin + CONTEXT_ROOT + "/login");
 
 // The OIDC callback returns to /login with #oidc_result=<base64url JSON> or
 // #oidc_error=<code>&oidc_error_description=…

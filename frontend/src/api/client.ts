@@ -3,6 +3,7 @@
 // JSON requests, authenticated blob URLs for page images, multipart upload
 // with progress, and SSE parsing.
 
+import { CONTEXT_ROOT } from "../lib/contextRoot";
 import type { AuthTokens, AuthUser } from "./types";
 
 const store = {
@@ -23,10 +24,11 @@ const store = {
   },
 };
 
-// An empty base means "same origin": in dev, vite proxies /v1 to the API.
+// The default base is the app's own origin and context root: in dev, vite
+// proxies /v1 to the API.
 export const settings = {
   get base(): string {
-    return store.get("base", import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+    return store.get("base", import.meta.env.VITE_API_BASE ?? CONTEXT_ROOT).replace(/\/+$/, "");
   },
   set base(v: string) {
     store.set("base", v.trim() || null);

@@ -93,3 +93,22 @@ func sortedKeys(m map[string]bool) string {
 	sort.Strings(ks)
 	return strings.Join(ks, ", ")
 }
+
+// With a context root every route moves under it; the probes also stay at
+// the domain root for the kubelet.
+func TestRoutesUnderContextRoot(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	hz := New(config.HTTP{Addr: "127.0.0.1:0", ContextRoot: "/bepaylot"}, &handler.Handlers{Store: &postgres.Store{}}, log)
+	paths := map[string]bool{}
+	for _, r := range hz.Routes() {
+		paths[r.Method+" "+r.Path] = true
+		if !strings.HasPrefix(r.Path, "/bepaylot/") && r.Path != "/healthz" && r.Path != "/readyz" {
+			t.Errorf("route outside the context root: %s %s", r.Method, r.Path)
+		}
+	}
+	for _, want := range []string{"GET /healthz", "GET /bepaylot/healthz", "POST /bepaylot/v1/auth/login", "GET /bepaylot/swagger/*any", "GET /bepaylot/v1/documents/:id"} {
+		if !paths[want] {
+			t.Errorf("missing route %s", want)
+		}
+	}
+}

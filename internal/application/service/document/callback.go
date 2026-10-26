@@ -56,7 +56,7 @@ func (s *Service) scheduleCallback(ctx context.Context, docID uuid.UUID) error {
 	id := uuid.New()
 	cb, created, err := s.st.Callbacks.Create(ctx, types.DocumentCallback{
 		ID: id, DocumentID: d.ID, Gen: d.Gen, Run: d.CallbackRun, Event: event, URL: d.CallbackURL,
-		MaxAttempts: s.cfg.Callback.MaxAttempts, Payload: callbackPayload(id, event, d, s.caseCode(ctx, d.CaseID)),
+		MaxAttempts: s.cfg.Callback.MaxAttempts, Payload: callbackPayload(id, event, d, s.caseCode(ctx, d.CaseID), s.cfg.HTTP.ContextRoot),
 	})
 	if err != nil || !created {
 		return err
@@ -70,8 +70,9 @@ func (s *Service) enqueueCallback(ctx context.Context, id uuid.UUID, attempt int
 }
 
 // callbackPayload is the JSON body. It is fixed when the delivery is created,
-// so every attempt sends the same bytes (and signature input).
-func callbackPayload(id uuid.UUID, event string, d types.Document, caseCode string) map[string]any {
+// so every attempt sends the same bytes (and signature input). api is the
+// context root the links start with (http.context_root).
+func callbackPayload(id uuid.UUID, event string, d types.Document, caseCode, api string) map[string]any {
 	doc := map[string]any{
 		"id": d.ID, "kb_id": d.KBID, "case_id": d.CaseID, "case_code": caseCode, "file_name": d.FileName, "mime_type": d.MimeType, "size_bytes": d.SizeBytes,
 		"gen": d.Gen, "status": d.Status, "parse_status": d.ParseStatus, "index_status": d.IndexStatus,
@@ -89,9 +90,9 @@ func callbackPayload(id uuid.UUID, event string, d types.Document, caseCode stri
 	return map[string]any{
 		"event": event, "delivery_id": id, "occurred_at": time.Now().UTC().Format(time.RFC3339Nano), "document": doc,
 		"links": map[string]string{
-			"document": "/v1/documents/" + d.ID.String(),
-			"markdown": "/v1/documents/" + d.ID.String() + "/markdown",
-			"pages":    "/v1/documents/" + d.ID.String() + "/pages",
+			"document": api + "/v1/documents/" + d.ID.String(),
+			"markdown": api + "/v1/documents/" + d.ID.String() + "/markdown",
+			"pages":    api + "/v1/documents/" + d.ID.String() + "/pages",
 		},
 	}
 }

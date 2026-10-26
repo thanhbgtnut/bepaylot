@@ -4,6 +4,7 @@
 package webui
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"io/fs"
@@ -33,12 +34,29 @@ func FS() (fs.FS, bool) {
 // apiPrefixes are never answered with the app: an unknown API path stays a 404.
 var apiPrefixes = []string{"/v1/", "/swagger/", "/healthz", "/readyz", "/openapi.yaml"}
 
-// Handler serves files of ui; unknown paths get index.html so client-side
-// routes (/cases/…, /chat/…) load the app. Hashed assets are cached for a
-// year, index.html never.
-func Handler(ui fs.FS) app.HandlerFunc {
+// Handler serves files of ui under the context root base ("" or e.g.
+// "/bepaylot"); unknown paths get index.html so client-side routes
+// (/cases/…, /chat/…) load the app. index.html gets <base href="{base}/">:
+// the build uses relative asset URLs, and the app reads its context root
+// from that tag, so one build runs under any context root. Hashed assets are
+// cached for a year, index.html never.
+func Handler(ui fs.FS, base string) app.HandlerFunc {
+	index, _ := fs.ReadFile(ui, "index.html")
+	index = bytes.Replace(index, []byte("<head>"), []byte(`<head><base href="`+base+`/">`), 1)
 	return func(_ context.Context, c *app.RequestContext) {
 		p := string(c.Path())
+		if base != "" {
+			// The domain root and the bare context root go to the app.
+			if p == "/" || p == base {
+				c.Redirect(consts.StatusFound, []byte(base+"/"))
+				return
+			}
+			if !strings.HasPrefix(p, base+"/") {
+				c.JSON(consts.StatusNotFound, map[string]any{"type": "error", "error": map[string]string{"type": "not_found_error", "message": "not found"}})
+				return
+			}
+			p = strings.TrimPrefix(p, base)
+		}
 		for _, pre := range apiPrefixes {
 			if strings.HasPrefix(p, pre) {
 				c.JSON(consts.StatusNotFound, map[string]any{"type": "error", "error": map[string]string{"type": "not_found_error", "message": "not found"}})
@@ -54,9 +72,9 @@ func Handler(ui fs.FS) app.HandlerFunc {
 			name = "index.html"
 		}
 		data, err := fs.ReadFile(ui, name)
-		if err != nil {
-			name = "index.html"
-			if data, err = fs.ReadFile(ui, name); err != nil {
+		if err != nil || name == "index.html" {
+			name, data = "index.html", index
+			if len(data) == 0 {
 				c.String(consts.StatusNotFound, "web app not built")
 				return
 			}

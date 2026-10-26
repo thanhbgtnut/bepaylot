@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -165,6 +166,7 @@ type fakeIdP struct {
 	srv           *httptest.Server
 	key           *rsa.PrivateKey
 	nonce         string
+	challenge     string // PKCE code_challenge of the last authorization request
 	sub, email    string
 	emailVerified bool
 }
@@ -191,7 +193,8 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		if r.Form.Get("code") != "good-code" {
+		sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
+		if r.Form.Get("code") != "good-code" || base64.RawURLEncoding.EncodeToString(sum[:]) != p.challenge {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -227,7 +230,7 @@ func TestOIDCFlow(t *testing.T) {
 		if u.Query().Get("nonce") != nonce || u.Query().Get("client_id") != "bepaylot-test" {
 			t.Fatalf("authorization url: %s", authURL)
 		}
-		idp.nonce = nonce
+		idp.nonce, idp.challenge = nonce, u.Query().Get("code_challenge")
 		if rt := s.OIDCReturnTo(u.Query().Get("state")); rt != "http://web.local/login" {
 			t.Fatalf("return_to from state: %q", rt)
 		}

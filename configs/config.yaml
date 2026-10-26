@@ -7,6 +7,9 @@ env: ${BEPAYLOT_ENV}
 
 http:
   addr: ${BEPAYLOT_HTTP_ADDR}
+  # Path prefix of every route behind an ingress (e.g. /bepaylot); "" = domain
+  # root. Overridden by BEPAYLOT_CONTEXT_ROOT.
+  context_root: ""
   read_timeout: 65s
   write_timeout: 0s          # keep 0 for SSE
   shutdown_timeout: 20s
@@ -33,9 +36,11 @@ auth:
     enabled: ${BEPAYLOT_OIDC_ENABLED}     # empty/false = no OIDC button
     provider: oidc                        # stored on users created through OIDC
     display_name: ${BEPAYLOT_OIDC_DISPLAY_NAME}   # button label, e.g. Keycloak; default SSO
+    # Issuer, or a Keycloak realm URL in any usual shape (…/realms/main, …/auth/realms/main);
+    # empty = BEPAYLOT_OIDC_REALM_URL.
     issuer_url: ${BEPAYLOT_OIDC_ISSUER_URL}       # e.g. https://sso.example.com/realms/main
     client_id: ${BEPAYLOT_OIDC_CLIENT_ID}
-    client_secret: ${BEPAYLOT_OIDC_CLIENT_SECRET}
+    client_secret: ${BEPAYLOT_OIDC_CLIENT_SECRET} # empty = public client (PKCE)
     # scopes default to [openid, email, profile]; BEPAYLOT_OIDC_SCOPES overrides (comma separated)
     # Callback registered at the provider; empty = <request origin>/v1/auth/oidc/callback
     # (in dev through Vite: http://localhost:5174/v1/auth/oidc/callback).

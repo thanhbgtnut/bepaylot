@@ -10,6 +10,7 @@ import { DocTypePage } from "./components/DocTypes";
 import { Layout } from "./components/Layout";
 import { SettingsPage } from "./components/SettingsDialog";
 import { ToastProvider } from "./components/toast";
+import { CONTEXT_ROOT } from "./lib/contextRoot";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { CasePage } from "./pages/cases/CasePage";
 import { SplitPage } from "./pages/cases/SplitPage";
@@ -47,7 +48,7 @@ const router = createBrowserRouter([
       { path: "*", element: <Navigate to="/documents" replace /> },
     ],
   },
-]);
+], { basename: CONTEXT_ROOT || "/" });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
