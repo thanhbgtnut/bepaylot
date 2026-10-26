@@ -21,12 +21,6 @@ build: ## Build all binaries
 ui: ## Build the web app into internal/webui/dist (embedded by the server binary)
 	cd frontend && npm ci && npm run build
 
-# internal/webui/dist is not in git: a server built or run without this step
-# embeds whatever web build was left on the machine, possibly an old one.
-.PHONY: ui-build
-ui-build: ## Rebuild the web app (npm ci only when node_modules is missing)
-	cd frontend && { [ -d node_modules ] || npm ci; } && npm run build
-
 .PHONY: build-server
 build-server: ui ## Build bin/server with the web app embedded
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/server ./cmd/server
@@ -58,7 +52,7 @@ bench-render: ## Benchmark PDF page rendering (N7a); BEPAYLOT_RENDER_MODE=multi_
 	cd docpipe && go test ./parser/pdf/ -run xxx -bench BenchmarkRenderA4 -benchtime 50x
 
 .PHONY: run-api
-run-api: ui-build ## Run only the HTTP API (needs REDIS_ADDR)
+run-api: ## Run only the HTTP API (needs REDIS_ADDR)
 	go run ./cmd/server -config $(CONFIG) -role api
 
 .PHONY: run-worker
@@ -107,7 +101,7 @@ docs: swag ## Alias for `swag`; then run `make test` to check route/spec drift
 	@echo "run 'make test' — TestRoutesMatchOpenAPISpec catches un-annotated routes"
 
 .PHONY: run
-run: ui-build ## Run the API server
+run: ## Run the API server
 	go run ./cmd/server -config $(CONFIG)
 
 .PHONY: dev
