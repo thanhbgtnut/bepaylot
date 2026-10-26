@@ -53,6 +53,16 @@ func (r extractRunner) RunExtract(ctx context.Context, user types.User, caseID, 
 	return b.String(), err
 }
 
+// agentAsker sends one prompt to the agent's model (agent.Extract: default
+// provider and model, streamed, no tools), for the optimization of a
+// document type's instructions (§6.9.10).
+type agentAsker struct{ ag *agent.Agent }
+
+func (a agentAsker) Ask(ctx context.Context, prompt string) (string, error) {
+	res, err := a.ag.Extract(ctx, agent.ExtractRequest{Prompt: prompt})
+	return res.Text, err
+}
+
 // billParse attributes the model calls of a per-document pipeline task (VLM
 // pages, the document card) to the document's uploader (§8.5).
 func billParse(meter *usage.Service, handlers map[string]queue.Handler) {

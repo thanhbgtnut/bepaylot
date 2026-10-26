@@ -3,7 +3,6 @@ package doctypes_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
@@ -34,12 +33,16 @@ func (fakeOCR) ParsePage(_ context.Context, in parser.PageImage, _ parser.PageOp
 		Raw:   []byte("{}")}, nil
 }
 
-// readLLM proposes a rule when asked to optimize.
+// readLLM stands for the agent's model asked to optimize: it answers like
+// the agent (a thinking block and prose around the JSON) and proposes a rule.
 type readLLM struct{ calls map[string]int }
 
-func (f *readLLM) CompleteJSON(_ context.Context, system, user string, out any) error {
+func (f *readLLM) Ask(_ context.Context, prompt string) (string, error) {
 	f.calls["optimize"]++
-	return json.Unmarshal([]byte(`{"patterns":[{"field":"so_tien","finding":"AI giữ chữ đồng","rule":"Số tiền chỉ ghi chữ số, bỏ chữ đồng"},{"field":"khong_co","finding":"x","rule":"y"}],"shots":[]}`), out)
+	if !strings.Contains(prompt, "cải thiện hướng dẫn") || !strings.Contains(prompt, "1.500.000 đồng") {
+		return "", errors.New("the optimize prompt lacks the instructions or the errors")
+	}
+	return "<think>Lỗi lặp: {so_tien} giữ chữ đồng.</think>\nĐề xuất: " + `{"patterns":[{"field":"so_tien","finding":"AI giữ chữ đồng","rule":"Số tiền chỉ ghi chữ số, bỏ chữ đồng"},{"field":"khong_co","finding":"x","rule":"y"}],"shots":[]}`, nil
 }
 
 // agentExtract stands for the agent's extraction turn of a test run: it
@@ -93,7 +96,7 @@ func TestDocTypeCatalogAndLab(t *testing.T) {
 	ctx, owner := h.Ctx, h.Owner.ID
 	ai := &readLLM{calls: map[string]int{}}
 	ex := &agentExtract{t: t}
-	svc := doctypes.New(doctypes.Deps{Store: h.Store, Objects: h.Objects, Queue: h.Queue, Engines: engines(h), LLM: ai, Extract: ex, Config: h.Config})
+	svc := doctypes.New(doctypes.Deps{Store: h.Store, Objects: h.Objects, Queue: h.Queue, Engines: engines(h), Ask: ai, Extract: ex, Config: h.Config})
 	h.Queue.Register(svc.Handlers(), func(context.Context, string, string, []byte, error, int) {})
 
 	kbA := h.KB(types.KBConfig{}, nil)
@@ -198,12 +201,11 @@ func TestDocTypeCatalogAndLab(t *testing.T) {
 		t.Fatalf("sample score %+v", list)
 	}
 
+	// The optimization runs in the call: the job it returns is finished.
 	job, err := svc.Optimize(ctx, owner, unc.Name, 0, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Drain()
-	job, _ = svc.Job(ctx, owner, unc.Name, job.ID)
 	p := job.Result
 	if job.Status != types.JobDone || p == nil || p.None || len(p.Patterns) != 1 || len(p.Rules) != 1 {
 		t.Fatalf("optimize job %+v %+v", job, p)

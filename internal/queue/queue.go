@@ -40,10 +40,6 @@ type Policy struct {
 	Timeout  time.Duration
 }
 
-// quick are the tasks a user watches: a failed attempt is retried after
-// seconds instead of asynq's default (15 s and more, growing).
-var quick = map[string]bool{types.TaskDocTypeJob: true}
-
 var policies = map[string]Policy{
 	types.TaskDocumentSplit:    {3, 5 * time.Minute},
 	types.TaskPageRender:       {3, 10 * time.Minute},
@@ -157,21 +153,11 @@ func NewWorkers(c config.Redis, concurrency map[string]int, log *slog.Logger, ha
 			Concurrency:     n,
 			Queues:          types.QueueWeightsForPool(pool),
 			ShutdownTimeout: 20 * time.Second,
-			RetryDelayFunc:  retryDelay,
 			Logger:          asynqLogger{log.With("pool", pool)},
 			LogLevel:        asynq.WarnLevel,
 		}))
 	}
 	return w
-}
-
-// retryDelay waits 2, 4, 6 … s before retrying a quick task, asynq's
-// default before any other.
-func retryDelay(n int, err error, t *asynq.Task) time.Duration {
-	if quick[t.Type()] {
-		return time.Duration(2*(n+1)) * time.Second
-	}
-	return asynq.DefaultRetryDelayFunc(n, err, t)
 }
 
 // Start runs every server (non-blocking).

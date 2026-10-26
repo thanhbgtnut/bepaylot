@@ -23,7 +23,6 @@ import (
 	"github.com/thanhenti/bepaylot/internal/queue"
 	"github.com/thanhenti/bepaylot/internal/storage"
 	"github.com/thanhenti/bepaylot/internal/types"
-	"github.com/thanhenti/bepaylot/internal/types/interfaces"
 )
 
 // Errors the HTTP layer maps to status codes.
@@ -54,12 +53,19 @@ type Deps struct {
 	Queue    queue.Enqueuer
 	Renderer Renderer
 	Engines  *parser.Registry
-	LLM      interfaces.Completer
 	// Extract runs a test run as one extraction turn of the agent, the same
 	// turn a sheet build runs for a document (§6.9.3).
 	Extract docmodel.ExtractRunner
-	Config  *config.Config
-	Log     *slog.Logger
+	// Ask is one call of the agent's model without tools (agent.Extract):
+	// the optimization's analysis of the errors.
+	Ask    Asker
+	Config *config.Config
+	Log    *slog.Logger
+}
+
+// Asker sends one prompt to the agent's model and returns its answer.
+type Asker interface {
+	Ask(ctx context.Context, prompt string) (string, error)
 }
 
 // Service implements the catalogue use cases.
@@ -69,8 +75,8 @@ type Service struct {
 	q        queue.Enqueuer
 	renderer Renderer
 	engines  *parser.Registry
-	llm      interfaces.Completer
 	extract  docmodel.ExtractRunner
+	ask      Asker
 	cfg      *config.Config
 	log      *slog.Logger
 }
@@ -81,12 +87,15 @@ func New(d Deps) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{st: d.Store, objects: d.Objects, q: d.Queue, renderer: d.Renderer, engines: d.Engines, llm: d.LLM, extract: d.Extract, cfg: d.Config, log: log}
+	return &Service{st: d.Store, objects: d.Objects, q: d.Queue, renderer: d.Renderer, engines: d.Engines, extract: d.Extract, ask: d.Ask, cfg: d.Config, log: log}
 }
 
 // Handlers returns the task handlers.
 func (s *Service) Handlers() map[string]queue.Handler {
-	return map[string]queue.Handler{types.TaskDocTypeSample: s.handleSample, types.TaskDocTypeJob: s.handleJob}
+	// doctype:job ran test runs and optimizations until 0.37 (U117): they now
+	// run in the request. One still queued is dropped; its job row is closed
+	// as interrupted when the jobs are listed.
+	return map[string]queue.Handler{types.TaskDocTypeSample: s.handleSample, types.TaskDocTypeJob: func(context.Context, []byte) error { return nil }}
 }
 
 func notFound(err error) error {

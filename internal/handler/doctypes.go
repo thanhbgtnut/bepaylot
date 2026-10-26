@@ -612,14 +612,14 @@ func (h *Handlers) PromptText(ctx context.Context, c *app.RequestContext) {
 
 // OptimizeDocType handles POST /v1/doc-types/{code}/optimize.
 //
-// @Summary      Ask the AI to improve a version (U98), in the background (task doctype:job)
-// @Description  Needs a reviewed sample. The job's result is the proposal: rules per field, examples, line diff of the texts, accuracy before/after per field and the cells that got worse; or {none: true}. Apply it with POST …/prompts (use=true). Billed as kind parse to the caller.
+// @Summary      Ask the AI to improve a version (U98)
+// @Description  Needs a reviewed sample. Calls the agent in the request (not queued) and returns the finished job: status done with the proposal in result, or failed with the reason in error; each agent call is bounded by doc_types.run_timeout. The result is the proposal: rules per field, examples, line diff of the texts, accuracy before/after per field and the cells that got worse; or {none: true}. Apply it with POST …/prompts (use=true). Billed as kind parse to the caller.
 // @Tags         DocTypes
 // @Accept       json
 // @Produce      json
 // @Param        code     path      string              true  "Type code"
 // @Param        request  body      dto.VersionRequest  true  "Version to improve (0 = in use)"
-// @Success      202      {object}  types.DocTypeJob
+// @Success      200      {object}  types.DocTypeJob
 // @Failure      422      {object}  dto.ErrorResponse
 // @Security     ApiKeyAuth
 // @Router       /v1/doc-types/{code}/optimize [post]
@@ -642,7 +642,7 @@ func (h *Handlers) OptimizeDocType(ctx context.Context, c *app.RequestContext) {
 		h.docTypeError(c, err)
 		return
 	}
-	c.JSON(consts.StatusAccepted, j)
+	c.JSON(consts.StatusOK, j)
 }
 
 // ListDocTypeJobs handles GET /v1/doc-types/{code}/jobs.

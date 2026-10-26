@@ -7,10 +7,11 @@
 >
 > **Luồng hỏi đáp:** câu hỏi → LLM duyệt cây mục lục (mục lục hồ sơ → cây của file) → chọn đúng trang → nạp các trang đó vào context → trả lời có trích dẫn dòng gốc (§6.6).
 >
-> Thay đổi trong 0.37 (U114–U117): **tải lên có nút Tiếp tục, chọn trang từ danh sách, chạy thử gọi thẳng agent** (§6.9.10, §7.2, §7.11, §10.9, §11)
+> Thay đổi trong 0.37 (U114–U118): **tải lên có nút Tiếp tục, chọn trang từ danh sách, chạy thử gọi thẳng agent** (§6.9.10, §7.2, §7.11, §10.9, §11)
 > - Tải lên (U114): tải xong hộp thoại đứng ở bước 1 với nút **Tiếp tục** (tắt khi server còn đếm trang) và **Để sau**; file trùng đã có trong hồ sơ cũng vào bước 2 (chưa xử lý thì tick sẵn, đã xử lý thì không tick, ghi "tick để đọc lại").
 > - Danh sách Tài liệu (U115): menu ⋮ có **Chọn trang xử lý…** mở hộp chọn trang như bước 2 (chỉ khi file không đang xử lý).
-> - Loại giấy tờ (U116, U117): nút **Lưu** (chỉ lưu hướng dẫn và trường thành phiên bản mới) tách khỏi **Chạy thử**; chạy thử là **lượt trích xuất của agent** như khi tạo bảng (cùng tin nhắn, có tool `calculate`/`json_validate`), **chạy ngay trong request** (không qua hàng đợi), các mẫu chạy song song tối đa 4, mỗi mẫu giới hạn `doc_types.run_timeout` (mặc định 60s); request trả job đã xong (`done` hoặc `failed` kèm lý do bằng lời: khoá AI sai, quá hạn mức, trả lời sai dạng, quá lâu). Trả lời không có JSON thì hỏi lại ngay một lần; phần `<think>` của model suy luận bị bỏ trước khi đọc JSON. Tối ưu vẫn chạy nền (`doctype:job`), lỗi tạm thời thử lại sau 2/4/6s.
+> - Loại giấy tờ (U116, U117): nút **Lưu** (chỉ lưu hướng dẫn và trường thành phiên bản mới) tách khỏi **Chạy thử**; chạy thử là **lượt trích xuất của agent** như khi tạo bảng (cùng tin nhắn, có tool `calculate`/`json_validate`), **chạy ngay trong request** (không qua hàng đợi), các mẫu chạy song song tối đa 4, mỗi mẫu giới hạn `doc_types.run_timeout` (mặc định 60s); request trả job đã xong (`done` hoặc `failed` kèm lý do bằng lời: khoá AI sai, quá hạn mức, trả lời sai dạng, quá lâu). Trả lời không có JSON thì hỏi lại ngay một lần; phần `<think>` của model suy luận bị bỏ trước khi đọc JSON.
+> - Tối ưu bằng AI (U118) cũng **gọi thẳng agent trong request**: lần phân tích lỗi qua `agent.Extract` (không tool, streaming), các lần chấm mẫu trước/sau qua lượt agent trích xuất, song song tối đa 4; mỗi lần gọi giới hạn `doc_types.run_timeout`; request trả job đã xong có đề xuất ở `result`. Task `doctype:job` không còn dùng (task cũ còn trong hàng bị bỏ qua); job `running` quá giới hạn thời gian được đóng là "bị gián đoạn".
 >
 > Thay đổi trong 0.36 (U112, U113): **context root**, **Keycloak nội bộ client public** (§10, §10.6, §11)
 > - OIDC (U113): `BEPAYLOT_OIDC_REALM_URL` nhận URL realm Keycloak ở dạng bất kỳ, issuer đọc từ discovery; client không có secret dùng PKCE S256 (mọi luồng OIDC đều gửi PKCE).
@@ -302,6 +303,7 @@ Các yêu cầu dưới đây là nguồn của spec, ghi theo thứ tự đưa 
 | U115 | Cho phép **sửa số trang xử lý ở nút ⋮** trong danh sách tài liệu | còn hiệu lực; bổ sung U111 (cùng hộp chọn trang với Đọc lại) | §7.2 |
 | U116 | Tính năng "Lưu & chạy thử" **chia làm 2 nút**: **Lưu** lưu hướng dẫn và trường; **Chạy thử** gọi **agent trích xuất** theo các thông tin đó với text theo trang của giấy tờ; giả lập và sửa lỗi chạy thử | còn hiệu lực; sửa U98 (bớt nút: thanh trên có Tối ưu, Chạy thử, Lưu), U94 (4) (chạy thử qua agent như khi tạo bảng) | §6.9.10, §7.11 |
 | U117 | Ấn chạy thử thì **kết hợp prompt và text gọi luôn agent, không cần queue**; **giới hạn timeout** cho việc gọi này (màn "AI đang đọc theo hướng dẫn" treo rất lâu) | còn hiệu lực; làm rõ U116 | §6.9.10, §10.9, §11 |
+| U118 | Phần **tối ưu bằng AI cũng tương tự**: **không dùng queue**, **gọi trực tiếp agent** | còn hiệu lực; bổ sung U117, sửa U98 (tối ưu không còn chạy nền) | §6.9.10, §10.9 |
 
 ## 1. Yêu cầu chung
 
@@ -594,7 +596,7 @@ sequenceDiagram
 | `document:delete` | low | 3 | 1h | `del:{doc}` |
 | `case:delete` | low | 3 | 1h | `delcase:{case}` |
 | `case:sheet` | index_interactive | 3 | 60m (gồm cả trích xuất, U80; retry chỉ làm tiếp phần còn thiếu) | `sheet:{sheet}` |
-| `doctype:sample` | index_interactive | 3 | 20m (đọc một tài liệu mẫu bằng `docpipe`, U94, §6.9.10; tối ưu (`doctype:job`) cũng ở queue này, thử lại sau 2/4/6s; chạy thử không qua queue, U117) | `sample:{id}` |
+| `doctype:sample` | index_interactive | 3 | 20m (đọc một tài liệu mẫu bằng `docpipe`, U94, §6.9.10; chạy thử và tối ưu không qua queue, gọi agent trong request, U117, U118; `doctype:job` cũ chỉ còn để bỏ qua task sót) | `sample:{id}` |
 
 ### 4.5 Dead-letter và pending ops (theo WeKnora)
 
@@ -1861,10 +1863,10 @@ bước: MATCH(hoa_don.ben_ban, hop_dong.ben_ban, "tên"), CONTAINS(hoa_don.noi_
 
 **Hướng dẫn AI có phiên bản (U94, U98).** `doc_type_prompts` (`code`, `version`, `instruction`, `fields[]` = trường của phiên bản, `rules[]`, `shots[]` = mẫu đã duyệt dùng làm ví dụ, `note`, `created_by`); `doc_types.prompt_version` là phiên bản đang dùng. Phiên bản không sửa tại chỗ: lưu là tạo phiên bản mới (số = lớn nhất + 1, không dùng lại số đã xoá); xoá được mọi phiên bản trừ phiên bản đang dùng; đổi phiên bản đang dùng có hiệu lực từ lần trích xuất kế tiếp (field đã có không bị hỏi lại, U80). Toàn văn gửi model ghép theo thứ tự: hướng dẫn chung → các trường (tên, mô tả, U81) → quy tắc theo trường → ví dụ → tài liệu cần đọc (Nội dung, rồi Các dòng bỏ dòng dưới ngưỡng tin cậy); viết bằng chữ thường, không có cú pháp kỹ thuật, để người nghiệp vụ đọc được (U101).
 
-**Tối ưu bằng AI (U94 (6), U98).** `POST /doc-types/:code/optimize {version}` (cần ít nhất một mẫu đã duyệt) tạo job chạy nền; trang theo dõi job, đề xuất nằm ở `doc_type_jobs.result` tới khi người dùng áp dụng hoặc bỏ:
-1. Code gom các ô sai của phiên bản trên mẫu đã duyệt theo trường (giá trị AI, giá trị đúng, dòng nguồn).
-2. Một lần gọi model nhận các lỗi đó cùng hướng dẫn hiện tại, trả `{patterns:[{field, finding, rule}], shots:[{sample, why}]}`: mỗi trường hay sai một **quy tắc** viết bằng lời, và các mẫu nên làm **ví dụ** (phủ nhiều lỗi nhất).
-3. Code dựng phiên bản đề xuất (chưa lưu) và chạy thử nó trên mọi mẫu đã duyệt; mẫu được chọn làm ví dụ được chấm **bỏ-một-ra** (khi chấm chính nó, ví dụ của nó bị bỏ khỏi tin nhắn) để điểm không cao giả.
+**Tối ưu bằng AI (U94 (6), U98).** `POST /doc-types/:code/optimize {version}` (cần ít nhất một mẫu đã duyệt) **gọi agent ngay trong request** (U118, không qua hàng đợi): dòng `doc_type_jobs` (`kind=optimize`, `sample_ids` = mẫu đã duyệt) để các màn khác biết đang chạy và giữ đề xuất ở `result` tới khi người dùng áp dụng hoặc bỏ; request trả job đã xong. Mọi lần gọi model giới hạn `doc_types.run_timeout`; trả lời không có JSON thì hỏi lại ngay một lần:
+1. Code gom các ô sai của phiên bản trên mẫu đã duyệt theo trường (giá trị AI, giá trị đúng, dòng nguồn); mẫu đã duyệt chưa chạy với phiên bản này được chạy thử trước (song song tối đa 4).
+2. Một lần gọi model qua agent (`agent.Extract`: một tin nhắn, không tool, streaming) nhận các lỗi đó cùng hướng dẫn hiện tại, trả `{patterns:[{field, finding, rule}], shots:[{sample, why}]}`: mỗi trường hay sai một **quy tắc** viết bằng lời, và các mẫu nên làm **ví dụ** (phủ nhiều lỗi nhất).
+3. Code dựng phiên bản đề xuất (chưa lưu) và chạy thử nó trên mọi mẫu đã duyệt (lượt agent trích xuất, song song tối đa 4); mẫu được chọn làm ví dụ được chấm **bỏ-một-ra** (khi chấm chính nó, ví dụ của nó bị bỏ khỏi tin nhắn) để điểm không cao giả.
 4. Trả về đề xuất kèm: so sánh dòng của toàn văn cũ → mới (thuật toán LCS theo dòng; mỗi dòng thêm gắn với trường hoặc mẫu là lý do của nó), điểm trước/sau theo trường và các ô **bị giảm**. Người dùng **Áp dụng** (thành phiên bản mới, dùng ngay) hoặc **Bỏ**. Không tìm được lỗi lặp lại rõ ràng thì trả "không có đề xuất".
 Lần gọi model ghi `kind=parse` cho người bấm; kết quả cache trong `model_cache` theo băm của đầu vào (U56).
 
@@ -2025,7 +2027,7 @@ Luồng: **Cài đặt (mục dưới cùng thanh bên trái, `/settings`, U72, 
 - **Thanh trên**: "Hướng dẫn vN · độ chính xác x% trên m mẫu × n trường"; ba nút (U116): **Tối ưu bằng AI** (tắt khi chưa có mẫu đã duyệt), **Chạy thử** (chạy phiên bản đang dùng trên mọi mẫu đã xử lý; tắt khi có thay đổi chưa lưu, chưa có trường hoặc chưa có mẫu xử lý xong) và nút chính **Lưu** (chỉ lưu hướng dẫn và trường thành phiên bản mới, tắt khi không có thay đổi). Bấm Chạy thử thì hiện ngay "AI đang đọc theo hướng dẫn vN…" tới khi request trả về; lỗi hiện bằng thông báo.
 - **Trái — soạn**: thẻ **Trường cần lấy** (bảng: tên trường, mã tự sinh chỉ đọc, kiểu dữ liệu Văn bản / Số / Số tiền / Ngày / Có–Không ứng với `string`, `number`, `money`, `date`, `bool`, mô tả hướng dẫn AI; luôn có dòng trống cuối để gõ trường mới); **Hướng dẫn chung** (ô văn bản); **Quy tắc theo trường** (mỗi quy tắc một dòng, nút xoá, dòng trống cuối để gõ quy tắc mới); **Ví dụ cho AI** (chip các mẫu đã duyệt, bật để dùng làm ví dụ; ghi chú chấm bỏ-một-ra bằng lời: "Khi chấm điểm chính mẫu đó, AI không được xem ví dụ này để điểm không bị cao giả"); cuối cùng mục thu gọn **Xem toàn văn gửi cho AI** (số ký tự; nội dung là chữ thường, §6.9.10).
 - **Phải — điểm và phiên bản**: **Điểm theo trường · vN**: mỗi trường một dòng, mỗi mẫu đã duyệt một dấu ✓/✗ (rê chuột xem giá trị AI và giá trị đúng), % bên phải. Dưới là **Phiên bản (n)**, **mặc định mở** (thu được): mỗi phiên bản một dòng (số, ghi chú, người tạo, thời gian, độ chính xác); dòng đang dùng tô nền; **bấm một dòng là dùng lại phiên bản đó**; nút xoá chỉ hiện khi rê chuột (hỏi xác nhận; phiên bản đang dùng không xoá được).
-- **Khi tối ưu**: cột phải hiện một dòng trạng thái "AI đang cải thiện hướng dẫn vN…" (không liệt kê bước). Có đề xuất thì:
+- **Khi tối ưu**: bấm nút thì cột phải hiện ngay một dòng trạng thái "AI đang cải thiện hướng dẫn vN…" (không liệt kê bước) tới khi request trả về; không xong thì hiện lý do bằng thông báo (U118). Có đề xuất thì:
   - một **băng ngang** dưới thanh trên: "Đề xuất hướng dẫn vM: độ chính xác a% → b%", số dòng thêm/bớt, số quy tắc, số ví dụ; chỉ hai nút **Bỏ** và **Áp dụng thành vM**;
   - **trái** thành **so sánh toàn văn cũ → mới** (một cột, dòng thêm nền xanh, dòng bỏ nền đỏ gạch ngang, mỗi dòng thêm có nhãn trường liên quan), chữ thường, không phải phông mã;
   - **phải** là **Vì sao thay đổi** (mỗi trường hay sai: tên, "sai k/m mẫu", phát hiện; mỗi mẫu chọn làm ví dụ: lý do) — bấm một mục thì tô và cuộn tới các dòng tương ứng ở bên trái — và bảng **điểm trước/sau theo trường**, ghi rõ ô nào bị giảm ở mẫu nào.
@@ -3102,7 +3104,7 @@ Danh mục là của người gọi (chủ sở hữu, như thư viện). Đọc
 | PUT | `/doc-types/:code/prompts/current` | `{version}`: đổi phiên bản đang dùng |
 | DELETE | `/doc-types/:code/prompts/:version` | xoá phiên bản; phiên bản đang dùng → `409` |
 | GET | `/doc-types/:code/prompts/:version/text` | toàn văn gửi model của phiên bản (chữ thường) |
-| POST | `/doc-types/:code/optimize` | `{version}` → `202` kèm job; job xong có `result` = đề xuất `{version, instruction, fields, rules, shots, patterns, diff, before, after, by_field, worse}` hoặc `{none: true}`; áp dụng = `POST …/prompts` với nội dung đề xuất và `use=true` |
+| POST | `/doc-types/:code/optimize` | `{version}` → `200` kèm job **đã xong** (gọi agent trong request, U118; `failed` + `error` khi không xong); `result` = đề xuất `{version, instruction, fields, rules, shots, patterns, diff, before, after, by_field, worse}` hoặc `{none: true}`; áp dụng = `POST …/prompts` với nội dung đề xuất và `use=true` |
 | GET | `/doc-types/:code/jobs` | các job đang chạy và job xong gần nhất của mỗi loại (`run`, `optimize`) |
 | GET / DELETE | `/doc-types/:code/jobs/:id` | trạng thái và đề xuất của một job / bỏ đề xuất |
 

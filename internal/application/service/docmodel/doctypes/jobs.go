@@ -70,8 +70,10 @@ func (s *Service) Run(ctx context.Context, owner uuid.UUID, code string, ids []u
 	return s.Job(rctx, owner, code, j.ID)
 }
 
-// Optimize queues an AI proposal that improves a version (U98); it needs a
-// reviewed sample.
+// Optimize proposes a version that reads the reviewed samples better (U98)
+// and returns the finished job, whose result holds the proposal until it is
+// applied or dropped. Like Run it calls the agent in the request, not
+// through the queue; each agent call is bounded by doc_types.run_timeout.
 func (s *Service) Optimize(ctx context.Context, owner uuid.UUID, code string, version int, by uuid.UUID) (types.DocTypeJob, error) {
 	p, err := s.st.DocTypes.Prompt(ctx, owner, code, version)
 	if err != nil {
@@ -81,25 +83,33 @@ func (s *Service) Optimize(ctx context.Context, owner uuid.UUID, code string, ve
 	if err != nil {
 		return types.DocTypeJob{}, err
 	}
-	if !slices.ContainsFunc(samples, func(x types.DocTypeSample) bool { return x.Truth != nil && x.Status == types.SampleReady }) {
+	var reviewed []uuid.UUID
+	for _, x := range samples {
+		if x.Truth != nil && x.Status == types.SampleReady {
+			reviewed = append(reviewed, x.ID)
+		}
+	}
+	if len(reviewed) == 0 {
 		return types.DocTypeJob{}, ErrNoReviewed
 	}
-	return s.startJob(ctx, owner, types.DocTypeJob{Code: code, Kind: types.JobOptimize, Version: p.Version, CreatedBy: by})
-}
-
-func (s *Service) startJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJob) (types.DocTypeJob, error) {
-	if s.llm == nil || s.extract == nil {
-		return j, ErrNotReady
+	if s.ask == nil || s.extract == nil {
+		return types.DocTypeJob{}, ErrNotReady
 	}
-	j, err := s.st.DocTypes.CreateJob(ctx, owner, j)
+	j, err := s.st.DocTypes.CreateJob(ctx, owner, types.DocTypeJob{Code: code, Kind: types.JobOptimize, Version: p.Version, SampleIDs: reviewed, CreatedBy: by})
 	if err != nil {
 		return j, err
 	}
-	if err := s.q.Enqueue(ctx, types.TaskDocTypeJob, jobPayload{JobID: j.ID}, queue.Opts{Interactive: true}); err != nil {
-		_ = s.st.DocTypes.FinishJob(context.WithoutCancel(ctx), j.ID, nil, "could not queue: "+err.Error())
+	rctx := llm.WithCaller(context.WithoutCancel(ctx), llm.Caller{UserID: &by, Kind: types.UsageParse})
+	res, err := s.optimize(rctx, owner, j)
+	msg := ""
+	if err != nil {
+		s.log.Warn("doctypes: optimize failed", "job", j.ID, "err", err)
+		res, msg = nil, failReason(err)
+	}
+	if err := s.st.DocTypes.FinishJob(rctx, j.ID, res, msg); err != nil {
 		return j, err
 	}
-	return j, nil
+	return s.Job(rctx, owner, code, j.ID)
 }
 
 // Job returns a job of a type.
@@ -112,9 +122,9 @@ func (s *Service) Job(ctx context.Context, owner uuid.UUID, code string, id uuid
 }
 
 // Jobs returns the running jobs of a type and the latest finished one of
-// each kind. A test run still "running" well past its time limit was cut
-// off (server restarted mid-request): it is closed, so the page stops
-// waiting for it.
+// each kind. A job still "running" well past its time limit was cut off
+// (server restarted mid-request): it is closed, so the page stops waiting
+// for it.
 func (s *Service) Jobs(ctx context.Context, owner uuid.UUID, code string) ([]types.DocTypeJob, error) {
 	jobs, err := s.st.DocTypes.Jobs(ctx, owner, code)
 	if err != nil {
@@ -122,8 +132,13 @@ func (s *Service) Jobs(ctx context.Context, owner uuid.UUID, code string) ([]typ
 	}
 	stale := false
 	for _, j := range jobs {
-		if j.Kind == types.JobRun && j.Status == types.JobRunning && time.Since(j.CreatedAt) > s.runLimit(len(j.SampleIDs))+time.Minute {
-			if err := s.st.DocTypes.FinishJob(ctx, j.ID, nil, "Lần chạy thử bị gián đoạn, hãy chạy lại"); err != nil {
+		// An optimization runs the samples twice and asks the model once.
+		limit := s.runLimit(len(j.SampleIDs))
+		if j.Kind == types.JobOptimize {
+			limit = 2*limit + s.runTimeout()
+		}
+		if j.Status == types.JobRunning && time.Since(j.CreatedAt) > limit+time.Minute {
+			if err := s.st.DocTypes.FinishJob(ctx, j.ID, nil, "Lần chạy bị gián đoạn, hãy chạy lại"); err != nil {
 				return nil, err
 			}
 			stale = true
@@ -159,42 +174,6 @@ func (s *Service) DropProposal(ctx context.Context, owner uuid.UUID, code string
 	return s.st.DocTypes.DropProposal(ctx, owner, id)
 }
 
-type jobPayload struct {
-	JobID uuid.UUID `json:"job_id"`
-}
-
-func (s *Service) handleJob(ctx context.Context, payload []byte) error {
-	var p jobPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
-	}
-	j, owner, err := s.st.DocTypes.JobByID(ctx, p.JobID)
-	if errors.Is(err, postgres.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if j.Status != types.JobRunning {
-		return nil
-	}
-	ctx = llm.WithCaller(ctx, llm.Caller{UserID: &j.CreatedBy, Kind: types.UsageParse})
-	var result *types.OptimizeProposal
-	if j.Kind == types.JobOptimize {
-		result, err = s.optimize(ctx, owner, j)
-	} else {
-		err = s.runJob(ctx, owner, j)
-	}
-	if err != nil {
-		if !errors.Is(err, queue.ErrSkipRetry) && !authFailed(err) && !queue.IsFinalAttempt(ctx) {
-			return err
-		}
-		s.log.Warn("doctypes: job failed", "job", j.ID, "kind", j.Kind, "err", err)
-		return s.st.DocTypes.FinishJob(context.WithoutCancel(ctx), j.ID, nil, failReason(err))
-	}
-	return s.st.DocTypes.FinishJob(ctx, j.ID, result, "")
-}
-
 // runJob runs a version on the job's samples and stores the outputs.
 func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJob) error {
 	t, err := s.st.DocTypes.Get(ctx, owner, j.Code)
@@ -205,28 +184,31 @@ func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJo
 	if err != nil {
 		return fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
 	}
-	if len(p.Fields) == 0 { // a job queued before Run refused this
-		return fmt.Errorf("%w: version %d has no fields", queue.ErrSkipRetry, p.Version)
-	}
-	// Samples are read runParallel at a time; one that fails does not stop
-	// the others, whose results are kept.
+	return inParallel(len(j.SampleIDs), func(i int) error {
+		return s.runSample(ctx, owner, j.CreatedBy, t, p, j.SampleIDs[i])
+	})
+}
+
+// inParallel calls fn(0..n-1), runParallel at a time; one that fails does
+// not stop the others, whose results are kept. It returns the first error.
+func inParallel(n int, fn func(i int) error) error {
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex
 		errs []error
 		sem  = make(chan struct{}, runParallel)
 	)
-	for _, id := range j.SampleIDs {
+	for i := 0; i < n; i++ {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(id uuid.UUID) {
+		go func(i int) {
 			defer func() { <-sem; wg.Done() }()
-			if err := s.runSample(ctx, owner, j.CreatedBy, t, p, id); err != nil {
+			if err := fn(i); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
 			}
-		}(id)
+		}(i)
 	}
 	wg.Wait()
 	if len(errs) > 0 {
@@ -344,17 +326,32 @@ func authFailed(err error) bool {
 	return strings.Contains(m, "status code: 401") || strings.Contains(m, "status code: 403") || strings.Contains(m, "invalid api key")
 }
 
-// complete calls the model, through model_cache (U56).
+// complete asks the agent's model (system then user text, one prompt) for
+// a JSON answer, through model_cache (U56). The call is bounded by
+// doc_types.run_timeout; an answer without JSON is asked again at once.
 func (s *Service) complete(ctx context.Context, system, user string, out any) error {
-	sum := sha256.Sum256([]byte(system + "\n" + user))
+	prompt := system + "\n\n" + user
+	sum := sha256.Sum256([]byte(prompt))
 	key := "doctype:" + hex.EncodeToString(sum[:])
 	if b, ok, err := s.st.ModelCache.Get(ctx, key); err == nil && ok {
 		if json.Unmarshal(b, out) == nil {
 			return nil
 		}
 	}
-	if err := s.llm.CompleteJSON(ctx, system, user, out); err != nil {
+	ctx, cancel := context.WithTimeout(ctx, s.runTimeout())
+	defer cancel()
+	reply, err := s.ask.Ask(ctx, prompt)
+	if err != nil {
 		return err
+	}
+	if llm.DecodeJSON(reply, out) != nil {
+		s.log.Warn("doctypes: the answer has no JSON, asking again", "reply", textutil.Truncate(reply, 500))
+		if reply, err = s.ask.Ask(ctx, prompt+"\n\nChỉ trả lời đúng một JSON như mô tả ở trên, không viết thêm gì."); err != nil {
+			return err
+		}
+		if llm.DecodeJSON(reply, out) != nil {
+			return errNotJSON
+		}
 	}
 	if b, err := json.Marshal(out); err == nil {
 		_ = s.st.ModelCache.Put(ctx, key, "doctype", b)
@@ -394,7 +391,7 @@ func (s *Service) optimize(ctx context.Context, owner uuid.UUID, j types.DocType
 	if err != nil {
 		return nil, err
 	}
-	var reviewed []types.DocTypeSample
+	var reviewed, unrun []types.DocTypeSample
 	before := map[uuid.UUID]map[string]types.RunValue{}
 	for _, smp := range samples {
 		if smp.Truth == nil || smp.Status != types.SampleReady {
@@ -403,16 +400,26 @@ func (s *Service) optimize(ctx context.Context, owner uuid.UUID, j types.DocType
 		reviewed = append(reviewed, smp)
 		if r, ok := runs[smp.ID][p.Version]; ok {
 			before[smp.ID] = r.Output
-			continue
+		} else {
+			unrun = append(unrun, smp)
 		}
+	}
+	var mu sync.Mutex
+	if err := inParallel(len(unrun), func(i int) error {
+		smp := unrun[i]
 		out, err := s.runOne(ctx, owner, j.CreatedBy, t, p, smp)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if err := s.st.DocTypes.SaveRun(ctx, types.SampleRun{SampleID: smp.ID, Version: p.Version, Output: out}); err != nil {
-			return nil, err
+			return err
 		}
+		mu.Lock()
 		before[smp.ID] = out
+		mu.Unlock()
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	var misses []miss
 	for _, smp := range reviewed {
@@ -512,12 +519,17 @@ func (s *Service) optimize(ctx context.Context, owner uuid.UUID, j types.DocType
 	res.Rules, res.Shots = np.Rules, np.Shots
 
 	after := map[uuid.UUID]map[string]types.RunValue{}
-	for _, smp := range reviewed {
-		out, err := s.runOne(ctx, owner, j.CreatedBy, t, np, smp)
+	if err := inParallel(len(reviewed), func(i int) error {
+		out, err := s.runOne(ctx, owner, j.CreatedBy, t, np, reviewed[i])
 		if err != nil {
-			return nil, err
+			return err
 		}
-		after[smp.ID] = out
+		mu.Lock()
+		after[reviewed[i].ID] = out
+		mu.Unlock()
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	score := func(outs map[uuid.UUID]map[string]types.RunValue, only string) *float64 {
 		var cells []cell

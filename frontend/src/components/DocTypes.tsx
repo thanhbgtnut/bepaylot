@@ -881,7 +881,9 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
 
   const reviewed = samples.filter((s) => s.truth && s.status === "ready");
   const ready = samples.filter((s) => s.status === "ready");
-  const optimizing = jobs.find((j) => j.kind === "optimize" && j.status === "running");
+  // An optimization started here shows at once; the request returns when it is over.
+  const [optBusy, setOptBusy] = useState(false);
+  const optimizing = optBusy ? { version: cur?.version ?? 0 } : jobs.find((j) => j.kind === "optimize" && j.status === "running");
   const runningRun = runBusy || jobs.some((j) => j.kind === "run" && j.status === "running");
   const lastOpt = jobs.find((j) => j.kind === "optimize" && j.status !== "running");
   const proposal = lastOpt?.status === "done" && lastOpt.result && !lastOpt.result.none && lastOpt.version === cur?.version ? lastOpt : undefined;
@@ -927,11 +929,14 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
     }
   };
   const optimize = async () => {
+    setOptBusy(true);
     try {
-      await optimizeDocType(t.name, cur?.version ?? 0);
-      reload();
+      ranOrFail(await optimizeDocType(t.name, cur?.version ?? 0));
     } catch (e) {
       fail(e);
+    } finally {
+      setOptBusy(false);
+      reload();
     }
   };
   const apply = async () => {

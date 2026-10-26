@@ -276,7 +276,7 @@ func (app *App) buildDocumentModules(ctx context.Context, h *handler.Handlers, r
 		Objects: objects, FormLLM: completer(cfg.LLM.DefaultProvider, "", 4096)})
 	h.Sheets, h.Split = sh, split
 	dts := doctypes.New(doctypes.Deps{Store: st, Objects: objects, Queue: app.enqueuer, Renderer: sampleRenderer, Engines: engines,
-		LLM: completer(cfg.LLM.DefaultProvider, "", 4096), Extract: runner, Config: cfg, Log: log})
+		Extract: runner, Ask: agentAsker{ag: ag}, Config: cfg, Log: log})
 	h.DocTypes = dts
 
 	if cfg.Workers.RunsWorkers() {

@@ -646,7 +646,7 @@ const docTemplate = `{
                 "tags": [
                     "DocTypes"
                 ],
-                "summary": "Ask the AI to improve a version (U98), in the background",
+                "summary": "Ask the AI to improve a version (U98)",
                 "security": [
                     {
                         "ApiKeyAuth": []
