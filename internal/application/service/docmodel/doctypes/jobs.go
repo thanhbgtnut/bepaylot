@@ -28,6 +28,11 @@ func (s *Service) Run(ctx context.Context, owner uuid.UUID, code string, ids []u
 	if err != nil {
 		return types.DocTypeJob{}, notFound(err)
 	}
+	// Without fields there is nothing to ask: the model's reply would not
+	// parse and the job would retry for hours.
+	if len(p.Fields) == 0 {
+		return types.DocTypeJob{}, fmt.Errorf("%w: chưa có trường nào, hãy thêm trường cần lấy trước khi chạy thử", ErrBad)
+	}
 	samples, err := s.st.DocTypes.Samples(ctx, owner, code)
 	if err != nil {
 		return types.DocTypeJob{}, err
@@ -144,6 +149,9 @@ func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJo
 	p, err := s.st.DocTypes.Prompt(ctx, owner, j.Code, j.Version)
 	if err != nil {
 		return fmt.Errorf("%w: %v", queue.ErrSkipRetry, err)
+	}
+	if len(p.Fields) == 0 { // a job queued before Run refused this
+		return fmt.Errorf("%w: version %d has no fields", queue.ErrSkipRetry, p.Version)
 	}
 	for _, id := range j.SampleIDs {
 		smp, err := s.st.DocTypes.Sample(ctx, owner, id)

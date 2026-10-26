@@ -547,6 +547,7 @@ function SamplesTab({ t, samples, jobs, editor, reload }: { t: DocTypeView; samp
 
 function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeView; brief: DocTypeSample; running: boolean; failed?: DocTypeJob; editor: boolean; reload: () => void }) {
   const { toast, fail } = useToast();
+  const [, setSp] = useSearchParams();
   const [s, setS] = useState<DocTypeSample | null>(null);
   const [view, setView] = useState<"image" | "md" | "ocr">("image");
   const [page, setPage] = useState(1);
@@ -662,8 +663,34 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
     );
   }
 
+  // Nothing to read without fields: the run is offered once a field is added.
+  const noFields = !t.fields.length;
   let result: ReactNode;
   if (brief.status !== "ready") result = <div className="px-4 py-10 text-center text-sm text-subtle">Đợi xử lý xong để chạy thử.</div>;
+  else if (noFields && !running)
+    result = (
+      <div className="px-4 py-10 text-center text-sm text-muted">
+        Loại này chưa có trường nào nên chưa chạy thử được.
+        {editor && (
+          <div>
+            <button
+              className="btn btn-primary mt-4"
+              onClick={() =>
+                setSp(
+                  (p) => {
+                    p.set("tab", "prompt");
+                    return p;
+                  },
+                  { replace: true },
+                )
+              }
+            >
+              <Icon name="add" size={18} /> Thêm trường cần lấy
+            </button>
+          </div>
+        )}
+      </div>
+    );
   else if (running)
     result = (
       <div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-sm text-muted">
@@ -769,7 +796,7 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
             </div>
           </div>
           {editor && (
-            <button className="btn btn-sm" disabled={brief.status !== "ready" || running} onClick={startRun}>
+            <button className="btn btn-sm" disabled={brief.status !== "ready" || running || noFields} title={noFields ? "Thêm trường cần lấy trước" : undefined} onClick={startRun}>
               <Icon name="play_arrow" size={18} /> Chạy thử
             </button>
           )}
@@ -827,13 +854,18 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
   const [newRule, setNewRule] = useState("");
   const [fullText, setFullText] = useState<string | null>(null);
   const [hl, setHl] = useState<string | null>(null);
+  // The page reloads while samples are read or runs go on: the draft is
+  // rebuilt only when another version is in use, not on every reload.
+  const curRef = useRef(cur);
+  curRef.current = cur;
   const reset = useCallback(() => {
-    if (cur) setDraft({ instruction: cur.instruction, rules: [...cur.rules], shots: [...cur.shots], fields: cur.fields.map((f) => ({ ...f })) });
+    const c = curRef.current;
+    if (c) setDraft({ instruction: c.instruction, rules: [...c.rules], shots: [...c.shots], fields: c.fields.map((f) => ({ ...f })) });
     setFullText(null);
-  }, [cur]);
+  }, []);
   useEffect(() => {
     reset();
-  }, [reset]);
+  }, [reset, cur?.version]);
 
   const reviewed = samples.filter((s) => s.truth && s.status === "ready");
   const ready = samples.filter((s) => s.status === "ready");
@@ -859,8 +891,9 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
     try {
       const fields = draft.fields.filter((f) => f.label.trim()).map((f) => ({ key: f.key, label: f.label.trim(), value_type: f.value_type || "string", description: f.description?.trim() || undefined }));
       const p = await createPrompt(t.name, { instruction: draft.instruction, rules: draft.rules, shots: draft.shots, fields, note: "Sửa tay", use: true });
-      if (ready.length) await runSamples(t.name);
-      toast(`Đã lưu hướng dẫn v${p.version}${ready.length ? ` và chạy thử trên ${ready.length} mẫu` : ""}`);
+      const run = ready.length > 0 && fields.length > 0;
+      if (run) await runSamples(t.name);
+      toast(`Đã lưu hướng dẫn v${p.version}${run ? ` và chạy thử trên ${ready.length} mẫu` : ""}`);
       reload();
     } catch (e) {
       fail(e);
@@ -883,7 +916,7 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
     try {
       const p = await createPrompt(t.name, { instruction: r.instruction, rules: r.rules, shots: r.shots, fields: r.fields, note: `Tối ưu tự động: ${r.patterns.length} quy tắc, ${r.shots.length - (cur?.shots.length ?? 0)} ví dụ`, use: true });
       await dropDocTypeJob(t.name, proposal.id);
-      if (ready.length) await runSamples(t.name);
+      if (ready.length && r.fields.length) await runSamples(t.name);
       toast(`Đã áp dụng hướng dẫn v${p.version} · độ chính xác ${pct(r.after)}`);
       setHl(null);
       reload();
@@ -1266,8 +1299,10 @@ const VALUE_TYPES: [string, string][] = [
 ];
 // A field added here: its key follows its name (U65). A saved field keeps its
 // key, so the values already extracted under it stay with the column. typed:
-// the user picked the value type, so it no longer follows the name.
-type NewField = SheetField & { auto?: boolean; typed?: boolean };
+// the user picked the value type, so it no longer follows the name. uid: the
+// row of a field added here, since its key changes while its name is typed.
+type NewField = SheetField & { auto?: boolean; typed?: boolean; uid?: number };
+let fieldSeq = 0;
 
 // guessType reads the value type off a field name ("Ngày ký" → date, "Tổng
 // thanh toán" → money), so the type rarely has to be picked by hand.
@@ -1289,12 +1324,22 @@ function FieldsTable({ fields, onChange, readOnly }: { fields: NewField[]; onCha
   };
   const named = (f: NewField, label: string, taken: string[]): NewField =>
     f.auto ? { ...f, label, key: keyOf(label, taken), value_type: f.typed ? f.value_type : guessType(label) } : { ...f, label };
+  // The empty last row already has the uid its field gets, so the input
+  // keeps the focus when the first letter makes it a field.
+  const [nextUid, setNextUid] = useState(() => ++fieldSeq);
   const setLabel = (i: number, label: string) => {
     const taken = fields.filter((_, j) => j !== i).map((x) => x.key);
-    if (i >= fields.length) return label && onChange([...fields, named({ key: "", label: "", auto: true }, label, taken)]);
-    if (!label && fields[i].auto) return onChange(fields.filter((_, j) => j !== i));
+    if (i >= fields.length) {
+      if (!label) return;
+      onChange([...fields, named({ key: "", label: "", auto: true, uid: nextUid }, label, taken)]);
+      setNextUid(++fieldSeq);
+      return;
+    }
     onChange(fields.map((f, k) => (k === i ? named(f, label, taken) : f)));
   };
+  // A field added here whose name was cleared goes once the cursor leaves
+  // it, not while typing (the rows below would move under the cursor).
+  const dropIfEmpty = (i: number) => fields[i]?.auto && !fields[i].label.trim() && onChange(fields.filter((_, j) => j !== i));
   const pasteNames = (i: number, text: string) => {
     const names = text
       .split(/[\r\n\t]+/)
@@ -1302,7 +1347,7 @@ function FieldsTable({ fields, onChange, readOnly }: { fields: NewField[]; onCha
       .filter(Boolean);
     if (names.length < 2) return false;
     const out = fields.slice(0, i);
-    for (const label of names) out.push(named({ key: "", label: "", auto: true }, label, [...out, ...fields.slice(i)].map((x) => x.key)));
+    for (const label of names) out.push(named({ key: "", label: "", auto: true, uid: ++fieldSeq }, label, [...out, ...fields.slice(i)].map((x) => x.key)));
     onChange([...out, ...fields.slice(i).filter((f) => f.label)]);
     return true;
   };
@@ -1322,7 +1367,7 @@ function FieldsTable({ fields, onChange, readOnly }: { fields: NewField[]; onCha
         </thead>
         <tbody>
           {rows.map((f, i) => (
-            <tr key={i} className="border-t border-line">
+            <tr key={f ? (f.uid ?? "k:" + f.key) : nextUid} className="border-t border-line">
               <td className="py-1.5 pl-5">
                 <input
                   className="input h-9 w-full"
@@ -1330,6 +1375,7 @@ function FieldsTable({ fields, onChange, readOnly }: { fields: NewField[]; onCha
                   readOnly={readOnly}
                   value={f?.label ?? ""}
                   onChange={(e) => setLabel(i, e.target.value)}
+                  onBlur={() => !readOnly && dropIfEmpty(i)}
                   onPaste={(e) => pasteNames(i, e.clipboardData.getData("text")) && e.preventDefault()}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === "ArrowDown") (e.preventDefault(), focusRow(Math.min(i + 1, fields.length)));

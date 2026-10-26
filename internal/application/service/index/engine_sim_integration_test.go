@@ -205,7 +205,8 @@ func (s *ocrService) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // simVLM answers the clean markdown of a page (one call per page). It
-// checks that the prompt carries the page's noisy OCR text.
+// checks that the prompt does not carry the page's OCR text: the VLM reads
+// the image only (U84, U89).
 type simVLM struct {
 	text  map[int]string
 	ocr   map[int][]byte
@@ -221,8 +222,8 @@ func (v *simVLM) Transcribe(ctx context.Context, req vlm.Request) (*vlm.Transcri
 	var o simOCR
 	_ = json.Unmarshal(v.ocr[pg], &o)
 	for _, l := range o.Results {
-		if !strings.Contains(req.Prompt, l.Text) {
-			return nil, fmt.Errorf("page %d: prompt lacks OCR line %q", pg, l.Text)
+		if strings.Contains(req.Prompt, l.Text) {
+			return nil, fmt.Errorf("page %d: prompt carries OCR line %q", pg, l.Text)
 		}
 	}
 	return &vlm.Transcription{Text: v.text[pg]}, nil
