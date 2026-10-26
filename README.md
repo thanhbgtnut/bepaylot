@@ -64,6 +64,8 @@ make run-web             # (tuỳ chọn) API + giao diện web :5174
 
 `make dev` gộp `up`, `migrate` và `run`. Swagger UI ở `http://localhost:8080/docs`.
 
+Giao diện web được build vào `internal/webui/dist` (không có trong git) rồi nhúng vào binary. `make run`, `make run-api` và `make build-server` build lại giao diện trước; chạy thẳng `go build`/`go run ./cmd/server` thì binary nhúng bản giao diện cũ còn trên máy.
+
 **Đăng nhập** giống WeKnora: mở `http://localhost:5174/login`, bấm **Tạo tài khoản** (email + mật khẩu) rồi dùng luôn; không cần `make seed` nữa. Server cấp access token JWT (24h) và refresh token (7 ngày, dùng một lần), web tự làm mới khi hết hạn. Bật OIDC (Keycloak, Google, Azure AD…) bằng các biến `BEPAYLOT_OIDC_*` trong `.env`; trang đăng nhập sẽ hiện nút "Đăng nhập bằng …". `BEPAYLOT_REGISTRATION=closed` tắt tự đăng ký.
 
 API key cho script/curl tạo trong web (**Tài khoản → API key**) hoặc `POST /v1/auth/api-keys`. `make seed` vẫn còn cho CI; `make seed EMAIL=dev@bepaylot.local PASSWORD='…'` đặt mật khẩu cho một tài khoản có sẵn (ví dụ dữ liệu tạo trước khi có trang đăng nhập) để đăng nhập được.

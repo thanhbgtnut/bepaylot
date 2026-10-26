@@ -83,6 +83,8 @@ export function UploadDialog({
   // Bước 2: các file mới của lần tải, khi server đã đếm xong số trang.
   const [counting, setCounting] = useState(false);
   const [pick, setPick] = useState<PickFile[] | null>(null);
+  // Bước 2 chỉ mở khi người dùng bấm Tiếp tục.
+  const [step2, setStep2] = useState(false);
 
   // Files are uploaded on hold: the server only counts their pages. Wait for
   // the count, then let the user pick the pages to process (U111). A file
@@ -111,7 +113,7 @@ export function UploadDialog({
         const busy = old.filter((d) => !TERMINAL.has(d.status));
         if (busy.length) toast(`${busy.length} file đã có trong hồ sơ và đang được xử lý: ${busy.map((d) => d.file_name).join(", ")}`);
         const again = old.filter((d) => TERMINAL.has(d.status) && d.status !== "cancelled" && d.status !== "deleting" && d.page_count > 0);
-        setPick([
+        const next = [
           ...mine.filter((d) => d.status === "not_started").map((d) => ({ id: d.id, name: d.file_name, mime: d.mime_type, pages: d.page_count })),
           ...again.map((d) => ({
             id: d.id,
@@ -121,7 +123,9 @@ export function UploadDialog({
             off: d.status !== "not_started",
             note: d.status === "not_started" ? "Đã có trong hồ sơ, chưa xử lý" : `Đã có trong hồ sơ · ${STATUS[d.status]?.[0] ?? d.status} — tick để đọc lại`,
           })),
-        ]);
+        ];
+        // Files of an earlier upload in this dialog stay in the list.
+        setPick((prev) => [...(prev ?? []).filter((f) => !next.some((x) => x.id === f.id)), ...next]);
         setCounting(false);
       } catch (e) {
         if (alive) (fail(e), setCounting(false));
@@ -171,9 +175,14 @@ export function UploadDialog({
   };
 
   const total = files.reduce((n, f) => n + f.size, 0);
-  if (pick?.length) {
-    // Files not picked stay on hold, except those read before (off).
-    const held = (ids: Set<string>) => pick.filter((f) => !f.off && !ids.has(f.id)).length;
+  // Files not picked stay on hold, except those read before (off).
+  const held = (ids: Set<string>) => (pick ?? []).filter((f) => !f.off && !ids.has(f.id)).length;
+  const later = () => {
+    const n = held(new Set());
+    if (n) toast(`Đã lưu ${n} file ở trạng thái Chưa xử lý`);
+    onClose();
+  };
+  if (step2 && pick?.length) {
     return (
       <PagePicker
         title="Tải file lên"
@@ -187,11 +196,7 @@ export function UploadDialog({
         }
         files={pick}
         later
-        onClose={() => {
-          const n = held(new Set());
-          if (n) toast(`Đã lưu ${n} file ở trạng thái Chưa xử lý`);
-          onClose();
-        }}
+        onClose={later}
         onSubmit={async (picked) => {
           await eachLimit(picked, 6, (p) => reparseDocument(p.id, { pages: p.pages }));
           const n = picked.reduce((a, p) => a + p.pages.length, 0);
@@ -211,12 +216,20 @@ export function UploadDialog({
       width={620}
       footer={
         <>
-          <button className="btn btn-text" onClick={onClose}>
-            {result ? "Xong" : "Huỷ"}
+          <button className="btn btn-text" onClick={pick?.length ? later : onClose}>
+            {pick?.length ? "Để sau" : result ? "Xong" : "Huỷ"}
           </button>
-          <button className="btn btn-primary" onClick={submit} disabled={!files.length || !code.trim() || busy}>
-            {busy ? "Đang tải…" : `Tải lên${files.length ? ` ${files.length} file` : ""}`}
-          </button>
+          {result && !files.length && (pick?.length || counting) ? (
+            <button className="btn btn-primary" disabled={counting} onClick={() => setStep2(true)}>
+              {counting ? <Spinner className="size-4 border-2" /> : null}
+              {counting ? "Đang đếm trang…" : "Tiếp tục"}
+              {!counting && <Icon name="arrow_forward" size={18} />}
+            </button>
+          ) : (
+            <button className="btn btn-primary" onClick={submit} disabled={!files.length || !code.trim() || busy}>
+              {busy ? "Đang tải…" : `Tải lên${files.length ? ` ${files.length} file` : ""}`}
+            </button>
+          )}
         </>
       }
     >
@@ -346,6 +359,8 @@ export function UploadDialog({
               <>
                 <Spinner className="size-3 border-2" /> Đã nhận — đang đếm số trang để chọn trang cần xử lý…
               </>
+            ) : pick?.length ? (
+              "Đã nhận. Bấm Tiếp tục để chọn trang cần xử lý."
             ) : (
               "Đã nhận."
             )}
