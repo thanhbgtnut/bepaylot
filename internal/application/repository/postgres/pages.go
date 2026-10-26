@@ -38,11 +38,12 @@ func (r *PagesRepo) WithTx(tx pgx.Tx) *PagesRepo { return &PagesRepo{pool: tx} }
 // PageSizePt is a page's size in points.
 type PageSizePt struct{ W, H float64 }
 
-// Init creates the pending page rows of a generation (idempotent).
-func (r *PagesRepo) Init(ctx context.Context, doc uuid.UUID, gen int, sizes []PageSizePt) error {
+// Init creates the page rows of a generation (idempotent), all in status:
+// pending, or skipped for an upload on hold (U111).
+func (r *PagesRepo) Init(ctx context.Context, doc uuid.UUID, gen int, sizes []PageSizePt, status string) error {
 	rows := make([][]any, len(sizes))
 	for i, s := range sizes {
-		rows[i] = []any{doc, i + 1, gen, types.PagePending, s.W, s.H}
+		rows[i] = []any{doc, i + 1, gen, status, s.W, s.H}
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -198,11 +199,12 @@ func (r *PagesRepo) SetDocType(ctx context.Context, doc uuid.UUID, gen, page int
 	return err
 }
 
-// DocTypes returns the document type of every page of a generation, in page
-// order; Label is "" for a page that was not classified.
+// DocTypes returns the document type of every page of a generation picked
+// for processing (skipped pages are left out, U111), in page order; Label is
+// "" for a page that was not classified.
 func (r *PagesRepo) DocTypes(ctx context.Context, doc uuid.UUID, gen int) ([]types.PageDocType, error) {
 	rows, err := r.pool.Query(ctx, `SELECT page_no, doc_type, doc_type_confidence, is_first_page FROM document_pages
-		WHERE document_id = $1 AND gen = $2 ORDER BY page_no`, doc, gen)
+		WHERE document_id = $1 AND gen = $2 AND status <> 'skipped' ORDER BY page_no`, doc, gen)
 	if err != nil {
 		return nil, err
 	}
@@ -562,11 +564,13 @@ func nz(s, def string) string {
 }
 
 // ResetPages moves pages back to a state (page reparse) and returns how many
-// were done/failed before, so counters can be corrected.
+// were done/failed before, so counters can be corrected. A page that was
+// never rendered (skipped, U111, or failed in render) goes to pending instead.
 func (r *PagesRepo) ResetPages(ctx context.Context, doc uuid.UUID, gen int, pages []int, to string) (done, failed int, err error) {
 	err = r.pool.QueryRow(ctx, `WITH old AS (
 			SELECT page_no, status FROM document_pages WHERE document_id = $1 AND gen = $2 AND page_no = ANY($3) FOR UPDATE),
-		upd AS (UPDATE document_pages p SET status = $4, error = '' FROM old WHERE p.document_id = $1 AND p.page_no = old.page_no RETURNING old.status)
+		upd AS (UPDATE document_pages p SET status = CASE WHEN p.image_key = '' THEN 'pending' ELSE $4 END, error = ''
+			FROM old WHERE p.document_id = $1 AND p.page_no = old.page_no RETURNING old.status)
 		SELECT count(*) FILTER (WHERE status = 'done'), count(*) FILTER (WHERE status = 'failed') FROM upd`, doc, gen, pages, to).Scan(&done, &failed)
 	return
 }

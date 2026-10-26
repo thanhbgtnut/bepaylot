@@ -260,3 +260,88 @@ func TestPipelineEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+// An upload on hold only counts the pages; a page reparse picks the pages
+// to process and only those are rendered and read (U111).
+func TestPipelineHoldPickPages(t *testing.T) {
+	svc, q, st, owner, ocr := setup(t)
+	ctx := context.Background()
+	kb, err := svc.CreateKB(ctx, owner, "Chọn trang", "", types.KBConfig{}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfBytes := pdftest.Build([]pdftest.Page{{"Trang mot"}, {"Trang hai"}, {"Trang ba"}, {"Trang bon"}}, pdftest.Options{})
+	for i := 1; i <= 4; i++ {
+		ocr.pages[i] = []string{fmt.Sprintf("Trang %d", i)}
+	}
+	up, err := svc.BeginUpload(ctx, owner, kb.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up.SetCase(interfaces.CaseRef{Code: "HOLD-1", Create: true})
+	up.SetHold(true)
+	if err := up.AddFile(ctx, "hold.pdf", "application/pdf", bytes.NewReader(pdfBytes)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := up.Finish(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID := res.Documents[0].DocumentID
+	if err := q.Drain(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := st.Documents.Get(ctx, docID)
+	if d.Status != types.DocNotStarted || d.PageCount != 4 || d.PagesSkipped != 4 || len(ocr.calls) != 0 {
+		t.Fatalf("on hold: status %s pages %d skipped %d ocr %v", d.Status, d.PageCount, d.PagesSkipped, ocr.calls)
+	}
+	pageState := func() string {
+		rows, err := st.Pages.List(ctx, docID, d.Gen, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		for _, r := range rows {
+			if r.Status == types.PageSkipped && r.ImageKey != "" {
+				t.Fatalf("page %d skipped but rendered", r.PageNo)
+			}
+			b.WriteString(r.Status[:1]) // s = skipped, d = done
+		}
+		return b.String()
+	}
+	if got := pageState(); got != "ssss" {
+		t.Fatalf("pages on hold = %s", got)
+	}
+
+	// Pick pages 2–3: only they are rendered and read.
+	if _, err := svc.Reparse(ctx, owner, docID, ReparseRequest{Pages: []int{2, 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Drain(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = st.Documents.Get(ctx, docID)
+	if got := pageState(); got != "sdds" || d.PagesDone != 2 || d.PagesSkipped != 2 || d.Status != types.DocIndexing || d.Progress() != 1 {
+		t.Fatalf("after picking 2–3: pages %s done %d skipped %d status %s progress %v", got, d.PagesDone, d.PagesSkipped, d.Status, d.Progress())
+	}
+	if ocr.calls[1] != 0 || ocr.calls[2] != 1 || ocr.calls[3] != 1 || ocr.calls[4] != 0 {
+		t.Fatalf("ocr calls = %v", ocr.calls)
+	}
+	md, _ := svc.Markdown(ctx, owner, docID, 0, 0)
+	if strings.Contains(md, "<!-- page:1 -->") || !strings.Contains(md, "Trang 2") {
+		t.Fatalf("markdown has only the picked pages:\n%s", md)
+	}
+
+	// Pick page 4 later: page 1 stays skipped, 2–3 are not read again.
+	_, _ = st.Documents.Update(ctx, docID, d.Gen, postgres.DocUpdate{Status: strp(types.DocCompleted)})
+	if _, err := svc.Reparse(ctx, owner, docID, ReparseRequest{Pages: []int{4}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Drain(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = st.Documents.Get(ctx, docID)
+	if got := pageState(); got != "sddd" || d.PagesDone != 3 || d.PagesSkipped != 1 || ocr.calls[2] != 1 || ocr.calls[4] != 1 {
+		t.Fatalf("after picking 4: pages %s done %d skipped %d ocr %v", got, d.PagesDone, d.PagesSkipped, ocr.calls)
+	}
+}

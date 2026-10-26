@@ -99,6 +99,8 @@ func (r ClassificationRule) Title(name string) string {
 		return "Khác"
 	case LabelUnknown:
 		return "Chưa rõ"
+	case LabelNotProcessed:
+		return "Chưa xử lý"
 	}
 	return name
 }

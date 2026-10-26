@@ -112,11 +112,18 @@ func (s *Service) GetKB(ctx context.Context, id uuid.UUID) (types.KnowledgeBase,
 	return kb, err
 }
 
-// LoadPages implements interfaces.DocumentStore.
+// LoadPages implements interfaces.DocumentStore. Pages not picked for
+// processing (U111) are left out: they have no text.
 func (s *Service) LoadPages(ctx context.Context, doc uuid.UUID, gen, from, to int) ([]*types.ParsedPage, error) {
-	rows, err := s.st.Pages.List(ctx, doc, gen, from, to)
+	all, err := s.st.Pages.List(ctx, doc, gen, from, to)
 	if err != nil {
 		return nil, err
+	}
+	rows := all[:0]
+	for _, r := range all {
+		if r.Status != types.PageSkipped {
+			rows = append(rows, r)
+		}
 	}
 	if len(rows) == 0 {
 		return nil, nil

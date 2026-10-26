@@ -44,6 +44,9 @@ type Upload struct {
 	files       []pendingFile
 	rejected    []Rejected
 	index       int
+	// hold: the files are stored and their pages counted, nothing is
+	// processed until pages are picked (U111).
+	hold bool
 }
 
 // pendingFile is a file already in S3, waiting for Finish.
@@ -132,6 +135,10 @@ func (u *Upload) SetCallbackURL(raw string) {
 	}
 	u.callbackURL, u.callbackErr = raw, u.s.ValidateCallbackURL(raw)
 }
+
+// SetHold keeps every file of the upload on hold: split counts the pages,
+// and only the pages later picked by a page reparse are processed (U111).
+func (u *Upload) SetHold(hold bool) { u.hold = hold }
 
 // SetFilesMetadata sets per-file metadata keyed by file name or 0-based index.
 func (u *Upload) SetFilesMetadata(m map[string]map[string]any) {
@@ -230,7 +237,7 @@ func (u *Upload) Finish(ctx context.Context) (*UploadResult, error) {
 		}
 		d := types.Document{
 			ID: f.docID, KBID: u.kb.ID, CaseID: c.ID, BatchID: &res.BatchID, CreatedBy: u.owner, FileName: f.name, MimeType: f.mime,
-			SizeBytes: f.size, SHA256: f.sha, StorageKey: f.key, Engine: engine, CallbackURL: u.callbackURL,
+			SizeBytes: f.size, SHA256: f.sha, StorageKey: f.key, Engine: engine, CallbackURL: u.callbackURL, Hold: u.hold,
 		}
 		if f.pdfaPart > 0 {
 			part := f.pdfaPart

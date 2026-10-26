@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { getCaseFields, getCaseTOC, getPage, getSplit, getTree, saveCaseField } from "../../api/endpoints";
-import type { CaseDocFields, CaseFieldView, CaseTOC, DocType, SplitFile, SplitView, TOCDoc, TreeNode } from "../../api/types";
+import { getCaseFields, getCaseTOC, getPage, getSplit, getTree, listPages, reparseDocument, saveCaseField } from "../../api/endpoints";
+import type { CaseDocFields, CaseFieldView, CaseTOC, DocType, DocumentPage, SplitFile, SplitView, TOCDoc, TreeNode } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { CasePicker, caseLabel } from "../../components/CasePicker";
 import { NeedKB, TopBar } from "../../components/Layout";
 import { PageImage } from "../../components/PageImage";
+import { PageSteps, pageSummary, pagesWith, skippedRun } from "../../components/PageState";
+import { PagePicker } from "../documents/PagePicker";
 import { useToast } from "../../components/toast";
 import { Badge, Empty, FileIcon, Icon, Loading, Spinner, StatusBadge } from "../../components/ui";
 import { typeColor, typeTitle } from "../../lib/doctype";
@@ -121,8 +123,9 @@ export function CasePage() {
     };
   }, [caseId, reload]);
 
-  // While files are still being parsed or indexed, poll the TOC.
-  const busy = !!toc?.pending?.length;
+  // While files are still being parsed or indexed, poll the TOC. Files
+  // waiting for the user to pick pages (U111) or failed do not move.
+  const busy = !!toc?.pending?.some((p) => p.status !== "failed" && p.status !== "not_started");
   useEffect(() => {
     if (!busy) return;
     const t = setInterval(() => setReload((r) => r + 1), 5000);
@@ -220,7 +223,11 @@ export function CasePage() {
           <div className="flex min-h-0 flex-1 border-t border-line">
             <Sidebar toc={toc} split={split} types={types} caseId={c.id} docId={docId} nodeId={nodeId} onSelect={(d, n) => (select(d, n), setCol("view"))} className={show("sources")} />
             <section className={show("view") + " min-w-0 flex-1 flex-col"}>
-              {doc ? <Viewer key={doc.document_id} doc={doc} nodeId={nodeId} hl={hl} /> : <Empty icon="folder_off">Hồ sơ chưa có nguồn nào có mục lục</Empty>}
+              {doc ? (
+                <Viewer key={doc.document_id} doc={doc} nodeId={nodeId} hl={hl} classify={types.length > 0} onReparsed={() => setReload((r) => r + 1)} />
+              ) : (
+                <Empty icon="folder_off">Hồ sơ chưa có nguồn nào có mục lục</Empty>
+              )}
             </section>
             {doc && (fieldsOpen || col === "fields") ? (
               <FieldsColumn key={doc.document_id} caseId={c.id} doc={doc} nodeId={nodeId} hl={hl} types={types} onPick={pickLine} onFold={() => setFieldsOpen(false)} className={show("fields")} />
@@ -289,12 +296,17 @@ function Sidebar({
       ))}
       {!!toc.pending?.length && (
         <>
-          <div className="mt-3 px-3 pb-1 text-xs font-medium text-muted">Đang xử lý</div>
+          <div className="mt-3 px-3 pb-1 text-xs font-medium text-muted">Chưa có mục lục</div>
           {toc.pending.map((p) => (
-            <Link key={p.document_id} to={`/documents/${p.document_id}`} className="flex h-8 items-center gap-2 rounded-full px-3 text-sm text-muted hover:bg-fg/8">
+            <Link
+              key={p.document_id}
+              to={`/documents/${p.document_id}`}
+              title={p.status === "not_started" ? "Mở để chọn trang cần đọc & phân loại" : undefined}
+              className="flex h-8 items-center gap-2 rounded-full px-3 text-sm text-muted hover:bg-fg/8"
+            >
               <FileIcon name={p.file_name} size={18} />
               <span className="min-w-0 flex-1 truncate">{p.file_name}</span>
-              {p.status === "failed" ? <StatusBadge status={p.status} /> : <Spinner className="size-3.5 border-2" />}
+              {p.status === "failed" || p.status === "not_started" ? <StatusBadge status={p.status} /> : <Spinner className="size-3.5 border-2" />}
             </Link>
           ))}
         </>
@@ -349,7 +361,13 @@ function FileEntry({
           <FileIcon name={d.file_name} size={18} />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.file_name}</span>
         </button>
-        <span className="text-xs whitespace-nowrap text-muted">{d.page_count} tr</span>
+        {d.pages_skipped ? (
+          <span className="text-xs whitespace-nowrap text-warn" title={`${d.pages_skipped} trang chưa xử lý`}>
+            {d.page_count - d.pages_skipped}/{d.page_count} tr
+          </span>
+        ) : (
+          <span className="text-xs whitespace-nowrap text-muted">{d.page_count} tr</span>
+        )}
         {status}
       </div>
       {expanded &&
@@ -391,12 +409,15 @@ function NodeRow({
   const [open, setOpen] = useState<boolean | null>(null);
   const expanded = open ?? onPath.has(n.id);
   const cur = n.short_id === nodeId;
+  // Pages not picked for processing (U111): a hollow dot, muted.
+  const todo = n.doc_type === "not_processed";
   return (
     <>
       <div className={"group flex h-8 items-center rounded-lg pr-1 " + (cur ? "bg-accent-soft text-on-accent-soft" : "text-fg hover:bg-fg/6")}>
-        <button onClick={() => onSelect(docId, n.short_id)} title={n.summary || n.title} className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left">
-          {top && n.doc_type && <i className="size-2 flex-none rounded-full" style={{ background: typeColor(n.doc_type, types) }} title={typeTitle(n.doc_type, types)} />}
-          <span className={"min-w-0 flex-1 truncate " + (top ? "text-sm" : "text-[13px] " + (cur ? "" : "text-muted"))}>{n.title || n.short_id}</span>
+        <button onClick={() => onSelect(docId, n.short_id)} title={todo ? "Trang chưa được đọc và phân loại" : n.summary || n.title} className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left">
+          {top && todo && <i className="size-2 flex-none rounded-full border border-outline" />}
+          {top && n.doc_type && !todo && <i className="size-2 flex-none rounded-full" style={{ background: typeColor(n.doc_type, types) }} title={typeTitle(n.doc_type, types)} />}
+          <span className={"min-w-0 flex-1 truncate " + (top ? "text-sm" : "text-[13px] " + (cur ? "" : "text-muted")) + (todo && !cur ? " text-muted italic" : "")}>{n.title || n.short_id}</span>
           <span className={"text-[11px] whitespace-nowrap tabular-nums " + (cur ? "" : "text-subtle")}>{n.page_start === n.page_end ? n.page_start : `${n.page_start}–${n.page_end}`}</span>
         </button>
         {sub.length ? (
@@ -422,8 +443,27 @@ function NodeRow({
 
 // The pages of the chosen file, light and without a summary (U96): the chosen
 // section's pages are outlined and scrolled to; a field's line is highlighted.
-function Viewer({ doc, nodeId, hl }: { doc: TOCDoc; nodeId: string | null; hl: string | null }) {
+function Viewer({ doc, nodeId, hl, classify, onReparsed }: { doc: TOCDoc; nodeId: string | null; hl: string | null; classify: boolean; onReparsed: () => void }) {
+  const { toast } = useToast();
   const { nodes } = useTree(doc.document_id);
+  // The state of every page (U111): which pages were read and classified,
+  // which were not picked for processing.
+  const [rows, setRows] = useState<DocumentPage[]>([]);
+  const [pick, setPick] = useState<[number, number] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    listPages(doc.document_id).then(
+      (ps) => alive && setRows(ps),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [doc.document_id]);
+  const row = (n: number) => rows.find((p) => p.page_no === n);
+  const summary = rows.length ? pageSummary(rows) : "";
+  const skipped = pagesWith(rows, "skipped");
+  const failed = pagesWith(rows, "failed");
   const node = nodeId ? nodes?.find((n) => n.short_id === nodeId) : undefined;
   const from = node?.page_start ?? 1;
   const to = node?.page_end ?? doc.page_count;
@@ -457,20 +497,67 @@ function Viewer({ doc, nodeId, hl }: { doc: TOCDoc; nodeId: string | null; hl: s
           <Icon name="open_in_new" size={18} />
         </Link>
       </div>
+      {summary && (
+        <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-surface-2/60 px-4 py-2 text-xs text-muted">
+          <span className="min-w-0 flex-[1_1_12rem]">{summary}</span>
+          {(skipped.length > 0 || failed.length > 0) && (
+            <button className="btn btn-tonal btn-sm" onClick={() => setPick(skipped.length ? [skipped[0], skipped.at(-1)!] : [failed[0], failed.at(-1)!])}>
+              <Icon name="play_arrow" size={18} /> Xử lý thêm trang…
+            </button>
+          )}
+        </div>
+      )}
       <div ref={box} className="min-h-0 flex-1 overflow-auto bg-surface-2/50 px-6 py-4">
         <div className="mx-auto flex max-w-200 flex-col gap-4">
-          {Array.from({ length: doc.page_count }, (_, i) => i + 1).map((n) => (
-            <div key={n} data-page={n} className="relative scroll-mt-2">
-              <div className={"overflow-hidden rounded-md border border-line bg-white " + (node && n >= from && n <= to ? "outline-3 outline-offset-2 outline-accent" : "")}>
-                <LazyPage docId={doc.document_id} pageNo={n} line={n === hlPage ? hlLine : undefined} />
+          {Array.from({ length: doc.page_count }, (_, i) => i + 1).map((n) => {
+            const r = row(n);
+            return (
+              <div key={n} data-page={n} className="relative scroll-mt-2">
+                <div className={"overflow-hidden rounded-md border border-line bg-white " + (node && n >= from && n <= to ? "outline-3 outline-offset-2 outline-accent" : "")}>
+                  {r?.status === "skipped" ? (
+                    // Not picked: never rendered, so there is no image (U111).
+                    <div className="grid aspect-[1/1.414] place-items-center bg-surface-3 text-sm text-muted">
+                      <span className="flex flex-col items-center gap-3">
+                        <Icon name="pending" size={36} className="text-subtle" />
+                        Trang {n} chưa được đọc và phân loại
+                        <button className="btn btn-sm bg-surface" onClick={() => setPick(skippedRun(rows, n))}>
+                          <Icon name="play_arrow" size={18} /> Xử lý từ trang này…
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <LazyPage docId={doc.document_id} pageNo={n} line={n === hlPage ? hlLine : undefined} />
+                  )}
+                </div>
+                {r && (
+                  <div className="absolute top-2 left-2 flex flex-wrap gap-1 rounded-lg bg-surface/90 p-1 shadow-1">
+                    <PageSteps page={r} classify={classify} compact />
+                  </div>
+                )}
+                <span className="absolute right-2 bottom-2 rounded bg-black/60 px-1.5 text-xs text-white">
+                  {n} / {doc.page_count}
+                </span>
               </div>
-              <span className="absolute right-2 bottom-2 rounded bg-black/60 px-1.5 text-xs text-white">
-                {n} / {doc.page_count}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+      {pick && (
+        <PagePicker
+          title="Xử lý thêm trang"
+          icon="play_arrow"
+          files={[{ id: doc.document_id, name: doc.file_name, pages: doc.page_count, note: summary }]}
+          range={pick}
+          onClose={() => setPick(null)}
+          onSubmit={async ([p]) => {
+            await reparseDocument(doc.document_id, { pages: p.pages });
+            treeCache.delete(doc.document_id);
+            setPick(null);
+            toast(`Đang đọc & phân loại ${pages(p.pages[0], p.pages.at(-1)!)} của “${doc.file_name}”`);
+            onReparsed();
+          }}
+        />
+      )}
     </div>
   );
 }

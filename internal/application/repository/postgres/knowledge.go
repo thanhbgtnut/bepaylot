@@ -183,14 +183,14 @@ type DocumentsRepo struct{ pool *pgxpool.Pool }
 const docCols = `d.id, d.kb_id, d.case_id, d.batch_id, coalesce(d.created_by, '00000000-0000-0000-0000-000000000000'::uuid), d.file_name, d.mime_type, d.size_bytes, d.sha256, d.storage_key,
 	d.page_count, d.gen, d.status, d.parse_status, d.index_status, d.pages_done, d.pages_failed, d.pages_text_layer,
 	d.pdfa_part, d.pdfa_conformance, d.pdf_info, d.engine, d.markdown_key, d.error, d.metadata, d.title, d.summary,
-	d.interactive, d.callback_url, d.callback_run, d.created_at, d.updated_at`
+	d.interactive, d.callback_url, d.callback_run, d.hold, d.pages_skipped, d.created_at, d.updated_at`
 
 func scanDoc(row pgx.Row) (types.Document, error) {
 	var d types.Document
 	err := row.Scan(&d.ID, &d.KBID, &d.CaseID, &d.BatchID, &d.CreatedBy, &d.FileName, &d.MimeType, &d.SizeBytes, &d.SHA256, &d.StorageKey,
 		&d.PageCount, &d.Gen, &d.Status, &d.ParseStatus, &d.IndexStatus, &d.PagesDone, &d.PagesFailed, &d.PagesTextLayer,
 		&d.PDFAPart, &d.PDFAConformance, &metaScanner{&d.PDFInfo}, &d.Engine, &d.MarkdownKey, &d.Error, &metaScanner{&d.Metadata},
-		&d.Title, &d.Summary, &d.Interactive, &d.CallbackURL, &d.CallbackRun, &d.CreatedAt, &d.UpdatedAt)
+		&d.Title, &d.Summary, &d.Interactive, &d.CallbackURL, &d.CallbackRun, &d.Hold, &d.PagesSkipped, &d.CreatedAt, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d, ErrNotFound
 	}
@@ -214,11 +214,11 @@ func (r *DocumentsRepo) Create(ctx context.Context, d types.Document, interactiv
 	}
 	out, err := scanDoc(r.pool.QueryRow(ctx, `
 		INSERT INTO documents AS d (id, kb_id, case_id, batch_id, created_by, file_name, mime_type, size_bytes, sha256, storage_key,
-			status, parse_status, pdfa_part, pdfa_conformance, engine, metadata, interactive, callback_url)
-		VALUES ($1, $2, $16, $3, $4, $5, $6, $7, $8, $9, 'queued', 'pending', $10, $11, $12, $13, $14, $15)
+			status, parse_status, pdfa_part, pdfa_conformance, engine, metadata, interactive, callback_url, hold)
+		VALUES ($1, $2, $16, $3, $4, $5, $6, $7, $8, $9, 'queued', 'pending', $10, $11, $12, $13, $14, $15, $17)
 		RETURNING `+docCols,
 		d.ID, d.KBID, d.BatchID, createdBy, cleanText(d.FileName), d.MimeType, d.SizeBytes, d.SHA256, d.StorageKey,
-		d.PDFAPart, d.PDFAConformance, d.Engine, meta, interactive, d.CallbackURL, d.CaseID))
+		d.PDFAPart, d.PDFAConformance, d.Engine, meta, interactive, d.CallbackURL, d.CaseID, d.Hold))
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "23505" {
 		existing, gerr := r.FindBySHA(ctx, d.CaseID, d.SHA256)
@@ -392,6 +392,7 @@ type DocUpdate struct {
 	PDFInfo                          map[string]any
 	MarkdownKey                      *string
 	PagesTextLayer                   *int
+	PagesSkipped                     *int
 	Title, Summary                   *string
 }
 
@@ -419,6 +420,9 @@ func (r *DocumentsRepo) Update(ctx context.Context, id uuid.UUID, gen int, u Doc
 	}
 	if u.PagesTextLayer != nil {
 		sets = append(sets, "pages_text_layer = "+a.add(*u.PagesTextLayer))
+	}
+	if u.PagesSkipped != nil {
+		sets = append(sets, "pages_skipped = "+a.add(*u.PagesSkipped))
 	}
 	if u.PDFInfo != nil {
 		b, _ := cleanJSON(u.PDFInfo)
@@ -476,6 +480,15 @@ func (r *DocumentsRepo) WithLock(ctx context.Context, id uuid.UUID, fn func(ctx 
 	return tx.Commit(ctx)
 }
 
+// PickPages records a page reparse that picked pages (U111): pages_skipped
+// is recounted from the page rows and the upload hold is lifted.
+func (r *DocumentsRepo) PickPages(ctx context.Context, id uuid.UUID, gen int) error {
+	_, err := r.pool.Exec(ctx, `UPDATE documents SET hold = false, updated_at = now(),
+		pages_skipped = (SELECT count(*) FROM document_pages WHERE document_id = $1 AND gen = $2 AND status = 'skipped')
+		WHERE id = $1 AND gen = $2`, id, gen)
+	return err
+}
+
 // AdjustCounters corrects pages_done/pages_failed after a page reparse.
 func (r *DocumentsRepo) AdjustCounters(ctx context.Context, id uuid.UUID, gen, doneDelta, failedDelta int) error {
 	_, err := r.pool.Exec(ctx, `UPDATE documents SET pages_done = greatest(0, pages_done + $3), pages_failed = greatest(0, pages_failed + $4),
@@ -487,7 +500,7 @@ func (r *DocumentsRepo) AdjustCounters(ctx context.Context, id uuid.UUID, gen, d
 func (r *DocumentsRepo) BumpGen(ctx context.Context, id uuid.UUID) (int, error) {
 	var gen int
 	err := r.pool.QueryRow(ctx, `UPDATE documents SET gen = gen + 1, status = 'queued', parse_status = 'pending',
-		index_status = 'pending', pages_done = 0, pages_failed = 0, pages_text_layer = 0, error = '', updated_at = now()
+		index_status = 'pending', pages_done = 0, pages_failed = 0, pages_text_layer = 0, pages_skipped = 0, hold = false, error = '', updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL AND status <> 'deleting' RETURNING gen`, id).Scan(&gen)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNotFound

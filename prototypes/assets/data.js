@@ -80,6 +80,9 @@
   BCTC[11].failed = true;
   const GCN = [P("gcn_dkdn", "GIẤY CHỨNG NHẬN ĐĂNG KÝ DOANH NGHIỆP", ["CÔNG TY TRÁCH NHIỆM HỮU HẠN HAI THÀNH VIÊN TRỞ LÊN", "Mã số doanh nghiệp: 0109876543", "Đăng ký lần đầu: 12/08/2015 · Thay đổi lần 4: 03/01/2025", "Tên công ty: CÔNG TY TNHH MINH AN", "Vốn điều lệ: 15.000.000.000 đồng", "Người đại diện theo pháp luật: TRẦN VĂN MINH"])];
 
+  // pstate: trạng thái từng trang, một ký tự mỗi trang (bỏ trống = đã xong hết):
+  // "-" chưa chọn xử lý, "0" đang chờ, "o" có dòng chữ, "m" có nội dung,
+  // "b" có cả hai và chờ phân loại, "c" đã phân loại, "x" lỗi.
   const D = (id, case_id, file_name, mime, size, pages, extra) => ({
     id, kb_id: "kb1", case_id, file_name, mime_type: mime, size_bytes: size, page_count: pages.length, pages_done: pages.length, pages_failed: 0,
     status: "completed", parse_status: "done", index_status: "done", engine: "turbo-ocr + vlm", created_at: "2026-10-20T09:12:00", updated_at: "2026-10-20T09:15:00",
@@ -88,12 +91,13 @@
   const DOCS = [
     D("d1", "c1", "HD_MuaBan_MinhAn_2026.pdf", "application/pdf", 2_410_000, HD, { title: "Hợp đồng mua bán thép 25/2026/HĐMB-MA", summary: "Hợp đồng mua 420 tấn thép cuộn SS400 giữa CP Thép Hoà Phát Nam (bán) và TNHH Minh An (mua), tổng 8,085 tỷ đồng, giao 3 đợt từ 04 đến 06/2026; phụ lục 01 tăng 30 tấn đợt 3.", metadata: { group_code: "G1", loai: "HD" }, created_at: "2026-10-20T09:12:00" }),
     D("d2", "c1", "HoaDon_UNC_Quy2.pdf", "application/pdf", 5_830_000, HDUNC, { title: "Chứng từ thanh toán quý 2/2026", summary: "Ba hoá đơn GTGT của Thép Hoà Phát Nam, ba uỷ nhiệm chi và hai biên bản bàn giao đợt 1 và 3; một UNC trả cước vận chuyển cho Logistics Sao Việt.", metadata: { group_code: "G1" }, created_at: "2026-10-20T09:14:00" }),
-    D("d3", "c1", "BCTC_2025_MinhAn.pdf", "application/pdf", 9_120_000, BCTC, { title: "Báo cáo tài chính kiểm toán 2025", summary: "Doanh thu thuần 112,6 tỷ, lợi nhuận sau thuế 3,05 tỷ, tổng tài sản 47,5 tỷ; nợ phải trả chiếm 63% tổng nguồn vốn.", status: "partial", pages_done: 13, pages_failed: 1, error: "1 trang không đọc được", failed_pages: [{ page_no: 12, error: "Quá thời gian đọc trang, đã thử lại 3 lần" }], created_at: "2026-10-21T14:02:00" }),
+    D("d3", "c1", "BCTC_2025_MinhAn.pdf", "application/pdf", 9_120_000, BCTC, { title: "Báo cáo tài chính kiểm toán 2025", summary: "Doanh thu thuần 112,6 tỷ, lợi nhuận sau thuế 3,05 tỷ, tổng tài sản 47,5 tỷ; nợ phải trả chiếm 63% tổng nguồn vốn.", status: "partial", pstate: "cccccccccccx--", pages_done: 11, pages_failed: 1, error: "1 trang không đọc được", failed_pages: [{ page_no: 12, error: "Quá thời gian đọc trang, đã thử lại 3 lần" }], created_at: "2026-10-21T14:02:00" }),
     D("d4", "c1", "GCN_DKDN_MinhAn.jpg", "image/jpeg", 820_000, GCN, { title: "Giấy CN đăng ký doanh nghiệp — thay đổi lần 4", summary: "TNHH Minh An, MST 0109876543, vốn điều lệ 15 tỷ, đại diện pháp luật Trần Văn Minh.", created_at: "2026-10-21T14:03:00" }),
-    D("d5", "c1", "ScanBoSung_T10.pdf", "application/pdf", 3_300_000, HD.slice(0, 5), { status: "parsing", parse_status: "running", index_status: "pending", pages_done: 2, progress: 0.4, created_at: "2026-10-23T08:40:00" }),
+    D("d5", "c1", "ScanBoSung_T10.pdf", "application/pdf", 3_300_000, HD.slice(0, 5), { status: "parsing", parse_status: "running", index_status: "pending", pstate: "cbo00", pages_done: 2, progress: 0.4, created_at: "2026-10-23T08:40:00" }),
+    D("d9", "c1", "HoSoPhapLy_BoSung.pdf", "application/pdf", 2_050_000, [GCN[0], ...HD.slice(0, 3)], { status: "not_started", parse_status: "pending", index_status: "pending", pstate: "----", pages_done: 0, created_at: "2026-10-23T09:05:00" }),
     D("d6", "c2", "HĐTD_ThepBacViet.pdf", "application/pdf", 1_900_000, HD.slice(0, 4), { title: "Hợp đồng tín dụng hạn mức", created_at: "2026-10-18T10:20:00" }),
-    D("d7", "c2", "BCTC_2025_BacViet.pdf", "application/pdf", 7_700_000, BCTC.slice(0, 9), { status: "queued", parse_status: "pending", index_status: "pending", pages_done: 0, page_count: 0, created_at: "2026-10-23T08:52:00" }),
-    D("d8", "c0", "anh_chup_CCCD.png", "image/png", 410_000, GCN, { title: "", status: "failed", error: "Ảnh quá mờ, không đọc được dòng nào", pages_done: 0, pages_failed: 1, created_at: "2026-10-22T16:31:00" }),
+    D("d7", "c2", "BCTC_2025_BacViet.pdf", "application/pdf", 7_700_000, BCTC.slice(0, 9), { status: "queued", parse_status: "pending", index_status: "pending", pstate: "000000000", pages_done: 0, page_count: 0, created_at: "2026-10-23T08:52:00" }),
+    D("d8", "c0", "anh_chup_CCCD.png", "image/png", 410_000, GCN, { title: "", status: "failed", pstate: "x", error: "Ảnh quá mờ, không đọc được dòng nào", pages_done: 0, pages_failed: 1, created_at: "2026-10-22T16:31:00" }),
   ];
 
   // Cây của mỗi file: gốc là file, con cấp 1 là các giấy tờ theo loại (segment),
@@ -121,11 +125,11 @@
     ],
     d3: [
       ["n1", null, "BCTC_2025_MinhAn.pdf", 1, 14, ""],
-      ["n2", "n1", "Báo cáo tài chính 2025", 1, 14, "bctc", "Đã kiểm toán bởi AVN."],
+      ["n2", "n1", "Báo cáo tài chính 2025", 1, 11, "bctc", "Đã kiểm toán bởi AVN."],
       ["n3", "n2", "Bảng cân đối kế toán", 3, 4, "", "Tổng tài sản 47,5 tỷ."],
       ["n4", "n2", "Báo cáo kết quả kinh doanh", 5, 5, "", "Doanh thu 112,6 tỷ, LNST 3,05 tỷ."],
       ["n5", "n2", "Thuyết minh", 6, 9, "", ""],
-      ["n6", "n2", "Phụ lục số liệu", 10, 14, "", ""],
+      ["n6", "n2", "Phụ lục số liệu", 10, 11, "", ""],
     ],
     d4: [["n1", null, "GCN_DKDN_MinhAn.jpg", 1, 1, ""], ["n2", "n1", "Giấy CN đăng ký doanh nghiệp", 1, 1, "gcn_dkdn", "Thay đổi lần 4."]],
     d6: [["n1", null, "HĐTD_ThepBacViet.pdf", 1, 4, ""], ["n2", "n1", "Hợp đồng tín dụng", 1, 4, "hop_dong", ""]],

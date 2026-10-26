@@ -43,6 +43,9 @@ const (
 	// Built-in labels (§6.9.4).
 	LabelOther   = dtypes.LabelOther
 	LabelUnknown = dtypes.LabelUnknown
+	// LabelNotProcessed marks the span of a file tree over pages not picked
+	// for processing (U111).
+	LabelNotProcessed = "not_processed"
 )
 
 // BBoxFromArray builds a box from [x0,y0,x1,y1]; short input yields a zero box.

@@ -1,11 +1,41 @@
 import { useEffect, useRef, useState } from "react";
 
-import { listCaseTypes, uploadDocuments } from "../../api/endpoints";
+import { listCaseTypes, listDocuments, reparseDocument, uploadDocuments } from "../../api/endpoints";
 import type { CaseType, KnowledgeBase, UploadResult } from "../../api/types";
 import { useApp } from "../../components/AppContext";
 import { useToast } from "../../components/toast";
-import { FileIcon, Icon, Modal } from "../../components/ui";
+import { FileIcon, Icon, Modal, Spinner } from "../../components/ui";
 import { fmtSize } from "../../lib/format";
+import { PagePicker, type PickFile } from "./PagePicker";
+
+// Bước của hộp thoại tải lên (U111): 1. tải file lên, 2. chọn trang cần xử lý.
+function Stepper({ step }: { step: 1 | 2 }) {
+  return (
+    <div className="flex items-center gap-2 text-xs font-medium">
+      {["Tải file lên", "Chọn trang cần xử lý"].map((l, i) => (
+        <span key={l} className="contents">
+          {i > 0 && <span className="h-px w-6 bg-line" />}
+          <span className={"flex items-center gap-1.5 " + (i + 1 === step ? "text-fg" : "text-muted")}>
+            <span className={"grid size-5 place-items-center rounded-full text-[11px] " + (i + 1 < step ? "bg-accent text-on-accent" : i + 1 === step ? "bg-accent-soft text-on-accent-soft" : "bg-surface-3")}>
+              {i + 1 < step ? <Icon name="check" size={14} /> : i + 1}
+            </span>
+            {l}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Runs fn over items, n at a time.
+async function eachLimit<T>(items: T[], n: number, fn: (x: T) => Promise<unknown>) {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (next < items.length) await fn(items[next++]);
+    }),
+  );
+}
 
 interface MetaRow {
   id: number;
@@ -50,6 +80,41 @@ export function UploadDialog({
   const [progress, setProgress] = useState<number | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [busy, setBusy] = useState(false);
+  // Bước 2: các file mới của lần tải, khi server đã đếm xong số trang.
+  const [counting, setCounting] = useState(false);
+  const [pick, setPick] = useState<PickFile[] | null>(null);
+
+  // Files are uploaded on hold: the server only counts their pages. Wait for
+  // the count, then let the user pick the pages to process (U111).
+  useEffect(() => {
+    if (!result?.batch_id || !result.documents?.some((a) => !a.duplicate)) return;
+    const ids = new Set(result.documents.filter((a) => !a.duplicate).map((a) => a.document_id));
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    setCounting(true);
+    const poll = async () => {
+      try {
+        const { data } = await listDocuments(kb.id, { batchId: result.batch_id, limit: 500 });
+        if (!alive) return;
+        const mine = data.filter((d) => ids.has(d.id));
+        if (mine.length < ids.size || mine.some((d) => d.status === "queued" || d.status === "splitting")) {
+          timer = setTimeout(poll, 1000);
+          return;
+        }
+        const failed = mine.filter((d) => d.status === "failed");
+        if (failed.length) fail(new Error(`${failed.length} file không đọc được số trang: ${failed.map((d) => d.file_name).join(", ")}`));
+        setPick(mine.filter((d) => d.status === "not_started").map((d) => ({ id: d.id, name: d.file_name, mime: d.mime_type, pages: d.page_count })));
+        setCounting(false);
+      } catch (e) {
+        if (alive) (fail(e), setCounting(false));
+      }
+    };
+    poll();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [result, kb.id, fail]);
 
   // Copy the FileList now: it is live, and clearing the input (so the same
   // file can be picked again) empties it before a deferred state update runs.
@@ -71,6 +136,7 @@ export function UploadDialog({
         caseType: existing ? undefined : caseType || undefined,
         metadata,
         callbackUrl: callback.trim(),
+        hold: true,
         onProgress: setProgress,
       });
       setResult(res);
@@ -87,6 +153,33 @@ export function UploadDialog({
   };
 
   const total = files.reduce((n, f) => n + f.size, 0);
+  if (pick?.length)
+    return (
+      <PagePicker
+        title="Tải file lên"
+        head={
+          <>
+            <Stepper step={2} />
+            <p className="text-sm">
+              Đã tải lên <b className="font-medium text-fg">{pick.length} file</b>. Bỏ tick file không cần xử lý, sửa khoảng trang của từng file nếu chỉ cần một phần.
+            </p>
+          </>
+        }
+        files={pick}
+        later
+        onClose={() => {
+          toast(`Đã lưu ${pick.length} file ở trạng thái Chưa xử lý`);
+          onClose();
+        }}
+        onSubmit={async (picked) => {
+          await eachLimit(picked, 6, (p) => reparseDocument(p.id, { pages: p.pages }));
+          const n = picked.reduce((a, p) => a + p.pages.length, 0);
+          toast(`Đang đọc & phân loại ${picked.length} file (${n} trang)${picked.length < pick.length ? ` · ${pick.length - picked.length} file để Chưa xử lý` : ""}`);
+          onUploaded();
+          onClose();
+        }}
+      />
+    );
   return (
     <Modal
       title="Tải file lên"
@@ -104,6 +197,7 @@ export function UploadDialog({
         </>
       }
     >
+      <Stepper step={1} />
       <p className="text-sm">
         Vào thư viện <b className="font-medium text-fg">{kb.name}</b>
       </p>
@@ -222,7 +316,17 @@ export function UploadDialog({
           <div className="h-1 overflow-hidden rounded-full bg-accent/20">
             <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
-          <div className="mt-1.5 text-xs">{busy ? `Đang tải ${Math.round(progress * 100)}%…` : "Đã nhận — đang xử lý nền."}</div>
+          <div className="mt-1.5 flex items-center gap-2 text-xs">
+            {busy ? (
+              `Đang tải ${Math.round(progress * 100)}%…`
+            ) : counting ? (
+              <>
+                <Spinner className="size-3 border-2" /> Đã nhận — đang đếm số trang để chọn trang cần xử lý…
+              </>
+            ) : (
+              "Đã nhận."
+            )}
+          </div>
         </div>
       )}
 

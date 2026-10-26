@@ -77,6 +77,8 @@ export interface DocumentQuery {
   metadata?: Record<string, unknown>;
   limit?: number;
   before?: string;
+  /** Các file của một lần tải lên. */
+  batchId?: string;
 }
 export const listDocuments = (kb: string, f: DocumentQuery = {}) =>
   request<{ data: Document[]; next_cursor?: string }>(
@@ -87,6 +89,7 @@ export const listDocuments = (kb: string, f: DocumentQuery = {}) =>
         status: f.status,
         limit: f.limit ?? 100,
         before: f.before,
+        batch_id: f.batchId,
         metadata: f.metadata && Object.keys(f.metadata).length ? JSON.stringify(f.metadata) : undefined,
       }),
   );
@@ -94,12 +97,21 @@ export const listDocuments = (kb: string, f: DocumentQuery = {}) =>
 export function uploadDocuments(
   kb: string,
   files: File[],
-  opt: { caseCode: string; caseType?: string; metadata?: Record<string, unknown>; callbackUrl?: string; onProgress?: (p: number) => void },
+  opt: {
+    caseCode: string;
+    caseType?: string;
+    metadata?: Record<string, unknown>;
+    callbackUrl?: string;
+    /** Chỉ lưu và đếm trang; trang cần xử lý được chọn sau bằng reparseDocument (U111). */
+    hold?: boolean;
+    onProgress?: (p: number) => void;
+  },
 ) {
   const fd = new FormData();
   // The case goes first so the server knows it before the files stream in.
   fd.append("case_code", opt.caseCode);
   if (opt.caseType) fd.append("case_type", opt.caseType);
+  if (opt.hold) fd.append("hold", "true");
   for (const f of files) fd.append("file", f, f.name);
   if (opt.metadata && Object.keys(opt.metadata).length) fd.append("metadata", JSON.stringify(opt.metadata));
   if (opt.callbackUrl) fd.append("callback_url", opt.callbackUrl);
@@ -108,6 +120,7 @@ export function uploadDocuments(
 
 export const getDocument = (id: string) => request<DocumentDetail>(`/documents/${id}`);
 export const deleteDocument = (id: string) => request(`/documents/${id}`, { method: "DELETE" });
+// With pages, only those pages are processed; pages not picked yet are read for the first time (U111).
 export const reparseDocument = (id: string, body: { pages?: number[]; engine?: string } = {}) =>
   request(`/documents/${id}/reparse`, { body });
 export const listPages = (id: string) => request<{ data: DocumentPage[] }>(`/documents/${id}/pages`).then((r) => r.data ?? []);

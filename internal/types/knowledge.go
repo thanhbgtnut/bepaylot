@@ -21,6 +21,9 @@ const (
 	DocFailed     = "failed"
 	DocCancelled  = "cancelled"
 	DocDeleting   = "deleting"
+	// DocNotStarted: uploaded with hold and counted, waiting for the user
+	// to pick the pages to process (U111, §4.8).
+	DocNotStarted = "not_started"
 )
 
 // Stage states used by parse_status / index_status.
@@ -41,6 +44,9 @@ const (
 	PageOCR       = "ocr"
 	PageDone      = "done"
 	PageFailed    = "failed"
+	// PageSkipped: not picked for processing (U111): never rendered, read
+	// or classified until a page reparse picks it.
+	PageSkipped = "skipped"
 )
 
 // Searchable reports whether documents in this state can be searched.
@@ -55,7 +61,7 @@ func Searchable(status string) bool {
 // Terminal reports whether no more pipeline work will run for the status.
 func Terminal(status string) bool {
 	switch status {
-	case DocCompleted, DocPartial, DocFailed, DocCancelled, DocDeleting:
+	case DocCompleted, DocPartial, DocFailed, DocCancelled, DocDeleting, DocNotStarted:
 		return true
 	}
 	return false
@@ -183,14 +189,20 @@ type Document struct {
 	Interactive bool      `json:"-"` // uploaded from chat: uses the high-priority lanes
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// PagesSkipped counts the pages not picked for processing (U111).
+	PagesSkipped int `json:"pages_skipped"`
+	// Hold: split only counts the pages; nothing is processed until the
+	// user picks pages (U111).
+	Hold bool `json:"-"`
 }
 
-// Progress is PagesDone+PagesFailed over PageCount, in [0,1].
+// Progress is PagesDone+PagesFailed over the pages picked for processing
+// (PageCount-PagesSkipped), in [0,1].
 func (d *Document) Progress() float64 {
-	if d.PageCount <= 0 {
+	if d.PageCount-d.PagesSkipped <= 0 {
 		return 0
 	}
-	return float64(d.PagesDone+d.PagesFailed) / float64(d.PageCount)
+	return float64(d.PagesDone+d.PagesFailed) / float64(d.PageCount-d.PagesSkipped)
 }
 
 // DocumentPage is one page of a document.

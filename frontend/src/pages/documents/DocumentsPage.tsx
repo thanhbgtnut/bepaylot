@@ -16,6 +16,7 @@ const STATUS_FILTERS: [string, string][] = [
   ["queued,splitting,parsing,assembling,indexing", "Đang xử lý"],
   ["completed", "Hoàn tất"],
   ["partial", "Một phần"],
+  ["not_started", "Chưa xử lý"],
   ["failed", "Lỗi"],
 ];
 const TYPE_FILTERS: [string, string, string][] = [
@@ -384,7 +385,7 @@ function SortTh({
 
 function Progress({ d }: { d: Document }) {
   if (!isBusy(d.status) || !d.page_count) return null;
-  const pct = Math.round((100 * (d.pages_done + d.pages_failed)) / d.page_count);
+  const pct = Math.round((100 * (d.pages_done + d.pages_failed)) / Math.max(1, d.page_count - (d.pages_skipped ?? 0)));
   return (
     <div className="mt-1 h-1 w-24 overflow-hidden rounded-full bg-accent/20" title={pct + "%"}>
       <div className="h-full rounded-full bg-accent transition-all" style={{ width: pct + "%" }} />
@@ -443,6 +444,7 @@ function ListRow({ d, kcase, onCase, onOpen, actions }: { d: Document; kcase?: C
       <td className={td + " text-muted max-lg:hidden"}>
         {d.page_count || "—"}
         {d.pages_failed > 0 && <span className="badge badge-err ml-1.5">{d.pages_failed} lỗi</span>}
+        {d.status !== "not_started" && d.pages_skipped > 0 && <span className="badge ml-1.5">{d.pages_skipped} chưa xử lý</span>}
       </td>
       <td className={td + " max-xl:hidden"}>
         <div className="flex max-w-80 flex-wrap gap-1">

@@ -700,7 +700,7 @@ func (s *Service) CaseTOC(ctx context.Context, owner, caseID uuid.UUID, filter t
 		return nil, err
 	}
 	for _, v := range views {
-		td := types.TOCDoc{Ref: v.ref, DocumentID: v.doc.ID, FileName: v.doc.FileName, Status: v.doc.Status, PageCount: v.doc.PageCount,
+		td := types.TOCDoc{Ref: v.ref, DocumentID: v.doc.ID, FileName: v.doc.FileName, Status: v.doc.Status, PageCount: v.doc.PageCount, PagesSkipped: v.doc.PagesSkipped,
 			Title: v.doc.Title, Summary: v.doc.Summary, Metadata: v.doc.Metadata, TreeTokens: v.fullTokens()}
 		if v.tree != nil {
 			for _, n := range v.tree.children[v.tree.root.ID] {

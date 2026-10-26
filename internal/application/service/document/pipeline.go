@@ -156,10 +156,19 @@ func (s *Service) split(ctx context.Context, d types.Document, _ types.DocTaskPa
 	if len(sizes) == 0 {
 		return s.fail(ctx, d, "split", errors.New("document has no pages"))
 	}
-	if err := s.st.Pages.Init(ctx, d.ID, d.Gen, sizes); err != nil {
+	n := len(sizes)
+	if d.Hold {
+		// Upload on hold (U111): the pages are only counted; nothing is
+		// rendered or read until the user picks pages (page reparse).
+		if err := s.st.Pages.Init(ctx, d.ID, d.Gen, sizes, types.PageSkipped); err != nil {
+			return err
+		}
+		_, err := s.st.Documents.Update(ctx, d.ID, d.Gen, postgres.DocUpdate{Status: strp(types.DocNotStarted), ParseStatus: strp(types.StagePending), PageCount: &n, PagesSkipped: &n, PDFInfo: info})
 		return err
 	}
-	n := len(sizes)
+	if err := s.st.Pages.Init(ctx, d.ID, d.Gen, sizes, types.PagePending); err != nil {
+		return err
+	}
 	if _, err := s.st.Documents.Update(ctx, d.ID, d.Gen, postgres.DocUpdate{Status: strp(types.DocParsing), PageCount: &n, PDFInfo: info}); err != nil {
 		return err
 	}
@@ -559,7 +568,7 @@ func (s *Service) assemble(ctx context.Context, d types.Document, _ types.DocTas
 	}
 	parse := types.StageDone
 	switch {
-	case cur.PagesFailed >= cur.PageCount:
+	case cur.PagesFailed >= cur.PageCount-cur.PagesSkipped:
 		return s.fail(ctx, d, "parse", errors.New("every page failed"))
 	case cur.PagesFailed > 0:
 		parse = types.StagePartial

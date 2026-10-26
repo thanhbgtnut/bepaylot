@@ -9,14 +9,14 @@ import (
 
 func TestDocSpans(t *testing.T) {
 	rule := types.ClassificationRule{Labels: []types.ClassLabel{{Name: "hop_dong", Title: "Hợp đồng"}, {Name: "hoa_don", Title: "Hoá đơn"}}}
-	if got := docSpans(nil, 5, rule); got != nil {
+	if got := docSpans(nil, 5, nil, rule); got != nil {
 		t.Fatalf("no segment must give no span, got %v", got)
 	}
 	// The user's segment wins over the proposal overlapping it; gaps are unknown.
 	got := docSpans([]types.Segment{
 		{PageStart: 1, PageEnd: 3, Label: "hop_dong", Source: types.SegmentPipeline},
 		{PageStart: 3, PageEnd: 4, Label: "hoa_don", Source: types.SegmentUser},
-	}, 6, rule)
+	}, 6, nil, rule)
 	want := []docSpan{
 		{label: types.LabelUnknown, title: "Chưa rõ", pageStart: 1, pageEnd: 2},
 		{label: "hoa_don", title: "Hoá đơn", pageStart: 3, pageEnd: 4},
@@ -24,6 +24,47 @@ func TestDocSpans(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// Pages not picked for processing (U111) are their own spans, apart from
+// the unknown pages next to them.
+func TestDocSpansSkippedPages(t *testing.T) {
+	rule := types.ClassificationRule{Labels: []types.ClassLabel{{Name: "hoa_don", Title: "Hoá đơn"}}}
+	got := docSpans([]types.Segment{{PageStart: 1, PageEnd: 2, Label: "hoa_don", Source: types.SegmentPipeline}}, 7,
+		map[int]bool{4: true, 5: true, 7: true}, rule)
+	want := []docSpan{
+		{label: "hoa_don", title: "Hoá đơn", pageStart: 1, pageEnd: 2},
+		{label: types.LabelUnknown, title: "Chưa rõ", pageStart: 3, pageEnd: 3},
+		{label: types.LabelNotProcessed, title: "Chưa xử lý", pageStart: 4, pageEnd: 5},
+		{label: types.LabelUnknown, title: "Chưa rõ", pageStart: 6, pageEnd: 6},
+		{label: types.LabelNotProcessed, title: "Chưa xử lý", pageStart: 7, pageEnd: 7},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A gap of pages not picked (U111) ends a document: the pages after it are
+// grouped on their own, and a page without is_first_page after the gap
+// starts a document.
+func TestSegmentsFromPagesGap(t *testing.T) {
+	got := SegmentsFromPages([]types.PageDocType{
+		{PageNo: 1, Label: "hop_dong", Confidence: 0.9, FirstPage: true},
+		{PageNo: 2, Label: "hop_dong", Confidence: 0.9},
+		{PageNo: 6, Label: "hop_dong", Confidence: 0.9},
+		{PageNo: 7, Label: "hoa_don", Confidence: 0.9, FirstPage: true},
+	}, 0.5)
+	want := []types.Segment{
+		{PageStart: 1, PageEnd: 2, Label: "hop_dong", Confidence: 0.9},
+		{PageStart: 6, PageEnd: 6, Label: "hop_dong", Confidence: 0.9},
+		{PageStart: 7, PageEnd: 7, Label: "hoa_don", Confidence: 0.9},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if !uncovered([]types.PageDocType{{PageNo: 3, Label: "hoa_don"}}, want) || uncovered([]types.PageDocType{{PageNo: 2, Label: "hop_dong"}, {PageNo: 4}}, want) {
+		t.Fatal("uncovered: a classified page outside every segment must count, an unclassified one must not")
 	}
 }
 

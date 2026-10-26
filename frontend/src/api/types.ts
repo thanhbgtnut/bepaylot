@@ -47,7 +47,9 @@ export type DocStatus =
   | "partial"
   | "failed"
   | "cancelled"
-  | "deleting";
+  | "deleting"
+  /** Tải lên kèm hold: đã đếm trang, chờ người dùng chọn trang cần xử lý (U111). */
+  | "not_started";
 
 export interface Document {
   id: string;
@@ -63,6 +65,8 @@ export interface Document {
   index_status: string;
   pages_done: number;
   pages_failed: number;
+  /** Số trang không chọn xử lý (U111). */
+  pages_skipped: number;
   engine?: string;
   error?: string;
   metadata?: Record<string, unknown>;
@@ -80,6 +84,7 @@ export interface DocumentDetail extends Document {
 
 export interface DocumentPage {
   page_no: number;
+  /** pending, rendering, rendered, ocr, done, failed; skipped = chưa chọn xử lý (U111). */
   status: string;
   /** Loại giấy tờ Decision API đọc từ ảnh trang (mã trong doc_types của KB). */
   doc_type?: string;
@@ -256,6 +261,8 @@ export interface TOCDoc {
   file_name: string;
   status: DocStatus;
   page_count: number;
+  /** Số trang không chọn xử lý (U111). */
+  pages_skipped?: number;
   title?: string;
   summary?: string;
   metadata?: Record<string, unknown>;

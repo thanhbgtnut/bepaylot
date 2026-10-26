@@ -59,11 +59,37 @@
   const STATUS = {
     queued: ["Đang chờ", "info"], splitting: ["Tách trang", "info"], parsing: ["Đang đọc", "info"], assembling: ["Đang ghép", "info"],
     indexing: ["Đang lập mục lục", "info"], completed: ["Hoàn tất", "ok"], partial: ["Một phần", "warn"], failed: ["Lỗi", "err"], cancelled: ["Đã huỷ", ""],
+    not_started: ["Chưa xử lý", ""],
   };
-  const TERMINAL = new Set(["completed", "partial", "failed", "cancelled"]);
+  const TERMINAL = new Set(["completed", "partial", "failed", "cancelled", "not_started"]);
   const statusBadge = (s) => {
     const [l, t] = STATUS[s] ?? [s, ""];
     return `<span class="badge ${t ? "badge-" + t : ""}">${TERMINAL.has(s) ? "" : '<span class="spinner size-2.5 border-[1.5px]"></span>'}${l}</span>`;
+  };
+  // Trạng thái từng trang (pstate trong data.js): ba bước đọc dòng chữ, đọc
+  // nội dung và phân loại; "-" là trang người dùng chưa chọn xử lý.
+  const pst = (d, p) => d.pstate?.[p - 1] ?? "c";
+  const pagesWith = (d, ch) => Array.from({ length: d.content.length }, (_, i) => i + 1).filter((p) => ch.includes(pst(d, p)));
+  const spans = (ps) => {
+    const out = [];
+    for (const p of ps) out.at(-1)?.[1] === p - 1 ? (out.at(-1)[1] = p) : out.push([p, p]);
+    return out.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(", ");
+  };
+  const STEPS = [["o", "Dòng chữ"], ["m", "Nội dung"], ["c", "Phân loại"]];
+  const pageSteps = (d, p, compact) => {
+    const s = pst(d, p);
+    if (compact && s === "c") return `<span class="badge badge-ok" title="Dòng chữ, nội dung và phân loại đều xong">${icon("check", { size: 14 })}Đã xử lý</span>`;
+    if (s === "-") return '<span class="badge">Chưa xử lý</span>';
+    if (s === "x") return `<span class="badge badge-err">${icon("error", { size: 14 })}Lỗi đọc trang</span>`;
+    return STEPS.map(([k, l]) => {
+      const ok = s === "c" || (k !== "c" && (s === k || s === "b"));
+      return `<span class="badge ${ok ? "badge-ok" : ""}" title="${l}: ${ok ? "xong" : "đang xử lý"}">${ok ? icon("check", { size: 14 }) : '<span class="spinner size-2.5 border-[1.5px]"></span>'}${l}</span>`;
+    }).join("");
+  };
+  // Một dòng tóm tắt: bao nhiêu trang đã xong, lỗi, chưa xử lý.
+  const pageSummary = (d) => {
+    const n = d.content.length, c = pagesWith(d, "c"), x = pagesWith(d, "x"), todo = pagesWith(d, "-"), busy = n - c.length - x.length - todo.length;
+    return [`${c.length}/${n} trang đã phân loại`, busy && `${busy} trang đang xử lý`, x.length && `<span class="text-err">lỗi tr. ${spans(x)}</span>`, todo.length && `chưa xử lý tr. ${spans(todo)}`].filter(Boolean).join(" · ");
   };
   const metaChips = (meta) =>
     Object.entries(meta ?? {}).map(([k, v]) => `<span class="tag"><span class="text-subtle">${esc(k)}</span><span class="font-medium text-fg">${esc(v)}</span></span>`).join("");
@@ -331,14 +357,14 @@
   }
 
   // ------------------------------------------------------------ documents
-  const STATUS_FILTERS = [["busy", "Đang xử lý"], ["completed", "Hoàn tất"], ["partial", "Một phần"], ["failed", "Lỗi"]];
+  const STATUS_FILTERS = [["busy", "Đang xử lý"], ["completed", "Hoàn tất"], ["partial", "Một phần"], ["not_started", "Chưa xử lý"], ["failed", "Lỗi"]];
   function docActions(d) {
     return [
       { icon: "open_in_new", label: "Mở", onClick: () => go("#/documents/" + d.id) },
       { icon: "download", label: "Tải xuống", onClick: () => toast("Prototype: không có file gốc để tải") },
       { icon: "forum", label: "Hỏi đáp về thư viện", onClick: () => go("#/chat") },
       { divider: true },
-      { icon: "refresh", label: "Đọc lại", onClick: () => toast(`Đang đọc lại “${d.file_name}”`) },
+      { icon: "refresh", label: "Đọc lại", onClick: () => openReparse(d) },
       { icon: "delete", label: "Xoá", danger: true, onClick: () => confirm(`Xoá “${d.file_name}”? Không thể hoàn tác.`) && toast("Đã xoá 1 file") },
     ];
   }
@@ -371,7 +397,7 @@
         <td class="${td} rounded-l-lg pl-4"><div class="flex items-center gap-4">${fileIcon(d.file_name)}<div class="min-w-0"><div class="max-w-105 truncate font-medium text-fg">${esc(d.file_name)}</div>${d.title ? `<div class="max-w-105 truncate text-xs text-muted">${esc(d.title)}</div>` : ""}</div></div></td>
         <td class="${td} whitespace-nowrap">${caseChip(caseById(d.case_id))}</td>
         <td class="${td}">${statusBadge(d.status)}${progress(d)}${d.error ? `<div class="mt-0.5 max-w-50 truncate text-xs text-err">${esc(d.error)}</div>` : ""}</td>
-        <td class="${td} text-muted max-lg:hidden">${d.page_count || "—"}${d.pages_failed ? `<span class="badge badge-err ml-1.5">${d.pages_failed} lỗi</span>` : ""}</td>
+        <td class="${td} text-muted max-lg:hidden">${d.page_count || "—"}${d.pages_failed ? `<span class="badge badge-err ml-1.5">${d.pages_failed} lỗi</span>` : ""}${d.status !== "not_started" && pagesWith(d, "-").length ? `<span class="badge ml-1.5" title="Trang chưa xử lý: ${spans(pagesWith(d, "-"))}">${pagesWith(d, "-").length} chưa xử lý</span>` : ""}</td>
         <td class="${td} max-xl:hidden"><div class="flex max-w-80 flex-wrap gap-1">${metaChips(d.metadata)}</div></td>
         <td class="${td} whitespace-nowrap text-muted max-md:hidden">${fmtDate(d.created_at)}</td>
         <td class="${td} whitespace-nowrap text-muted max-md:hidden">${fmtSize(d.size_bytes)}</td>
@@ -403,14 +429,20 @@
       </div>`;
   }
 
+  // Hai bước: 1. tải file lên; 2. chọn file và khoảng trang cần đọc & phân loại.
+  const stepper = (n) => `<div class="flex items-center gap-2 text-xs font-medium">${["Tải file lên", "Chọn trang cần xử lý"].map((l, i) => `<span class="flex items-center gap-1.5 ${i + 1 === n ? "text-fg" : "text-muted"}"><span class="grid size-5 place-items-center rounded-full text-[11px] ${i + 1 < n ? "bg-accent text-on-accent" : i + 1 === n ? "bg-accent-soft text-on-accent-soft" : "bg-surface-3"}">${i + 1 < n ? icon("check", { size: 14 }) : i + 1}</span>${l}</span>`).join('<span class="h-px w-6 bg-line"></span>')}</div>`;
+  const UPLOAD = Array.from({ length: 100 }, (_, i) => {
+    const kind = ["HoaDon", "UNC", "BienBan", "HopDong", "SaoKe"][i % 5];
+    return [`${kind}_${String(i + 1).padStart(3, "0")}.${i % 7 === 3 ? "jpg" : "pdf"}`, 180_000 + ((i * 7919) % 40) * 61_000, i % 7 === 3 ? 1 : 1 + ((i * 37) % 14)];
+  });
   function openUpload() {
     let code = "RT112233";
-    const files = [["BoSung_HoaDon_T7.pdf", 1_240_000], ["Anh_UNC_0702.jpg", 380_000]];
+    const files = UPLOAD;
     modal({
       title: "Tải file lên",
       icon: "upload_file",
       width: 620,
-      body: `<p class="text-sm">Vào thư viện <b class="font-medium text-fg">${esc(kb().name)}</b></p>
+      body: `${stepper(1)}<p class="text-sm">Vào thư viện <b class="font-medium text-fg">${esc(kb().name)}</b></p>
         <div class="grid grid-cols-[1.4fr_1fr] gap-2">
           <label class="field">Mã hồ sơ<input class="input" list="case-codes" value="${code}" placeholder="VD: RT112233"><datalist id="case-codes">${cases().filter((c) => c.code !== "_UNASSIGNED").map((c) => `<option value="${c.code}">${esc(c.title)}</option>`).join("")}</datalist></label>
           <label class="field">Loại hồ sơ<select class="input" disabled><option>vay_von_luu_dong</option></select></label>
@@ -418,13 +450,150 @@
         <p class="-mt-2 text-xs text-subtle">Thêm file vào hồ sơ có sẵn.</p>
         <div class="flex cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-line px-6 py-7 text-center text-muted hover:bg-fg/4">${icon("cloud_upload", { size: 36, cls: "text-accent" })}<div class="text-sm">Kéo thả file vào đây hoặc <span class="font-medium text-accent">chọn từ máy</span></div><div class="text-xs text-subtle">PDF, ảnh scan (JPG, PNG, TIFF) · chọn được nhiều file</div></div>
         <div class="overflow-hidden rounded-xl border border-line"><div class="flex h-10 items-center bg-surface-2 px-4 text-xs font-medium"><span class="flex-1">${files.length} file</span><span>${fmtSize(files.reduce((a, f) => a + f[1], 0))}</span></div>
-          ${files.map(([n, s]) => `<div class="flex h-11 items-center gap-3 border-t border-line pr-1 pl-4 text-sm text-fg">${fileIcon(n, 20)}<span class="flex-1 truncate">${n}</span><span class="text-xs text-muted">${fmtSize(s)}</span><button class="btn-icon btn-sm">${icon("close", { size: 18 })}</button></div>`).join("")}</div>
+          <div class="max-h-60 overflow-auto">${files.map(([n, s]) => `<div class="flex h-11 items-center gap-3 border-t border-line pr-1 pl-4 text-sm text-fg">${fileIcon(n, 20)}<span class="flex-1 truncate">${n}</span><span class="text-xs text-muted">${fmtSize(s)}</span><button class="btn-icon btn-sm">${icon("close", { size: 18 })}</button></div>`).join("")}</div></div>
         <div class="flex flex-col gap-2"><div class="flex items-center"><span class="flex-1 text-sm font-medium text-fg">Thông tin thêm</span><button class="btn btn-text btn-sm">${icon("add", { size: 18 })} Thêm trường</button></div>
           <div class="grid grid-cols-[1fr_1.4fr_40px] items-center gap-2"><input class="input" placeholder="Khoá" value="group_code"><input class="input" placeholder="Giá trị" value="G1"><button class="btn-icon">${icon("remove_circle_outline", { size: 20 })}</button></div>
           <p class="text-xs text-subtle">Áp dụng cho mọi file trong lần tải này (tuỳ chọn).</p></div>
         <label class="field">Callback URL (tuỳ chọn)<input class="input" type="url" placeholder="https://… nhận POST khi xử lý xong"></label>`,
-      footer: `<button class="btn btn-text" onclick="A.closeModal()">Huỷ</button><button class="btn btn-primary" onclick="${on(() => (closeModal(), toast("Đã nhận 2 file — đang xử lý nền")))}">Tải lên ${files.length} file</button>`,
+      footer: `<button class="btn btn-text" onclick="A.closeModal()">Huỷ</button><button class="btn btn-primary" onclick="${on(() =>
+        pickPages({
+          title: "Tải file lên",
+          head: `${stepper(2)}<p class="text-sm">Đã tải lên <b class="font-medium text-fg">${files.length} file</b>. Bỏ tick file không cần xử lý, sửa khoảng trang của từng file nếu chỉ cần một phần.</p>`,
+          files: files.map(([name, , pages]) => ({ name, pages })),
+          later: true,
+          onOk: (sel, nPages) => toast(`Đang đọc & phân loại ${sel.length} file (${nPages} trang)${sel.length < files.length ? ` · ${files.length - sel.length} file để Chưa xử lý` : ""}`),
+        }))}">Tải lên ${files.length} file</button>`,
     });
+  }
+
+  // Chọn file (mặc định chọn hết) và khoảng trang riêng của từng file: từ
+  // trang … đến trang …, mặc định toàn bộ. Thanh áp dụng hàng loạt điền một
+  // khoảng cho mọi file đang tick; sau đó vẫn sửa riêng từng file được.
+  // Dùng cho bước 2 của tải lên và cho Đọc lại.
+  function pickPages({ title, icon: ic = "upload_file", head = "", files, range, later, ok = "Đọc & phân loại", onOk }) {
+    const st = { sel: new Set(files.map((_, i) => i)), r: files.map((f) => (files.length === 1 && range ? [...range] : [1, f.pages])), q: "", last: null };
+    const one = files.length === 1;
+    // Sai: khoảng không hợp lệ. Không khớp số trang của file: thiếu (không có
+    // trang bắt đầu) hoặc vượt (đến trang lớn hơn trang cuối). Cả hai chặn nút
+    // chính đến khi người dùng sửa tay hoặc dùng nút sửa nhanh trên băng cảnh báo.
+    const bad = (i) => { const [a, z] = st.r[i]; return a < 1 || a > z; };
+    const missing = (i) => !bad(i) && st.r[i][0] > files[i].pages;
+    const over = (i) => !bad(i) && !missing(i) && st.r[i][1] > files[i].pages;
+    const count = (i) => (bad(i) || missing(i) ? 0 : Math.min(st.r[i][1], files[i].pages) - st.r[i][0] + 1);
+    const total = () => [...st.sel].reduce((a, i) => a + count(i), 0);
+    const visible = () => files.map((_, i) => i).filter((i) => !st.q || files[i].name.toLowerCase().includes(st.q.toLowerCase()));
+    const num = (i, k) => `<input type="number" min="1" max="${files[i].pages}" data-r="${i}:${k}" value="${st.r[i][k]}" aria-label="${k ? "Đến trang" : "Từ trang"}" class="input h-8 w-14 px-1 text-center disabled:opacity-40">`;
+    const row = (f, i) => `<div data-row="${i}" class="flex min-h-11 items-center gap-3 px-3 py-1 text-sm ${one ? "" : "border-t border-line"}">
+        ${one ? "" : `<input type="checkbox" data-i="${i}" class="size-4 accent-accent" aria-label="Chọn ${esc(f.name)}">`}${fileIcon(f.name, 18)}
+        <span class="min-w-0 flex-1"><span class="block truncate">${esc(f.name)}</span>${f.note ? `<span class="block text-xs text-muted">${f.note}</span>` : ""}<span data-note class="block text-xs text-warn"></span></span>
+        <span class="flex items-center gap-1.5 text-xs whitespace-nowrap text-muted">Từ trang ${num(i, 0)} đến ${num(i, 1)} <span class="w-9">/ ${f.pages}</span></span></div>`;
+    const rows = () => visible().map((i) => row(files[i], i)).join("") || '<div class="border-t border-line px-3 py-4 text-center text-xs text-subtle">Không có file nào khớp</div>';
+    modal({
+      title,
+      icon: ic,
+      width: 680,
+      body: `${head}
+        ${one ? `<div class="rounded-xl border border-line">${row(files[0], 0)}</div><p class="-mt-2 text-xs text-subtle">Trang ngoài khoảng giữ nguyên kết quả cũ.</p>`
+          : `<input id="pp-q" class="input" placeholder="Tìm file theo tên, rồi tick đầu bảng để chọn các file đang hiện">
+        <div class="overflow-hidden rounded-xl border border-line">
+          <div class="flex h-10 items-center gap-3 bg-surface-2 px-3 text-xs font-medium"><input type="checkbox" data-all class="size-4 accent-accent" aria-label="Chọn các file đang hiện"><span id="pp-head" class="flex-1"></span><span>Trang cần xử lý</span></div>
+          <div id="pp-bulk" class="flex flex-wrap items-center gap-2 border-t border-line bg-accent-soft/40 px-3 py-2 text-xs text-fg">
+            <span>Từ trang</span><input id="pp-bf" type="number" min="1" value="1" class="input h-8 w-14 px-1 text-center"><span>đến</span><input id="pp-bt" type="number" min="1" value="3" class="input h-8 w-14 px-1 text-center">
+            <button id="pp-apply" class="btn btn-tonal btn-sm"></button><span class="flex-1"></span><button id="pp-reset" class="btn btn-text btn-sm">Đặt lại toàn bộ trang</button></div>
+          <div id="pp-rows" class="max-h-80 overflow-auto">${rows()}</div></div>
+        <p class="-mt-2 text-xs text-subtle">Mặc định xử lý toàn bộ trang của mỗi file. Giữ Shift khi tick để chọn liền một dải file. File không chọn vẫn được lưu ở trạng thái “Chưa xử lý”.</p>`}
+        <div id="pp-warn" class="hidden rounded-xl bg-warn-soft px-4 py-3 text-sm text-fg"></div>
+        <p class="text-xs text-subtle">Bảng Excel chỉ lấy thông tin từ các trang đã phân loại.</p>`,
+      footer: `${later ? `<button class="btn btn-text" onclick="${on(() => (closeModal(), toast(`Đã lưu ${files.length} file ở trạng thái Chưa xử lý`)))}">Để sau</button>` : '<button class="btn btn-text" onclick="A.closeModal()">Huỷ</button>'}<button id="pp-ok" class="btn btn-primary" onclick="${on(() => {
+        const sel = [...st.sel].map((i) => ({ ...files[i], range: [st.r[i][0], Math.min(st.r[i][1], files[i].pages)] }));
+        const n = total();
+        closeModal();
+        onOk(sel, n);
+      })}"></button>`,
+    });
+    const m = document.getElementById("modal");
+    // Chỉ sửa đúng dòng thay đổi, để danh sách dài không bị cuộn về đầu và ô đang gõ không mất con trỏ.
+    const paint = (i) => {
+      const el = m.querySelector(`[data-row="${i}"]`);
+      if (!el) return;
+      const on_ = st.sel.has(i);
+      el.classList.toggle("text-fg", on_);
+      el.classList.toggle("text-subtle", !on_);
+      el.classList.toggle("bg-warn-soft/50", on_ && (missing(i) || over(i)));
+      const cb = el.querySelector("[data-i]");
+      if (cb) cb.checked = on_;
+      el.querySelectorAll("[data-r]").forEach((x) => {
+        const k = +x.dataset.r.split(":")[1];
+        if (document.activeElement !== x) x.value = st.r[i][k];
+        x.disabled = !on_;
+        x.classList.toggle("border-err", on_ && bad(i));
+        x.classList.toggle("border-warn", on_ && (k ? over(i) : missing(i)));
+      });
+      el.querySelector("[data-note]").textContent = !on_ ? "" : missing(i) ? `Không có trang ${st.r[i][0]} — file chỉ có ${files[i].pages} trang` : over(i) ? `Không có trang ${files[i].pages + 1}–${st.r[i][1]} — file chỉ có ${files[i].pages} trang` : "";
+    };
+    const refresh = () => {
+      const vis = visible(), nVis = vis.filter((i) => st.sel.has(i)).length;
+      const all = m.querySelector("[data-all]");
+      if (all) (all.checked = vis.length > 0 && nVis === vis.length), (all.indeterminate = nVis > 0 && nVis < vis.length);
+      const head = m.querySelector("#pp-head");
+      if (head) head.textContent = `Đã chọn ${st.sel.size}/${files.length} file · ${total()} trang${st.q ? ` · đang hiện ${vis.length} file` : ""}`;
+      const bulk = m.querySelector("#pp-bulk");
+      if (bulk) {
+        bulk.classList.toggle("hidden", !st.sel.size);
+        const bf = +m.querySelector("#pp-bf").value, bt = +m.querySelector("#pp-bt").value, ap = m.querySelector("#pp-apply");
+        ap.disabled = !(bf >= 1 && bt >= bf);
+        ap.textContent = `Áp dụng cho ${st.sel.size} file đã chọn`;
+      }
+      const wrong = [...st.sel].filter(bad), miss = [...st.sel].filter(missing), ov = [...st.sel].filter(over), n = total(), b = m.querySelector("#pp-ok");
+      const warn = m.querySelector("#pp-warn");
+      warn.classList.toggle("hidden", !miss.length && !ov.length);
+      warn.innerHTML = `<div class="flex gap-2">${icon("warning", { size: 20, cls: "text-warn" })}<div class="min-w-0 flex-1"><div class="font-medium">${one ? "Khoảng trang không khớp số trang của file" : `${miss.length + ov.length} file không khớp số trang`}</div>
+        <div class="mt-0.5 text-xs text-muted">${[ov.length && `${one ? "Đến trang" : `${ov.length} file có “đến trang”`} lớn hơn trang cuối`, miss.length && `${one ? "Không có" : `${miss.length} file không có`} trang bắt đầu`].filter(Boolean).join(" · ")}. Sửa ở dòng tô vàng hoặc:</div>
+        <div class="mt-2 flex flex-wrap gap-2">${ov.length ? `<button data-fix="over" class="btn btn-sm bg-surface">Lấy tới trang cuối${one ? "" : ` cho ${ov.length} file`}</button>` : ""}${miss.length && !one ? `<button data-fix="missing" class="btn btn-sm bg-surface">Bỏ chọn ${miss.length} file không có trang bắt đầu</button>` : ""}</div></div></div>`;
+      b.disabled = !!(wrong.length || miss.length || ov.length) || !n;
+      b.textContent = wrong.length ? `Sửa khoảng trang của ${wrong.length} file`
+        : miss.length || ov.length ? (one ? "Khoảng trang không khớp" : `${miss.length + ov.length} file không khớp số trang`)
+        : one ? `${ok} ${n} trang` : `${ok} ${st.sel.size} file · ${n} trang`;
+    };
+    m.addEventListener("click", (e) => {
+      const t = e.target;
+      // Shift + tick: đặt cả dải file đang hiện từ lần tick trước tới file này theo cùng trạng thái.
+      if (t.dataset.i !== undefined) {
+        const i = +t.dataset.i, vis = visible();
+        const span = e.shiftKey && st.last !== null && vis.includes(st.last) ? vis.slice(Math.min(vis.indexOf(st.last), vis.indexOf(i)), Math.max(vis.indexOf(st.last), vis.indexOf(i)) + 1) : [i];
+        for (const j of span) (t.checked ? st.sel.add(j) : st.sel.delete(j)), paint(j);
+        st.last = i;
+      } else if (t.dataset.all !== undefined) {
+        for (const i of visible()) (t.checked ? st.sel.add(i) : st.sel.delete(i)), paint(i);
+      } else if (t.closest("#pp-apply")) {
+        const bf = +m.querySelector("#pp-bf").value, bt = +m.querySelector("#pp-bt").value;
+        for (const i of st.sel) (st.r[i] = [bf, bt]), paint(i);
+        const off = [...st.sel].filter((i) => missing(i) || over(i)).length;
+        toast(`Đã áp dụng ${pages(bf, bt)} cho ${st.sel.size} file${off ? ` · ${off} file không khớp số trang` : ""}`);
+      } else if (t.closest('[data-fix="over"]')) {
+        for (const i of [...st.sel].filter(over)) (st.r[i][1] = files[i].pages), paint(i);
+      } else if (t.closest('[data-fix="missing"]')) {
+        for (const i of [...st.sel].filter(missing)) st.sel.delete(i), paint(i);
+      } else if (t.closest("#pp-reset")) {
+        for (const i of st.sel) (st.r[i] = [1, files[i].pages]), paint(i);
+      } else return;
+      refresh();
+    });
+    m.addEventListener("input", (e) => {
+      const t = e.target;
+      if (t.id === "pp-q") {
+        st.q = t.value;
+        m.querySelector("#pp-rows").innerHTML = rows();
+        visible().forEach(paint);
+      } else if (t.dataset.r) {
+        const [i, k] = t.dataset.r.split(":").map(Number);
+        st.r[i][k] = +t.value || 0;
+        paint(i);
+      } else if (t.id !== "pp-bf" && t.id !== "pp-bt") return;
+      refresh();
+    });
+    files.forEach((_, i) => paint(i));
+    refresh();
   }
 
   // Thư viện mới / sửa thư viện và loại giấy tờ.
@@ -461,19 +630,19 @@
     const tree = M.TREES[id] ?? [];
     const groups = tree.filter((x) => x.doc_type);
     const groupOf = (p) => groups.find((g) => p >= g.page_start && p <= g.page_end);
-    const ready = (p) => p <= d.pages_done || TERMINAL.has(d.status);
+    const ready = (p) => "obmc".includes(pst(d, p));
     // Dải ảnh nhỏ theo giấy tờ: mỗi giấy tờ là một khối có vạch màu theo loại,
     // tên và khoảng trang, ảnh trang xếp hai cột. Số trang và các loại giấy tờ
     // của file hiện ở dòng dưới tên file trên đầu trang.
     const thumb = (p) => {
       const pg = d.content[p - 1];
       return `<a href="${url({ page: p })}" class="group flex flex-col items-center gap-1" title="Trang ${p}"><div class="relative w-full overflow-hidden rounded border-2 ${p === n ? "border-accent" : "border-line group-hover:border-outline"}">${
-        pg.failed ? `<div class="grid aspect-3/4 w-full place-items-center bg-surface-3">${icon("error", { cls: "text-err" })}</div>` : ready(p) ? pageSVG(d, p) : `<div class="grid aspect-3/4 w-full place-items-center bg-surface-3">${spinner("size-4 border-2 ")}</div>`
-      }${pg.blank ? '<span class="absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] text-white leading-4">trắng</span>' : ""}</div><span class="text-[11px] tabular-nums ${p === n ? "font-medium text-accent" : "text-muted"}">${p}</span></a>`;
+        pg.failed ? `<div class="grid aspect-3/4 w-full place-items-center bg-surface-3">${icon("error", { cls: "text-err" })}</div>` : ready(p) ? pageSVG(d, p) : pst(d, p) === "-" ? pageSVG(d, p, { cls: "opacity-40" }) : `<div class="grid aspect-3/4 w-full place-items-center bg-surface-3">${spinner("size-4 border-2 ")}</div>`
+      }${pst(d, p) === "-" ? '<span class="absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] text-white leading-4">chưa xử lý</span>' : pg.blank ? '<span class="absolute inset-x-0 bottom-0 bg-black/60 text-center text-[10px] text-white leading-4">trắng</span>' : ""}</div><span class="text-[11px] tabular-nums ${p === n ? "font-medium text-accent" : "text-muted"}">${p}</span></a>`;
     };
     const blocks = [];
     for (let p = 1; p <= d.content.length; p++) {
-      const g = groupOf(p) ?? null, last = blocks.at(-1);
+      const g = groupOf(p) ?? (pst(d, p) === "-" ? "todo" : null), last = blocks.at(-1);
       if (last && last.g === g) last.pages.push(p);
       else blocks.push({ g, pages: [p] });
     }
@@ -482,9 +651,9 @@
     const rail = `
       ${blocks.map(({ g, pages: ps }) => {
         const cur = ps.includes(n);
-        const color = g ? typeColor(g.doc_type) : "var(--outline)";
+        const color = g?.doc_type ? typeColor(g.doc_type) : "var(--outline)";
         return `<section ${cur ? "data-cur-group" : ""} class="scroll-mt-40 rounded-md border-l-[3px] py-1.5 pr-0.5 pl-1.5 ${cur ? "bg-accent-soft/40" : ""}" style="border-color:${color}">
-          <div class="mb-1.5"><div class="truncate text-[11px] leading-4 font-medium text-fg" title="${esc(g?.title ?? "")}">${g ? esc(g.title) : "Chưa phân loại"}</div><div class="truncate text-[10.5px] text-muted">${pages(ps[0], ps.at(-1))}</div></div>
+          <div class="mb-1.5"><div class="truncate text-[11px] leading-4 font-medium ${g === "todo" ? "text-muted" : "text-fg"}" title="${esc(g?.title ?? "")}">${g === "todo" ? "Chưa xử lý" : g ? esc(g.title) : "Chưa phân loại"}</div><div class="truncate text-[10.5px] text-muted">${pages(ps[0], ps.at(-1))}</div></div>
           <div class="grid grid-cols-2 gap-x-1 gap-y-1">${ps.map(thumb).join("")}</div></section>`;
       }).join("")}`;
     const lines = linesOf(d, n);
@@ -497,11 +666,11 @@
         <h3 class="pt-2 pb-1 text-sm font-medium">Chi tiết tệp</h3>${row("Trạng thái", statusBadge(d.status))}${row("Số trang", d.page_count + (d.pages_failed ? ` <span class="ml-2 text-err">${d.pages_failed} trang lỗi</span>` : ""))}${row("Kích thước", fmtSize(d.size_bytes))}
         ${Object.keys(d.metadata).length ? row("Thông tin thêm", `<span class="flex flex-wrap gap-1.5">${metaChips(d.metadata)}</span>`) : ""}
         ${row("Tải lên", fmtDate(d.created_at))}${d.error ? row("Lỗi", `<span class="text-err">${esc(d.error)}</span>`) : ""}${d.failed_pages ? row("Trang lỗi", d.failed_pages.map((f) => `<a class="chip h-7" title="${esc(f.error)}" href="${url({ page: f.page_no })}">${f.page_no}</a>`).join(" ")) : ""}
-        <h3 class="pt-4 pb-1 text-sm font-medium">Trang ${n}</h3>${pg.doc_type && pg.doc_type !== "other" ? row("Loại giấy tờ", `${typeTitle(pg.doc_type)} · ${92 + (n % 7)}%`) : ""}</div>`;
+        <h3 class="pt-4 pb-1 text-sm font-medium">Trang ${n}</h3>${row("Đã xử lý", `<span class="flex flex-wrap gap-1">${pageSteps(d, n)}</span>`)}${pst(d, n) === "c" && pg.doc_type && pg.doc_type !== "other" ? row("Loại giấy tờ", `${typeTitle(pg.doc_type)} · ${92 + (n % 7)}%`) : ""}</div>`;
     if (tab === "lines")
-      panel = !ok ? empty("hourglass_empty", "", "Trang chưa sẵn sàng") : lines.map((l) => `<a href="${url({ tab: "lines", hl: l.line_no })}" class="grid grid-cols-[34px_1fr] gap-2 border-b border-line px-5 py-2 text-fg ${hl.includes(l.line_no) ? "bg-warn-soft" : "hover:bg-fg/4"}"><span class="pt-0.5 font-mono text-[11px] text-subtle">L${l.line_no}</span><span class="min-w-0"><span class="block font-body text-[13.5px] ${l.low ? "underline decoration-[#e37400] decoration-wavy underline-offset-3" : ""}">${esc(l.text)}</span><span class="mt-1 flex flex-wrap gap-1">${l.vlm ? '<span class="badge badge-vlm">AI đọc lại</span>' : ""}<span class="badge ${l.low ? "badge-warn" : ""}" title="Độ tin cậy">${Math.round(l.conf * 100)}%</span></span>${l.vlm ? `<span class="mt-1 block text-xs text-muted">Bản đọc đầu: ${esc(l.text.replace(/[ăâđêôơư]/g, "?"))}</span>` : ""}</span></a>`).join("");
+      panel = !ok ? empty("hourglass_empty", "", pst(d, n) === "-" ? "Trang chưa xử lý" : "Trang chưa sẵn sàng") : lines.map((l) => `<a href="${url({ tab: "lines", hl: l.line_no })}" class="grid grid-cols-[34px_1fr] gap-2 border-b border-line px-5 py-2 text-fg ${hl.includes(l.line_no) ? "bg-warn-soft" : "hover:bg-fg/4"}"><span class="pt-0.5 font-mono text-[11px] text-subtle">L${l.line_no}</span><span class="min-w-0"><span class="block font-body text-[13.5px] ${l.low ? "underline decoration-[#e37400] decoration-wavy underline-offset-3" : ""}">${esc(l.text)}</span><span class="mt-1 flex flex-wrap gap-1">${l.vlm ? '<span class="badge badge-vlm">AI đọc lại</span>' : ""}<span class="badge ${l.low ? "badge-warn" : ""}" title="Độ tin cậy">${Math.round(l.conf * 100)}%</span></span>${l.vlm ? `<span class="mt-1 block text-xs text-muted">Bản đọc đầu: ${esc(l.text.replace(/[ăâđêôơư]/g, "?"))}</span>` : ""}</span></a>`).join("");
     if (tab === "md")
-      panel = `<div class="px-5 py-4"><div class="md text-[14px]">${ok ? md((pg.title ? "## " + pg.title + "\n\n" : "") + pg.body.join("\n\n")) : "<em>Trang trống</em>"}</div></div>`;
+      panel = `<div class="px-5 py-4"><div class="md text-[14px]">${ok ? md((pg.title ? "## " + pg.title + "\n\n" : "") + pg.body.join("\n\n")) : `<em>${pst(d, n) === "-" ? "Trang chưa xử lý" : "Trang trống"}</em>`}</div></div>`;
     if (tab === "blocks")
       panel = !ok ? "" : [["title", pg.title], ...pg.body.map((t) => ["text", t])].filter(([, t]) => t).map(([k, t], i) => `<div class="border-b border-line px-5 py-2.5"><div class="mb-1 flex gap-1.5"><span class="badge ${k === "title" ? "badge-info" : ""}">${k === "title" ? "Tiêu đề" : "Đoạn"} ${i + 1}</span></div><div class="font-body text-[13px] text-fg">${esc(t)}</div></div>`).join("");
     if (tab === "find") {
@@ -518,11 +687,11 @@
     return `<div class="flex min-h-0 flex-1 flex-col bg-surface-2/60 text-fg">
       <header class="flex h-16 flex-none items-center gap-1 px-2">
         ${(([h, l]) => `<a class="${darkBtn}" href="${h}" title="Quay lại ${esc(l)}">${icon("arrow_back")}</a>`)(backOf("#/documents"))}${fileIcon(d.file_name)}
-        <div class="ml-2 min-w-0 flex-1"><div class="truncate text-base">${esc(d.file_name)}</div>${TERMINAL.has(d.status) ? `<div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted"><span>${d.content.length} trang${groups.length ? ` · ${groups.length} giấy tờ` : ""}</span>${Object.entries(typeCount).map(([t, c]) => `<a href="${url({ page: groups.find((g) => g.doc_type === t).page_start })}" class="inline-flex items-center gap-1.5 text-fg hover:underline" title="Tới ${esc(typeTitle(t))} đầu tiên"><i class="size-2 rounded-full" style="background:${typeColor(t)}"></i>${esc(typeTitle(t))}${c > 1 ? ` <span class="text-muted">×${c}</span>` : ""}</a>`).join("")}</div>` : ""}${!TERMINAL.has(d.status) ? `<div class="flex items-center gap-2 text-xs text-muted">${spinner("size-3 border-2")}${Math.round((d.progress || 0) * 100)}% · ${d.pages_done}/${d.page_count} trang</div>` : ""}</div>
+        <div class="ml-2 min-w-0 flex-1"><div class="truncate text-base">${esc(d.file_name)}</div>${TERMINAL.has(d.status) ? `<div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted"><span>${d.content.length} trang${groups.length ? ` · ${groups.length} giấy tờ` : ""}</span>${pagesWith(d, "c").length < d.content.length ? `<span>${pageSummary(d)}</span>` : ""}${Object.entries(typeCount).map(([t, c]) => `<a href="${url({ page: groups.find((g) => g.doc_type === t).page_start })}" class="inline-flex items-center gap-1.5 text-fg hover:underline" title="Tới ${esc(typeTitle(t))} đầu tiên"><i class="size-2 rounded-full" style="background:${typeColor(t)}"></i>${esc(typeTitle(t))}${c > 1 ? ` <span class="text-muted">×${c}</span>` : ""}</a>`).join("")}</div>` : ""}${!TERMINAL.has(d.status) ? `<div class="flex items-center gap-2 text-xs text-muted">${spinner("size-3 border-2")}${Math.round((d.progress || 0) * 100)}% · ${d.pages_done}/${d.page_count} trang</div>` : ""}</div>
         <a class="${darkBtn}" title="Tìm trong file" href="${url({ tab: "find" })}" onclick="${on(() => (S.panel = true))}">${icon("search")}</a>
         <button class="${darkBtn}" title="Tải xuống" onclick="${on(() => toast("Prototype: không có file gốc"))}">${icon("download")}</button>
         <button class="${darkBtn}" title="Toàn văn" onclick="${on(() => modal({ title: "Toàn văn", icon: "article", width: 900, body: `<div class="md text-fg">${md(d.content.map((p, i) => `**— Trang ${i + 1} —**\n\n${p.title ? "## " + p.title + "\n\n" : ""}${p.body.join("\n\n")}`).join("\n\n---\n\n"))}</div>` }))}">${icon("article")}</button>
-        <button class="${darkBtn}" title="Đọc lại" onclick="${on(() => openReparse(d, n))}">${icon("refresh")}</button>
+        <button class="${darkBtn}" title="Đọc lại" onclick="${on(() => openReparse(d))}">${icon("refresh")}</button>
         <button class="${darkBtn}" title="Xoá" onclick="${on(() => confirm(`Xoá “${d.file_name}”?`) && go("#/documents"))}">${icon("delete")}</button>
         <button class="${darkBtn} ${S.panel ? "bg-accent-soft text-on-accent-soft" : ""}" title="Chi tiết" onclick="${on(() => ((S.panel = !S.panel), render()))}">${icon("info", { fill: S.panel })}</button>
       </header>
@@ -531,6 +700,7 @@
         <div class="relative min-w-0 flex-1">
           <div class="absolute inset-0 overflow-auto px-6 pt-2 pb-24"><div class="mx-auto" style="width:${S.zoom}%;max-width:${S.zoom <= 100 ? "980px" : "none"}">
             ${pg.failed ? `<div class="grid aspect-3/4 place-items-center rounded bg-surface-3 p-6 text-center text-sm text-muted"><span>${icon("error", { size: 40, cls: "mb-2 text-err" })}<br>Trang ${n} lỗi: ${esc(d.failed_pages?.[0]?.error ?? "")}</span></div>`
+            : pst(d, n) === "-" ? `<div class="relative overflow-hidden rounded-md border border-line">${pageSVG(d, n, { cls: "opacity-40" })}<div class="absolute inset-x-0 top-1/3 mx-auto flex w-fit flex-col items-center gap-3 rounded-2xl bg-surface px-6 py-5 text-center text-sm text-muted shadow-2">${icon("pending", { size: 32, cls: "text-subtle" })}<span>Trang ${n} chưa được đọc và phân loại</span><button class="btn btn-primary btn-sm" onclick="${on(() => openReparse(d, n))}">${icon("play_arrow", { size: 18 })} Xử lý từ trang này…</button></div></div>`
             : !ready(n) ? `<div class="grid aspect-3/4 place-items-center rounded bg-surface-3 p-6 text-center text-sm text-muted"><span>${icon("hourglass_empty", { size: 40, cls: "mb-2 text-subtle" })}<br>Trang ${n} chưa sẵn sàng</span></div>`
             : `<div class="overflow-hidden rounded-md border border-line shadow-1">${pageSVG(d, n, { boxes: true, hl, hideBoxes: !S.showBoxes, onBox: on((e) => { const l = e.target.dataset?.line; if (l) go(url({ tab: "lines", hl: l })); }) })}</div>`}
           </div></div>
@@ -552,14 +722,49 @@
           <div class="min-h-0 flex-1 overflow-auto">${panel}</div></aside>` : ""}
       </div></div>`;
   }
+  // Đọc lại cùng hộp chọn trang như lúc tải lên; còn trang chưa xử lý thì
+  // điền sẵn khoảng đó, mở từ một trang thì điền sẵn trang ấy.
   function openReparse(d, n) {
-    modal({
-      title: "Đọc lại tài liệu",
-      icon: "refresh",
-      body: `<label class="flex items-center gap-3 text-sm text-fg"><input type="radio" name="sc" checked class="size-4 accent-accent"> Toàn bộ tài liệu (${d.page_count} trang)</label>
-        <label class="flex items-center gap-3 text-sm text-fg"><input type="radio" name="sc" class="size-4 accent-accent"> Chỉ trang ${n}</label>`,
-      footer: `<button class="btn btn-text" onclick="A.closeModal()">Huỷ</button><button class="btn btn-primary" onclick="${on(() => (closeModal(), toast("Đã đưa vào hàng đợi đọc lại")))}">Đọc lại</button>`,
+    const todo = pagesWith(d, "-");
+    const fresh = todo.length === d.content.length;
+    pickPages({
+      title: fresh ? "Xử lý tài liệu" : "Đọc lại tài liệu",
+      icon: fresh ? "play_arrow" : "refresh",
+      files: [{ name: d.file_name, pages: d.content.length, note: pageSummary(d) }],
+      range: n ? [n, todo.includes(n) ? todo.find((p, i) => todo[i + 1] !== p + 1 && p >= n) : n] : todo.length && !fresh ? [todo[0], todo.at(-1)] : null,
+      ok: fresh ? "Đọc & phân loại" : "Đọc lại",
+      onOk: ([f]) => runPages(d, f.range),
     });
+  }
+  // Mô phỏng: trang trong khoảng chuyển đang chờ → đã đọc → đã phân loại; trang
+  // mới phân loại được gom vào giấy tờ liền trước cùng loại, hoặc thành giấy tờ mới.
+  function runPages(d, [from, to]) {
+    const set = (ch) => {
+      const a = Array.from({ length: d.content.length }, (_, i) => pst(d, i + 1));
+      for (let p = from; p <= Math.min(to, a.length); p++) a[p - 1] = ch;
+      d.pstate = a.join("");
+      render();
+    };
+    toast(`Đang đọc & phân loại ${pages(from, Math.min(to, d.content.length))} của “${d.file_name}”`);
+    set("0");
+    setTimeout(() => set("b"), 1200);
+    setTimeout(() => {
+      for (let p = from; p <= to; p++) if (d.content[p - 1]) d.content[p - 1].failed = false;
+      d.failed_pages = d.failed_pages?.filter((f) => f.page_no < from || f.page_no > to);
+      if (!d.failed_pages?.length) delete d.error;
+      const t = (M.TREES[d.id] ??= [{ id: d.id + "n1", short_id: "n1", parent_id: null, title: d.file_name, page_start: 1, page_end: d.content.length, doc_type: "", summary: "", ord: 0 }]);
+      const segs = () => t.filter((x) => x.parent_id === t[0].id);
+      for (let p = from; p <= Math.min(to, d.content.length); p++) {
+        if (segs().some((g) => p >= g.page_start && p <= g.page_end)) continue;
+        const type = d.content[p - 1].doc_type ?? "other", prev = segs().find((g) => g.page_end === p - 1);
+        if (prev?.doc_type === type) prev.page_end = p;
+        else t.push({ id: `${d.id}g${p}`, short_id: "g" + p, parent_id: t[0].id, title: typeTitle(type), page_start: p, page_end: p, doc_type: type, summary: "", ord: t.length });
+      }
+      set("c");
+      d.status = pagesWith(d, "-x").length ? "partial" : "completed";
+      d.pages_failed = pagesWith(d, "x").length;
+      render();
+    }, 2600);
   }
 
   // ------------------------------------------------------------ chat
@@ -671,8 +876,8 @@
         <div class="flex h-9 items-center gap-1 rounded-lg pr-2 ${open && !nodeId ? "bg-accent-soft text-on-accent-soft" : "text-fg hover:bg-fg/6"}">
           <button class="btn-icon size-7 flex-none" onclick="${on(() => ((S.expanded[d.id] = !ex), render()))}">${icon("arrow_right", { size: 20, cls: "transition-transform " + (ex ? "rotate-90" : "") })}</button>
           <a href="${sel(d.id)}" class="flex min-w-0 flex-1 items-center gap-2 text-inherit" title="${esc(d.file_name)}">${fileIcon(d.file_name, 18)}<span class="min-w-0 flex-1 truncate text-sm font-medium">${esc(d.file_name)}</span></a>
-          <span class="text-xs whitespace-nowrap text-muted">${d.page_count} tr</span>${st ? `<span title="${sf.status === "reviewed" ? "Tách & gom đã duyệt" : "AI đề xuất tách, cần duyệt"}">${st}</span>` : ""}</div>
-        ${ex && tree.length ? `<div class="ml-5 border-l border-line pl-2">${kids(tree[0].id).map((x) => row(x, 0)).join("")}</div>` : ""}</div>`;
+          ${(() => { const c = pagesWith(d, "c").length; return c === d.page_count ? `<span class="text-xs whitespace-nowrap text-muted">${d.page_count} tr</span>` : `<span class="text-xs whitespace-nowrap text-warn" title="${esc(pageSummary(d).replace(/<[^>]+>/g, ""))}">${c}/${d.page_count} tr</span>`; })()}${st ? `<span title="${sf.status === "reviewed" ? "Tách & gom đã duyệt" : "AI đề xuất tách, cần duyệt"}">${st}</span>` : ""}</div>
+        ${ex && (tree.length || pagesWith(d, "-").length) ? `<div class="ml-5 border-l border-line pl-2">${tree.length ? kids(tree[0].id).map((x) => row(x, 0)).join("") : ""}${pagesWith(d, "-").length ? `<button class="flex h-8 w-full items-center gap-2 rounded-lg pr-8 pl-2 text-left text-muted hover:bg-fg/6" title="Chọn trang để đọc & phân loại" onclick="${on(() => openReparse(d))}"><i class="size-2 flex-none rounded-full border border-outline"></i><span class="min-w-0 flex-1 truncate text-sm italic">Chưa xử lý</span><span class="font-mono text-[11px] whitespace-nowrap text-subtle">${spans(pagesWith(d, "-"))}</span></button>` : ""}</div>` : ""}</div>`;
     };
     const sidebar = `<aside class="${show("sources")} w-full flex-none flex-col overflow-auto border-r border-line px-2 py-3 lg:w-72">
       <div class="flex items-center pr-1 pb-1 pl-3"><span class="flex-1 text-sm font-medium text-fg">Nguồn</span><button class="btn-icon btn-sm" title="Thêm nguồn" onclick="${on(openUpload)}">${icon("add", { size: 20 })}</button></div>
@@ -733,8 +938,12 @@
       center = `<div class="flex min-h-0 flex-1 flex-col">
         <div class="flex h-11 flex-none items-center gap-2 border-b border-line px-4 text-sm text-fg">${fileIcon(doc.file_name, 18)}<span class="min-w-0 flex-1 truncate">${esc(doc.file_name)}${node ? ` <span class="text-muted">· ${esc(node.title)} · ${pages(from, to)}</span>` : ""}</span>
           <a class="btn-icon btn-sm" href="#/documents/${doc.id}?page=${from}" title="Mở trong trình xem tài liệu">${icon("open_in_new", { size: 18 })}</a></div>
+        ${pagesWith(doc, "c").length < doc.page_count ? `<div class="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-surface-2/60 px-4 py-2 text-xs text-muted"><span class="min-w-0 flex-[1_1_12rem]">${pageSummary(doc)}</span>${pagesWith(doc, "-x").length ? `<button class="btn btn-tonal btn-sm" onclick="${on(() => openReparse(doc))}">${icon("play_arrow", { size: 18 })} Xử lý thêm trang…</button>` : ""}</div>` : ""}
         <div id="case-pages" class="relative min-h-0 flex-1 overflow-auto px-6 py-4"><div class="mx-auto flex max-w-200 flex-col gap-4">
-          ${all.map((n) => { const inNode = node && n >= from && n <= to; return `<div ${n === from ? 'id="case-first"' : ""} class="relative"><div class="overflow-hidden rounded-md border border-line ${inNode ? "outline-3 outline-offset-2 outline-accent" : ""}">${n === hlPage ? pageSVG(doc, n, { boxes: true, hl: [hlLine], hideBoxes: true }) : pageSVG(doc, n)}</div><span class="absolute right-2 bottom-2 rounded bg-black/60 px-1.5 text-xs text-white">${n} / ${doc.page_count}</span></div>`; }).join("")}
+          ${all.map((n) => { const inNode = node && n >= from && n <= to; return `<div ${n === from ? 'id="case-first"' : ""} class="relative"><div class="overflow-hidden rounded-md border border-line ${inNode ? "outline-3 outline-offset-2 outline-accent" : ""}">${n === hlPage ? pageSVG(doc, n, { boxes: true, hl: [hlLine], hideBoxes: true }) : pageSVG(doc, n, { cls: pst(doc, n) === "-" ? "opacity-40" : "" })}</div>
+            <div class="absolute top-2 left-2 flex flex-wrap gap-1 rounded-lg bg-surface/90 p-1 shadow-1">${pageSteps(doc, n, true)}</div>
+            ${pst(doc, n) === "-" ? `<button class="btn btn-sm absolute inset-0 m-auto w-fit bg-surface shadow-2" onclick="${on(() => openReparse(doc, n))}">${icon("play_arrow", { size: 18 })} Xử lý từ trang này…</button>` : ""}
+            <span class="absolute right-2 bottom-2 rounded bg-black/60 px-1.5 text-xs text-white">${n} / ${doc.page_count}</span></div>`; }).join("")}
         </div></div></div>`;
     }
     return `${topBar(caseLabel(c), `${done.length} file đã có mục lục${pending.length ? ` · ${pending.length} file đang xử lý` : ""}${c.title ? " · " + esc(c.title) : ""}`, `<a class="btn btn-text" href="#/chat" onclick="${on(() => ((S.chatCase = c.id), (S.chats._new = [])))}" title="Hỏi trợ lý AI về hồ sơ này">${icon("forum", { size: 18 })} Hỏi đáp</a>` + casePicker(c, (x) => go("#/cases/" + x.id)))}
@@ -757,6 +966,7 @@
         <div class="flex items-start gap-3"><span class="grid size-10 flex-none place-items-center rounded-xl bg-surface">${icon("table_view", { size: 24, fill: true, cls: "text-[#107c41]" })}</span><div class="min-w-0 flex-1"><div class="text-sm font-medium text-fg">Xuất Excel</div><div class="truncate text-xs text-muted">Mỗi loại giấy tờ một sheet, mỗi giấy tờ một dòng</div></div>
           <button class="btn-icon btn-sm" title="Chọn loại giấy tờ cần xuất" onclick="${on(() => openPickTypes(types))}">${icon("tune", { size: 18 })}</button></div>
         <button class="btn mt-3 w-full border-transparent text-white hover:shadow-1" style="background:${XL}" onclick="${on(() => toast("Đang tạo bảng; thông tin chưa có sẽ được bóc tách và lưu lại"))}">${icon("auto_awesome", { size: 18 })} Tạo ${picked.length} bảng${nFiles ? ` từ ${nFiles} file` : ""}</button>
+        ${(() => { const ds = docsOf(c.id), all = ds.reduce((a, d) => a + d.content.length, 0), cls = ds.reduce((a, d) => a + pagesWith(d, "c").length, 0); return cls < all ? `<div class="mt-2 flex gap-1.5 text-xs text-fg">${icon("info", { size: 16, cls: "text-muted" })}<span>Chỉ lấy từ ${cls}/${all} trang đã phân loại; trang chưa xử lý không vào bảng.</span></div>` : ""; })()}
         <div class="mt-2 text-xs text-muted">Thông tin được bóc tách khi tạo bảng và lưu lại; lần sau chỉ bóc tách trường mới và hỏi lại một lần các trường chưa tìm thấy.</div></div>
       <div class="mt-3 rounded-2xl border border-line p-3"><div class="flex items-center gap-2 px-1 pb-1"><span class="min-w-0 flex-1 text-sm font-medium text-fg">Xuất theo mẫu</span><a class="btn-icon btn-sm" href="#/settings/forms" title="Quản lý mẫu ở Cài đặt">${icon("settings", { size: 18 })}</a></div>
         ${M.FORMS.map((t) => `<button onclick="${on(() => toast(`Đang tạo “${t.name}”; xong thì bấm tải ở danh sách Đã tạo`))}" class="flex w-full min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-fg/5" title="Tạo bảng theo mẫu">${icon("request_page", { size: 22, fill: true, cls: "text-[#107c41]" })}<span class="min-w-0 flex-1"><span class="block truncate text-sm text-fg">${esc(t.name)}</span><span class="block truncate text-xs text-muted">${esc(t.file_name)}</span></span></button>`).join("")}</div>

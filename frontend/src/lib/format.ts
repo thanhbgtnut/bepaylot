@@ -30,9 +30,10 @@ export const STATUS: Record<DocStatus, [string, Tone]> = {
   failed: ["Lỗi", "err"],
   cancelled: ["Đã huỷ", ""],
   deleting: ["Đang xoá", "warn"],
+  not_started: ["Chưa xử lý", ""],
 };
 
-export const TERMINAL = new Set<string>(["completed", "partial", "failed", "cancelled", "deleting"]);
+export const TERMINAL = new Set<string>(["completed", "partial", "failed", "cancelled", "deleting", "not_started"]);
 export const isBusy = (s: string) => !TERMINAL.has(s);
 
 export const SOURCE: Record<string, [string, Tone]> = {

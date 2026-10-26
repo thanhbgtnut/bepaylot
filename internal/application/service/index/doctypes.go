@@ -10,20 +10,48 @@ import (
 
 // SegmentsFromPages groups the pages of a file into documents (§6.9.4):
 // every first page (is_first_page) starts a segment, the pages after it
-// belong to it (docpipe.GroupByFirstPage). It is pure.
+// belong to it (docpipe.GroupByFirstPage). A gap in the page numbers (pages
+// not picked for processing, U111) ends a segment: each run of consecutive
+// pages is grouped on its own. It is pure.
 func SegmentsFromPages(pages []types.PageDocType, min float64) []types.Segment {
 	var out []types.Segment
-	for _, d := range docpipe.GroupByFirstPage(pages, min) {
-		out = append(out, types.Segment{PageStart: d.PageStart, PageEnd: d.PageEnd, Label: d.Label, ProposedLabel: d.ProposedLabel, Confidence: d.Confidence})
+	for start := 0; start < len(pages); {
+		end := start + 1
+		for end < len(pages) && pages[end].PageNo == pages[end-1].PageNo+1 {
+			end++
+		}
+		for _, d := range docpipe.GroupByFirstPage(pages[start:end], min) {
+			out = append(out, types.Segment{PageStart: d.PageStart, PageEnd: d.PageEnd, Label: d.Label, ProposedLabel: d.ProposedLabel, Confidence: d.Confidence})
+		}
+		start = end
 	}
 	return out
 }
 
+// uncovered reports whether a classified page lies outside every segment:
+// pages picked after the segments were proposed (U111).
+func uncovered(pages []types.PageDocType, segs []types.Segment) bool {
+	for _, p := range pages {
+		if p.Label == "" {
+			continue
+		}
+		in := false
+		for _, g := range segs {
+			in = in || (p.PageNo >= g.PageStart && p.PageNo <= g.PageEnd)
+		}
+		if !in {
+			return true
+		}
+	}
+	return false
+}
+
 // docSpans turns the active segments of a file into the spans of its tree:
 // the user's segments win over proposals overlapping them, and pages no
-// segment covers are an unknown span, so the spans cover every page. No
+// segment covers are an unknown span, or a not-processed span for pages not
+// picked for processing (skipped, U111), so the spans cover every page. No
 // segment gives no span.
-func docSpans(segs []types.Segment, pageCount int, rule types.ClassificationRule) []docSpan {
+func docSpans(segs []types.Segment, pageCount int, skipped map[int]bool, rule types.ClassificationRule) []docSpan {
 	if len(segs) == 0 {
 		return nil
 	}
@@ -48,8 +76,17 @@ func docSpans(segs []types.Segment, pageCount int, rule types.ClassificationRule
 	var out []docSpan
 	next := 1
 	gap := func(to int) {
-		if next <= to {
-			out = append(out, docSpan{label: types.LabelUnknown, title: rule.Title(types.LabelUnknown), pageStart: next, pageEnd: to})
+		for next <= to {
+			end, skip := next, skipped[next]
+			for end < to && skipped[end+1] == skip {
+				end++
+			}
+			label := types.LabelUnknown
+			if skip {
+				label = types.LabelNotProcessed
+			}
+			out = append(out, docSpan{label: label, title: rule.Title(label), pageStart: next, pageEnd: end})
+			next = end + 1
 		}
 	}
 	for _, g := range keep {
@@ -77,20 +114,32 @@ func (s *Service) spansOf(ctx context.Context, d types.Document, pageCount int) 
 	if err != nil {
 		return nil, err
 	}
-	if len(segs) == 0 {
-		pages, err := s.st.Pages.DocTypes(ctx, d.ID, d.Gen)
-		if err != nil {
-			return nil, err
-		}
+	pages, err := s.st.Pages.DocTypes(ctx, d.ID, d.Gen)
+	if err != nil {
+		return nil, err
+	}
+	// Proposals are made once, and again when pages picked later (U111)
+	// are outside every segment; the user's segments are kept.
+	if len(segs) == 0 || uncovered(pages, segs) {
 		min := rule.MinConfidence
 		if min <= 0 {
 			min = s.cfg.Classify.MinConfidence
 		}
-		if segs = SegmentsFromPages(pages, min); len(segs) > 0 {
-			if err := s.st.Segments.SaveProposals(ctx, d.CaseID, d.ID, d.Gen, segs, "image", s.cfg.Classify.Decision.Model); err != nil {
+		if props := SegmentsFromPages(pages, min); len(props) > 0 {
+			if err := s.st.Segments.SaveProposals(ctx, d.CaseID, d.ID, d.Gen, props, "image", s.cfg.Classify.Decision.Model); err != nil {
+				return nil, err
+			}
+			if segs, err = s.st.Segments.ByDocument(ctx, d.ID); err != nil {
 				return nil, err
 			}
 		}
 	}
-	return docSpans(segs, pageCount, rule), nil
+	skipped := map[int]bool{}
+	for p := 1; p <= pageCount; p++ {
+		skipped[p] = true
+	}
+	for _, p := range pages {
+		delete(skipped, p.PageNo)
+	}
+	return docSpans(segs, pageCount, skipped, rule), nil
 }

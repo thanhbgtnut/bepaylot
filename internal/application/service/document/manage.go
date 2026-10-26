@@ -231,6 +231,8 @@ func (s *Service) Delete(ctx context.Context, owner, id uuid.UUID) error {
 
 // ReparseRequest selects what to reparse.
 type ReparseRequest struct {
+	// Pages are read again; pages not picked yet (skipped, U111) are read
+	// for the first time. Empty = the whole document as a new generation.
 	Pages  []int  `json:"pages,omitempty"`
 	Engine string `json:"engine,omitempty"`
 	// CallbackURL replaces the document's completion callback URL; empty
@@ -239,7 +241,9 @@ type ReparseRequest struct {
 }
 
 // Reparse re-runs the pipeline for the whole document (new generation) or
-// only OCR+assembly for selected pages of the current generation.
+// only OCR+assembly for selected pages of the current generation. It is
+// also how pages are picked after an upload on hold or picked later (U111):
+// only the given pages go through the pipeline, the others stay as they are.
 func (s *Service) Reparse(ctx context.Context, owner, id uuid.UUID, req ReparseRequest) (types.Document, error) {
 	d, err := s.GetOwned(ctx, owner, id)
 	if err != nil {
@@ -286,6 +290,9 @@ func (s *Service) Reparse(ctx context.Context, owner, id uuid.UUID, req ReparseR
 		return d, err
 	}
 	if err := s.st.Documents.AdjustCounters(ctx, d.ID, d.Gen, -doneN, -failedN); err != nil {
+		return d, err
+	}
+	if err := s.st.Documents.PickPages(ctx, d.ID, d.Gen); err != nil {
 		return d, err
 	}
 	if _, err := s.st.Documents.Update(ctx, d.ID, d.Gen, postgres.DocUpdate{Status: strp(types.DocParsing), ParseStatus: strp(types.StageProcessing)}); err != nil {

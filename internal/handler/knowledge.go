@@ -346,6 +346,7 @@ func (h *Handlers) MetadataValues(ctx context.Context, c *app.RequestContext) {
 // @Param     metadata        formData  string  false  "JSON metadata for every file, e.g. {\"loai_giay_to\":\"HOP_DONG\"}"
 // @Param     files_metadata  formData  string  false  "JSON per-file metadata keyed by file name or index"
 // @Param     callback_url    formData  string  false  "Optional URL that receives a POST (JSON) when each document finishes: completed, partial, failed or cancelled"
+// @Param     hold            formData  bool    false  "Store and count the pages only (status not_started); pick the pages to process with POST /documents/{id}/reparse"
 // @Param     interactive     query     bool    false  "Use the high-priority lanes (chat attachments)"
 // @Success   202             {object}  document.UploadResult
 // @Failure   400             {object}  dto.ErrorResponse
@@ -438,6 +439,12 @@ func (h *Handlers) upload(ctx context.Context, c *app.RequestContext, owner, kb 
 				return nil, err
 			}
 			up.SetCallbackURL(v)
+		case part.FormName() == "hold":
+			v, err := formValue(part)
+			if err != nil {
+				return nil, err
+			}
+			up.SetHold(v == "true" || v == "1")
 		case caseID == nil && (part.FormName() == "case_code" || part.FormName() == "case_id" || part.FormName() == "case_type"):
 			v, err := formValue(part)
 			if err != nil {
@@ -685,6 +692,7 @@ func (h *Handlers) CancelDocument(ctx context.Context, c *app.RequestContext) {
 // ReparseDocument handles POST /v1/documents/{id}/reparse.
 //
 // @Summary   Reparse the whole document (new generation) or selected pages
+// @Description With pages, only those pages go through the pipeline; pages not picked yet (skipped, after an upload with hold) are read for the first time.
 // @Tags      Documents
 // @Accept    json
 // @Produce   json

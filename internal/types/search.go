@@ -115,6 +115,8 @@ type TOCDoc struct {
 	Metadata   map[string]any `json:"metadata,omitempty"`
 	Branches   []TOCBranch    `json:"branches,omitempty"`
 	TreeTokens int            `json:"tree_tokens"`
+	// PagesSkipped counts the pages not picked for processing (U111).
+	PagesSkipped int `json:"pages_skipped,omitempty"`
 }
 
 // TOCBranch is a first-level node of a document tree.

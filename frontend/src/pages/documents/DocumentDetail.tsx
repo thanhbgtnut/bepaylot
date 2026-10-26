@@ -14,6 +14,7 @@ import {
 import type { DocumentDetail as Doc, DocumentPage, PageView, TreeNode } from "../../api/types";
 import { Markdown } from "../../components/Markdown";
 import { PageImage } from "../../components/PageImage";
+import { PageSteps, pageSummary, pagesWith, skippedRun } from "../../components/PageState";
 import { BackButton } from "../../components/nav";
 import { Thumb } from "../../components/Thumb";
 import { useToast } from "../../components/toast";
@@ -21,6 +22,7 @@ import { useApp } from "../../components/AppContext";
 import { Empty, FileIcon, Icon, Loading, MetaChips, Modal, Spinner, StatusBadge } from "../../components/ui";
 import { typeColor, typeTitle } from "../../lib/doctype";
 import { fmtDate, fmtSize, TERMINAL } from "../../lib/format";
+import { PagePicker } from "./PagePicker";
 import { BlocksPanel, FindPanel, LinesPanel, TreePanel } from "./panels";
 
 type Tab = "info" | "lines" | "md" | "blocks" | "find" | "tree";
@@ -58,6 +60,8 @@ export function DocumentDetail() {
   const [hover, setHover] = useState<number | null>(null);
   const [focus, setFocus] = useState<number | null>(null);
   const [modal, setModal] = useState<"md" | "reparse" | null>(null);
+  // Khoảng điền sẵn khi mở Đọc lại từ một trang chưa xử lý.
+  const [reparseRange, setReparseRange] = useState<[number, number] | undefined>();
   const [reloadKey, setReloadKey] = useState(0);
 
   const go = useCallback(
@@ -118,6 +122,7 @@ export function DocumentDetail() {
   const groupOf = (p: DocumentPage) => {
     const n = docNodes.find((n) => p.page_no >= n.page_start && p.page_no <= n.page_end);
     if (n) return { key: n.id, type: n.doc_type, title: n.title || typeTitle(n.doc_type, types) };
+    if (p.status === "skipped") return { key: "skipped", type: "", title: "Chưa xử lý" };
     if (docNodes.length || !p.doc_type) return { key: "none", type: "", title: "Chưa phân loại" };
     return { key: "p:" + p.doc_type, type: p.doc_type, title: typeTitle(p.doc_type, types) };
   };
@@ -128,8 +133,13 @@ export function DocumentDetail() {
     if (last?.key === g.key) last.pages.push(p);
     else blocks.push({ ...g, pages: [p] });
   }
+  // The not-processed spans of the tree (pages not picked, U111) are not documents.
+  const docOnly = docNodes.filter((n) => n.doc_type !== "not_processed");
   const typeCount = new Map<string, number>();
-  for (const n of docNodes) typeCount.set(n.doc_type!, (typeCount.get(n.doc_type!) ?? 0) + 1);
+  for (const n of docOnly) typeCount.set(n.doc_type!, (typeCount.get(n.doc_type!) ?? 0) + 1);
+  const curPage = pages.find((p) => p.page_no === pageNo);
+  const summary = pageSummary(pages);
+  const reparse = (range?: [number, number]) => (setReparseRange(range), setModal("reparse"));
   const pagesLabel = (a: number, b: number) => (a === b ? `tr. ${a}` : `tr. ${a}–${b}`);
 
   const pageReady = pages.find((p) => p.page_no === pageNo)?.status;
@@ -206,14 +216,16 @@ export function DocumentDetail() {
           {!TERMINAL.has(doc.status) ? (
             <div className="flex items-center gap-2 text-xs text-muted">
               <Spinner className="size-3 border-2" />
-              {Math.round((doc.progress || 0) * 100)}% · {doc.pages_done}/{doc.page_count} trang
+              {Math.round((doc.progress || 0) * 100)}% · {doc.pages_done}/{doc.page_count - (doc.pages_skipped ?? 0)} trang
+              {doc.pages_skipped > 0 && ` · ${doc.pages_skipped} trang không chọn xử lý`}
             </div>
           ) : (
             // Pages, documents and their types, each type jumping to its first document.
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
               <span>
-                {doc.page_count} trang{docNodes.length ? ` · ${docNodes.length} giấy tờ` : ""}
+                {doc.page_count} trang{docOnly.length ? ` · ${docOnly.length} giấy tờ` : ""}
               </span>
+              {summary && <span>{summary}</span>}
               {[...typeCount].map(([t, c]) => (
                 <button key={t} className="inline-flex items-center gap-1.5 text-fg hover:underline" title={`Tới ${typeTitle(t, types)} đầu tiên`} onClick={() => go(docNodes.find((n) => n.doc_type === t)!.page_start)}>
                   <i className="size-2 rounded-full" style={{ background: typeColor(t, types) }} />
@@ -233,7 +245,7 @@ export function DocumentDetail() {
         <button className={barBtn} title="Toàn văn" onClick={() => setModal("md")}>
           <Icon name="article" />
         </button>
-        <button className={barBtn} title="Đọc lại" onClick={() => setModal("reparse")}>
+        <button className={barBtn} title="Đọc lại" onClick={() => reparse()}>
           <Icon name="refresh" />
         </button>
         <button className={barBtn} title="Xoá" onClick={remove}>
@@ -273,10 +285,19 @@ export function DocumentDetail() {
                         <div className={"relative w-full overflow-hidden rounded border-2 transition-colors " + (on ? "border-accent" : "border-line group-hover:border-outline")}>
                           {p.status === "done" || p.status === "rendered" || p.status === "ocr" ? (
                             <Thumb docId={doc.id} pageNo={p.page_no} className="aspect-3/4 w-full bg-white" />
+                          ) : p.status === "skipped" ? (
+                            // Not picked: never rendered, so there is no image (U111).
+                            <div className="grid aspect-3/4 w-full place-items-center bg-surface-3">
+                              <Icon name="pending" className="text-subtle" />
+                            </div>
                           ) : (
                             <div className="grid aspect-3/4 w-full place-items-center bg-surface-3">{p.status === "failed" ? <Icon name="error" className="text-err" /> : <Spinner className="size-4 border-2" />}</div>
                           )}
-                          {p.is_blank && <span className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] leading-4 text-white">trắng</span>}
+                          {p.status === "skipped" ? (
+                            <span className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] leading-4 text-white">chưa xử lý</span>
+                          ) : (
+                            p.is_blank && <span className="absolute inset-x-0 bottom-0 bg-black/60 text-[10px] leading-4 text-white">trắng</span>
+                          )}
                         </div>
                         <span className={"text-[11px] tabular-nums " + (on ? "font-medium text-accent" : "text-muted")}>{p.page_no}</span>
                       </button>
@@ -292,7 +313,17 @@ export function DocumentDetail() {
         <div className="relative min-w-0 flex-1">
           <div className="absolute inset-0 overflow-auto px-6 pt-2 pb-24">
             <div className="mx-auto" style={{ width: `${Math.min(zoom, 400)}%`, maxWidth: zoom <= 100 ? 980 : undefined }}>
-              {pageErr ? (
+              {curPage?.status === "skipped" ? (
+                <div className="grid aspect-3/4 place-items-center rounded bg-surface-3 p-6 text-center text-sm text-muted">
+                  <span className="flex flex-col items-center gap-3">
+                    <Icon name="pending" size={40} className="text-subtle" />
+                    Trang {pageNo} chưa được đọc và phân loại
+                    <button className="btn btn-primary btn-sm" onClick={() => reparse(skippedRun(pages, pageNo))}>
+                      <Icon name="play_arrow" size={18} /> Xử lý từ trang này…
+                    </button>
+                  </span>
+                </div>
+              ) : pageErr ? (
                 <div className="grid aspect-3/4 place-items-center rounded bg-surface-3 p-6 text-center text-sm text-muted">
                   <span>
                     <Icon name="hourglass_empty" size={40} className="mb-2 text-subtle" />
@@ -385,7 +416,7 @@ export function DocumentDetail() {
               ))}
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
-              {tab === "info" && <InfoPanel doc={doc} page={page} typeName={(c) => typeTitle(c, types)} onGo={(n) => go(n)} />}
+              {tab === "info" && <InfoPanel doc={doc} page={page} pageRow={curPage} classify={types.length > 0} typeName={(c) => typeTitle(c, types)} onGo={(n) => go(n)} />}
               {tab === "find" && <FindPanel doc={doc} onPick={(n, line) => go(n, { hl: [line], tab: "find" })} />}
               {tab === "tree" && <TreePanel doc={doc} current={pageNo} onPick={(n) => go(n, { tab: "tree" })} />}
               {(tab === "lines" || tab === "md" || tab === "blocks") && !page && !pageErr && <Loading />}
@@ -408,7 +439,8 @@ export function DocumentDetail() {
       {modal === "reparse" && (
         <ReparseDialog
           doc={doc}
-          pageNo={pageNo}
+          pages={pages}
+          range={reparseRange}
           onClose={() => setModal(null)}
           onDone={() => {
             setModal(null);
@@ -430,7 +462,21 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-function InfoPanel({ doc, page, typeName, onGo }: { doc: Doc; page: PageView | null; typeName: (code: string) => string; onGo: (n: number) => void }) {
+function InfoPanel({
+  doc,
+  page,
+  pageRow,
+  classify,
+  typeName,
+  onGo,
+}: {
+  doc: Doc;
+  page: PageView | null;
+  pageRow?: DocumentPage;
+  classify: boolean;
+  typeName: (code: string) => string;
+  onGo: (n: number) => void;
+}) {
   return (
     <div className="px-5 py-3">
       {(doc.title || doc.summary) && (
@@ -469,9 +515,26 @@ function InfoPanel({ doc, page, typeName, onGo }: { doc: Doc; page: PageView | n
           </span>
         </Row>
       )}
+      {pageRow && !page && (
+        <>
+          <h3 className="pt-4 pb-1 text-sm font-medium">Trang {pageRow.page_no}</h3>
+          <Row label="Đã xử lý">
+            <span className="flex flex-wrap gap-1">
+              <PageSteps page={pageRow} classify={classify} />
+            </span>
+          </Row>
+        </>
+      )}
       {page && (
         <>
           <h3 className="pt-4 pb-1 text-sm font-medium">Trang {page.page_no}</h3>
+          {pageRow && (
+            <Row label="Đã xử lý">
+              <span className="flex flex-wrap gap-1">
+                <PageSteps page={pageRow} classify={classify} />
+              </span>
+            </Row>
+          )}
           {page.doc_type && (
             <Row label="Loại giấy tờ">
               {typeName(page.doc_type)} · {Math.round((page.doc_type_confidence ?? 0) * 100)}%
@@ -500,45 +563,24 @@ function FullMarkdown({ docId, onClose }: { docId: string; onClose: () => void }
   );
 }
 
-function ReparseDialog({ doc, pageNo, onClose, onDone }: { doc: Doc; pageNo: number; onClose: () => void; onDone: () => void }) {
-  const { fail } = useToast();
-  const [scope, setScope] = useState<"all" | "page">("all");
-  const [busy, setBusy] = useState(false);
+// Đọc lại cùng hộp chọn trang như lúc tải lên (U111); còn trang chưa xử lý
+// thì điền sẵn khoảng đó. Chỉ trang trong khoảng được xử lý; chọn đủ mọi
+// trang thì đọc lại cả file như trước.
+function ReparseDialog({ doc, pages, range, onClose, onDone }: { doc: Doc; pages: DocumentPage[]; range?: [number, number]; onClose: () => void; onDone: () => void }) {
+  const skipped = pagesWith(pages, "skipped");
+  const fresh = skipped.length === doc.page_count;
   return (
-    <Modal
-      title="Đọc lại tài liệu"
-      icon="refresh"
+    <PagePicker
+      title={fresh ? "Xử lý tài liệu" : "Đọc lại tài liệu"}
+      icon={fresh ? "play_arrow" : "refresh"}
+      files={[{ id: doc.id, name: doc.file_name, mime: doc.mime_type, pages: doc.page_count, note: pageSummary(pages) }]}
+      range={range ?? (skipped.length && !fresh ? [skipped[0], skipped.at(-1)!] : undefined)}
+      ok={fresh ? "Đọc & phân loại" : "Đọc lại"}
       onClose={onClose}
-      footer={
-        <>
-          <button className="btn btn-text" onClick={onClose}>
-            Huỷ
-          </button>
-          <button
-            className="btn btn-primary"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await reparseDocument(doc.id, { pages: scope === "page" ? [pageNo] : undefined });
-                onDone();
-              } catch (e) {
-                fail(e);
-                setBusy(false);
-              }
-            }}
-          >
-            Đọc lại
-          </button>
-        </>
-      }
-    >
-      <label className="flex items-center gap-3 text-sm text-fg">
-        <input type="radio" className="size-4 accent-accent" checked={scope === "all"} onChange={() => setScope("all")} /> Toàn bộ tài liệu ({doc.page_count} trang)
-      </label>
-      <label className="flex items-center gap-3 text-sm text-fg">
-        <input type="radio" className="size-4 accent-accent" checked={scope === "page"} onChange={() => setScope("page")} /> Chỉ trang {pageNo}
-      </label>
-    </Modal>
+      onSubmit={async ([p]) => {
+        await reparseDocument(doc.id, { pages: p.pages.length === doc.page_count && !fresh ? undefined : p.pages });
+        onDone();
+      }}
+    />
   );
 }
