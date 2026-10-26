@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -21,8 +23,11 @@ import (
 	"github.com/thanhenti/bepaylot/internal/types"
 )
 
-// Run queues a test run of a version (0 = the one in use) on samples of a
-// type (none = every sample that is read).
+// Run runs a version (0 = the one in use) on samples of a type (none =
+// every sample that is read) and returns the finished job. The user waits
+// on screen, so it runs in the request, not through the queue: the job row
+// only tells other views that a run is going on. Each sample's agent turn
+// is bounded by doc_types.run_timeout; a closed page does not stop it.
 func (s *Service) Run(ctx context.Context, owner uuid.UUID, code string, ids []uuid.UUID, version int, by uuid.UUID) (types.DocTypeJob, error) {
 	p, err := s.st.DocTypes.Prompt(ctx, owner, code, version)
 	if err != nil {
@@ -46,7 +51,23 @@ func (s *Service) Run(ctx context.Context, owner uuid.UUID, code string, ids []u
 	if len(pick) == 0 {
 		return types.DocTypeJob{}, fmt.Errorf("%w: no sample that is read", ErrBad)
 	}
-	return s.startJob(ctx, owner, types.DocTypeJob{Code: code, Kind: types.JobRun, Version: p.Version, SampleIDs: pick, CreatedBy: by})
+	if s.extract == nil {
+		return types.DocTypeJob{}, ErrNotReady
+	}
+	j, err := s.st.DocTypes.CreateJob(ctx, owner, types.DocTypeJob{Code: code, Kind: types.JobRun, Version: p.Version, SampleIDs: pick, CreatedBy: by})
+	if err != nil {
+		return j, err
+	}
+	rctx := llm.WithCaller(context.WithoutCancel(ctx), llm.Caller{UserID: &by, Kind: types.UsageParse})
+	msg := ""
+	if err := s.runJob(rctx, owner, j); err != nil {
+		s.log.Warn("doctypes: run failed", "job", j.ID, "err", err)
+		msg = failReason(err)
+	}
+	if err := s.st.DocTypes.FinishJob(rctx, j.ID, nil, msg); err != nil {
+		return j, err
+	}
+	return s.Job(rctx, owner, code, j.ID)
 }
 
 // Optimize queues an AI proposal that improves a version (U98); it needs a
@@ -91,9 +112,43 @@ func (s *Service) Job(ctx context.Context, owner uuid.UUID, code string, id uuid
 }
 
 // Jobs returns the running jobs of a type and the latest finished one of
-// each kind.
+// each kind. A test run still "running" well past its time limit was cut
+// off (server restarted mid-request): it is closed, so the page stops
+// waiting for it.
 func (s *Service) Jobs(ctx context.Context, owner uuid.UUID, code string) ([]types.DocTypeJob, error) {
-	return s.st.DocTypes.Jobs(ctx, owner, code)
+	jobs, err := s.st.DocTypes.Jobs(ctx, owner, code)
+	if err != nil {
+		return nil, err
+	}
+	stale := false
+	for _, j := range jobs {
+		if j.Kind == types.JobRun && j.Status == types.JobRunning && time.Since(j.CreatedAt) > s.runLimit(len(j.SampleIDs))+time.Minute {
+			if err := s.st.DocTypes.FinishJob(ctx, j.ID, nil, "Lần chạy thử bị gián đoạn, hãy chạy lại"); err != nil {
+				return nil, err
+			}
+			stale = true
+		}
+	}
+	if stale {
+		return s.st.DocTypes.Jobs(ctx, owner, code)
+	}
+	return jobs, nil
+}
+
+// runParallel is how many samples of a test run are read at once.
+const runParallel = 4
+
+// runTimeout bounds one sample's extraction turn (doc_types.run_timeout).
+func (s *Service) runTimeout() time.Duration {
+	if s.cfg == nil || s.cfg.DocTypes.RunTimeout <= 0 {
+		return 60 * time.Second
+	}
+	return s.cfg.DocTypes.RunTimeout
+}
+
+// runLimit is the longest a test run on n samples can take.
+func (s *Service) runLimit(n int) time.Duration {
+	return time.Duration((n+runParallel-1)/runParallel) * s.runTimeout()
 }
 
 // DropProposal forgets an optimization's proposal.
@@ -153,23 +208,46 @@ func (s *Service) runJob(ctx context.Context, owner uuid.UUID, j types.DocTypeJo
 	if len(p.Fields) == 0 { // a job queued before Run refused this
 		return fmt.Errorf("%w: version %d has no fields", queue.ErrSkipRetry, p.Version)
 	}
+	// Samples are read runParallel at a time; one that fails does not stop
+	// the others, whose results are kept.
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+		sem  = make(chan struct{}, runParallel)
+	)
 	for _, id := range j.SampleIDs {
-		smp, err := s.st.DocTypes.Sample(ctx, owner, id)
-		if errors.Is(err, postgres.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		out, err := s.runOne(ctx, owner, j.CreatedBy, t, p, smp)
-		if err != nil {
-			return err
-		}
-		if err := s.st.DocTypes.SaveRun(ctx, types.SampleRun{SampleID: id, Version: p.Version, Output: out}); err != nil {
-			return err
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id uuid.UUID) {
+			defer func() { <-sem; wg.Done() }()
+			if err := s.runSample(ctx, owner, j.CreatedBy, t, p, id); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}(id)
+	}
+	wg.Wait()
+	if len(errs) > 0 {
+		return errs[0]
 	}
 	return nil
+}
+
+func (s *Service) runSample(ctx context.Context, owner, by uuid.UUID, t types.CatalogDocType, p types.DocTypePrompt, id uuid.UUID) error {
+	smp, err := s.st.DocTypes.Sample(ctx, owner, id)
+	if errors.Is(err, postgres.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	out, err := s.runOne(ctx, owner, by, t, p, smp)
+	if err != nil {
+		return err
+	}
+	return s.st.DocTypes.SaveRun(ctx, types.SampleRun{SampleID: id, Version: p.Version, Output: out})
 }
 
 // runOne is one extraction turn of a version on a sample, as when a sheet
@@ -190,6 +268,8 @@ func (s *Service) runOne(ctx context.Context, owner, by uuid.UUID, t types.Catal
 		}
 	}
 	text := docmodel.ExtractPrompt(tableOf(t, p), lines, md, size, s.minConf(), g)
+	ctx, cancel := context.WithTimeout(ctx, s.runTimeout())
+	defer cancel()
 	reply, err := s.askExtract(ctx, by, smp.ID, text)
 	if err != nil {
 		return nil, err
@@ -252,8 +332,8 @@ func failReason(err error) string {
 		return "AI đang quá tải hoặc đã hết hạn mức, thử lại sau"
 	case errors.Is(err, errNotJSON):
 		return "AI trả lời không đúng dạng, thử chạy lại"
-	case strings.Contains(m, "timeout") || strings.Contains(m, "deadline"):
-		return "AI trả lời quá lâu, thử lại sau"
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(m, "timeout") || strings.Contains(m, "deadline"):
+		return "AI trả lời quá lâu, đã dừng sau thời gian cho phép, thử lại sau"
 	}
 	return "AI chưa trả lời được, thử lại sau"
 }

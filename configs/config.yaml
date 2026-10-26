@@ -300,6 +300,9 @@ usage:
 # Case sheets (U43, §6.9.6).
 sheets:
   low_confidence: 0.75              # cells below it are marked "cần xem"
+# Document type catalogue (U94, §6.9.10).
+doc_types:
+  run_timeout: 60s                  # per sample of a test run: the agent's extraction turn, waited for on screen
 classify:                           # §6.9.4; document types: doc_types of the KB, else the labels of the case type
   provider: ""                      # "" = llm.default_provider
   model: ""                         # "" = llm.default_model

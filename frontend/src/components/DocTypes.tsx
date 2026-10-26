@@ -432,6 +432,11 @@ export function DocTypePage() {
   );
 }
 
+// A test run answers with the finished job: a failed one carries the reason.
+const ranOrFail = (j: DocTypeJob) => {
+  if (j.status === "failed") throw new Error(j.error || "Chạy thử chưa xong, thử lại sau");
+};
+
 // ---------------------------------------------------------------- samples
 
 function SampleBadge({ s }: { s: DocTypeSample }) {
@@ -554,8 +559,11 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
   const [focus, setFocus] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // A run started here is shown at once, before the list reports it.
+  const [mine, setMine] = useState(false);
+  const reading = running || mine;
   // The list says when the sample is read or a run ended: then the detail is read again.
-  const stamp = `${brief.status}|${brief.ran}|${brief.score}|${running}|${brief.reviewed_at}`;
+  const stamp = `${brief.status}|${brief.ran}|${brief.score}|${reading}|${brief.reviewed_at}`;
   useEffect(() => {
     getSample(t.name, brief.id).then(setS, fail);
   }, [t.name, brief.id, stamp, fail]);
@@ -571,11 +579,14 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
   const runFailed = failed && failed.version === v && (!run || (failed.finished_at ?? "") > run.ran_at) ? failed : undefined;
 
   const startRun = async () => {
+    setMine(true);
     try {
-      await runSamples(t.name, [brief.id]);
-      reload();
+      ranOrFail(await runSamples(t.name, [brief.id]));
     } catch (e) {
       fail(e);
+    } finally {
+      setMine(false);
+      reload();
     }
   };
   const save = async () => {
@@ -667,7 +678,7 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
   const noFields = !t.fields.length;
   let result: ReactNode;
   if (brief.status !== "ready") result = <div className="px-4 py-10 text-center text-sm text-subtle">Đợi xử lý xong để chạy thử.</div>;
-  else if (noFields && !running)
+  else if (noFields && !reading)
     result = (
       <div className="px-4 py-10 text-center text-sm text-muted">
         Loại này chưa có trường nào nên chưa chạy thử được.
@@ -691,7 +702,7 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
         )}
       </div>
     );
-  else if (running)
+  else if (reading)
     result = (
       <div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-sm text-muted">
         <Spinner className="size-6" />
@@ -796,7 +807,7 @@ function SampleView({ t, brief, running, failed, editor, reload }: { t: DocTypeV
             </div>
           </div>
           {editor && (
-            <button className="btn btn-sm" disabled={brief.status !== "ready" || running || noFields} title={noFields ? "Thêm trường cần lấy trước" : undefined} onClick={startRun}>
+            <button className="btn btn-sm" disabled={brief.status !== "ready" || reading || noFields} title={noFields ? "Thêm trường cần lấy trước" : undefined} onClick={startRun}>
               <Icon name="play_arrow" size={18} /> Chạy thử
             </button>
           )}
@@ -852,6 +863,7 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
   const [draft, setDraft] = useState<{ instruction: string; rules: string[]; shots: PromptShot[]; fields: NewField[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [newRule, setNewRule] = useState("");
+  const [runBusy, setRunBusy] = useState(false);
   const [fullText, setFullText] = useState<string | null>(null);
   const [hl, setHl] = useState<string | null>(null);
   // The page reloads while samples are read or runs go on: the draft is
@@ -870,7 +882,7 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
   const reviewed = samples.filter((s) => s.truth && s.status === "ready");
   const ready = samples.filter((s) => s.status === "ready");
   const optimizing = jobs.find((j) => j.kind === "optimize" && j.status === "running");
-  const runningRun = jobs.some((j) => j.kind === "run" && j.status === "running");
+  const runningRun = runBusy || jobs.some((j) => j.kind === "run" && j.status === "running");
   const lastOpt = jobs.find((j) => j.kind === "optimize" && j.status !== "running");
   const proposal = lastOpt?.status === "done" && lastOpt.result && !lastOpt.result.none && lastOpt.version === cur?.version ? lastOpt : undefined;
   const dirty = !!draft && !!cur && JSON.stringify([draft.instruction, draft.rules, draft.shots, draft.fields.map(({ key, label, value_type, description }) => ({ key, label, value_type, description: description || undefined }))]) !==
@@ -900,17 +912,18 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
       setBusy(false);
     }
   };
-  // Chạy thử: AI reads every sample with the version in use.
+  // Chạy thử: AI reads every sample with the version in use; the request
+  // returns when the run is over.
   const run = async () => {
-    setBusy(true);
+    setRunBusy(true);
     try {
-      await runSamples(t.name);
-      toast(`Đang chạy thử hướng dẫn v${cur?.version} trên ${ready.length} mẫu`);
-      reload();
+      ranOrFail(await runSamples(t.name));
+      toast(`Đã chạy thử hướng dẫn v${cur?.version} trên ${ready.length} mẫu`);
     } catch (e) {
       fail(e);
     } finally {
-      setBusy(false);
+      setRunBusy(false);
+      reload();
     }
   };
   const optimize = async () => {
@@ -928,7 +941,7 @@ function PromptTab({ t, samples, prompts, jobs, editor, reload }: { t: DocTypeVi
     try {
       const p = await createPrompt(t.name, { instruction: r.instruction, rules: r.rules, shots: r.shots, fields: r.fields, note: `Tối ưu tự động: ${r.patterns.length} quy tắc, ${r.shots.length - (cur?.shots.length ?? 0)} ví dụ`, use: true });
       await dropDocTypeJob(t.name, proposal.id);
-      if (ready.length && r.fields.length) await runSamples(t.name);
+      if (ready.length && r.fields.length) ranOrFail(await runSamples(t.name));
       toast(`Đã áp dụng hướng dẫn v${p.version} · độ chính xác ${pct(r.after)}`);
       setHl(null);
       reload();

@@ -38,6 +38,7 @@ type Config struct {
 	Usage    Usage    `yaml:"usage"`
 	Sheets   Sheets   `yaml:"sheets"`
 	Classify Classify `yaml:"classify"`
+	DocTypes DocTypes `yaml:"doc_types"`
 }
 
 // Usage prices model calls and limits each user's monthly spend (§8.5).
@@ -63,6 +64,13 @@ type ModelPrice struct {
 type Sheets struct {
 	// LowConfidence marks a cell "cần xem" below it.
 	LowConfidence float64 `yaml:"low_confidence"`
+}
+
+// DocTypes configures the document type catalogue (§6.9.10).
+type DocTypes struct {
+	// RunTimeout bounds the agent's extraction turn on one sample of a test
+	// run, which the user waits for on screen.
+	RunTimeout time.Duration `yaml:"run_timeout"`
 }
 
 // Classify configures document:classify (§6.9.4); labels live in the case type.
@@ -453,6 +461,7 @@ func (c *Config) applyDefaults() {
 	if c.Sheets.LowConfidence <= 0 {
 		c.Sheets.LowConfidence = 0.75
 	}
+	setDuration(&c.DocTypes.RunTimeout, 60*time.Second)
 
 	setInt32(&c.DB.MaxConns, 10)
 	setInt32(&c.DB.MinConns, 1)

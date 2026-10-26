@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -49,10 +50,15 @@ type agentExtract struct {
 	t     *testing.T
 	calls int
 	fail  error
+	hang  bool // never answers: the run's time limit must stop it
 }
 
-func (f *agentExtract) RunExtract(_ context.Context, _ types.User, caseID, _ uuid.UUID, text string) (string, error) {
+func (f *agentExtract) RunExtract(ctx context.Context, _ types.User, caseID, _ uuid.UUID, text string) (string, error) {
 	f.calls++
+	if f.hang {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	if f.fail != nil {
 		return "", f.fail
 	}
@@ -164,6 +170,21 @@ func TestDocTypeCatalogAndLab(t *testing.T) {
 		t.Fatalf("refused key: job %s %q after %d calls", bad.Status, bad.Error, ex.calls)
 	}
 	ex.fail = nil
+
+	// A model that never answers: the run returns when the time limit is
+	// reached, failed, instead of keeping the page waiting.
+	h.Config.DocTypes.RunTimeout = 300 * time.Millisecond
+	ex.hang = true
+	start := time.Now()
+	slow, err := svc.Run(ctx, owner, unc.Name, nil, 0, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slow.Status != types.JobFailed || !strings.Contains(slow.Error, "quá lâu") || time.Since(start) > 5*time.Second {
+		t.Fatalf("hanging model: job %s %q after %v", slow.Status, slow.Error, time.Since(start))
+	}
+	ex.hang = false
+	h.Config.DocTypes.RunTimeout = time.Minute
 
 	if _, err := svc.Run(ctx, owner, unc.Name, nil, 0, owner); err != nil {
 		t.Fatal(err)

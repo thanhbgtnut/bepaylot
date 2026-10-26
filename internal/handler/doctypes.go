@@ -445,14 +445,14 @@ func (h *Handlers) SetSampleTruth(ctx context.Context, c *app.RequestContext) {
 
 // RunSamples handles POST /v1/doc-types/{code}/samples/run.
 //
-// @Summary      Test a version of the instructions on samples (task doctype:job)
-// @Description  One extraction turn per sample, as when a sheet is built; a sample used as an example is read without it. Poll GET /v1/doc-types/{code}/jobs/{id}. Billed as kind parse to the caller.
+// @Summary      Test a version of the instructions on samples
+// @Description  One extraction turn of the agent per sample, as when a sheet is built; a sample used as an example is read without it. Runs in the request (not queued) and returns the finished job: status done, or failed with the reason in error. Each sample is bounded by doc_types.run_timeout. Billed as kind parse to the caller.
 // @Tags         DocTypes
 // @Accept       json
 // @Produce      json
 // @Param        code     path      string                 true  "Type code"
 // @Param        request  body      dto.RunSamplesRequest  true  "Samples and version"
-// @Success      202      {object}  types.DocTypeJob
+// @Success      200      {object}  types.DocTypeJob
 // @Security     ApiKeyAuth
 // @Router       /v1/doc-types/{code}/samples/run [post]
 func (h *Handlers) RunSamples(ctx context.Context, c *app.RequestContext) {
@@ -474,7 +474,7 @@ func (h *Handlers) RunSamples(ctx context.Context, c *app.RequestContext) {
 		h.docTypeError(c, err)
 		return
 	}
-	c.JSON(consts.StatusAccepted, j)
+	c.JSON(consts.StatusOK, j)
 }
 
 // ListPrompts handles GET /v1/doc-types/{code}/prompts.
