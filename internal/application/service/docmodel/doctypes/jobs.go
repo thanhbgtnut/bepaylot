@@ -196,11 +196,22 @@ func (s *Service) runOne(ctx context.Context, owner, by uuid.UUID, t types.Catal
 	}
 	out, ok := docmodel.RunValues(p.Fields, reply)
 	if !ok {
-		s.log.Warn("doctypes: the reply has no JSON", "sample", smp.ID, "reply", textutil.Truncate(reply, 500))
-		return nil, errNotJSON
+		// Asked again at once: a retry through the queue waits 15 s or more
+		// while the user watches the run.
+		s.log.Warn("doctypes: the reply has no JSON, asking again", "sample", smp.ID, "reply", textutil.Truncate(reply, 500))
+		if reply, err = s.askExtract(ctx, by, smp.ID, text+jsonOnly); err != nil {
+			return nil, err
+		}
+		if out, ok = docmodel.RunValues(p.Fields, reply); !ok {
+			s.log.Warn("doctypes: the reply has no JSON", "sample", smp.ID, "reply", textutil.Truncate(reply, 500))
+			return nil, errNotJSON
+		}
 	}
 	return out, nil
 }
+
+// jsonOnly ends the message of the second ask, after a reply without JSON.
+const jsonOnly = "\n\nChỉ trả lời đúng một JSON {\"fields\":[…]} như mẫu ở trên, không viết thêm gì."
 
 var errNotJSON = errors.New("the reply is not JSON")
 
